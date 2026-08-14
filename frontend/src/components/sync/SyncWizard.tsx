@@ -262,12 +262,21 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
   // one-way defaults (Source-of-truth picker included).
   useLayoutEffect(() => {
     if (!open) return
-    setForm(formFromJob(job))
+    const initial = formFromJob(job)
+    if (!job) {
+      // Snapshot the connected peers now. Persisting an empty sentinel would
+      // make this job silently gain every provider connected in the future.
+      initial.providers = syncPeersOf(accounts)
+        .filter((account) => account.state === 'connected')
+        .map((account) => account.id)
+        .join(',')
+    }
+    setForm(initial)
     setStep(0)
     setVisited(new Set([0]))
     setSaving(false)
     setError(null)
-  }, [open, job])
+  }, [open, job, accounts])
 
   function goToStep(i: number) {
     setStep(i)

@@ -14,6 +14,10 @@ import { ConnectWizardModal } from './ConnectWizardModal'
 
 const SERVICE_BLURBS: Record<string, string> = {
   spotify: 'The source of truth. Every other service mirrors what you curate here.',
+  tidal: 'Syncs playlists using the OpenAPI session from your signed-in TIDAL web player.',
+  qobuz: 'Syncs playlists using the minimized API context from your signed-in Qobuz web player.',
+  deezer: 'Syncs playlists using a minimized Pipe session, plus an optional removal cookie.',
+  amazon: 'Syncs playlists using an auto-renewing session from your signed-in Amazon Music web player.',
   apple: 'Paste a couple of tokens from the Apple Music web player. No developer account needed.',
   ytmusic: 'Sign in with a Google account using a short code. Approve it from your phone or another tab.',
   jellyfin: 'Optional. Pushes real playlist cover art to your Jellyfin server.',

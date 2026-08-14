@@ -4,11 +4,16 @@ import { cn } from '@/lib/cn'
 
 import { CountChip, type CountChipTone } from '../ui/CountChip'
 
-const COUNTER_META: Array<{ key: 'added' | 'removed' | 'held' | 'missing'; sign: string; tone: CountChipTone }> = [
-  { key: 'added', sign: '+', tone: 'success' },
-  { key: 'removed', sign: '−', tone: 'danger' },
-  { key: 'held', sign: '~', tone: 'warning' },
-  { key: 'missing', sign: '×', tone: 'neutral' },
+const COUNTER_META: Array<{
+  key: 'added' | 'removed' | 'held' | 'missing'
+  label: string
+  icon: IconType
+  tone: CountChipTone
+}> = [
+  { key: 'added', label: 'added', icon: LuListPlus, tone: 'success' },
+  { key: 'removed', label: 'removed', icon: LuListMinus, tone: 'danger' },
+  { key: 'held', label: 'held', icon: LuClockAlert, tone: 'warning' },
+  { key: 'missing', label: 'missing', icon: LuSearchX, tone: 'neutral' },
 ]
 
 /** Live-tails the /events SSE stream for the sync dashboard, with running
@@ -29,7 +34,13 @@ export function LiveFeed() {
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="mr-1 font-mono text-[10.5px] tracking-wide text-text-3">THIS PASS</span>
           {COUNTER_META.map((c) => (
-            <CountChip key={c.key} tone={c.tone} sign={c.sign} value={counters[c.key]} />
+            <CountChip
+              key={c.key}
+              tone={c.tone}
+              icon={c.icon}
+              label={c.label}
+              value={counters[c.key]}
+            />
           ))}
         </div>
       </div>
@@ -43,3 +54,5 @@ export function LiveFeed() {
     </div>
   )
 }
+import type { IconType } from 'react-icons'
+import { LuClockAlert, LuListMinus, LuListPlus, LuSearchX } from 'react-icons/lu'

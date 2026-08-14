@@ -1,9 +1,32 @@
+import type { IconType } from 'react-icons'
+import {
+  LuCircleCheckBig,
+  LuClockAlert,
+  LuDownload,
+  LuInfo,
+  LuListMinus,
+  LuListPlus,
+  LuSearchX,
+  LuTriangleAlert,
+} from 'react-icons/lu'
+
 import { cn } from '@/lib/cn'
 import { KIND_STYLES, serviceLogoId, tagDot, tagLabel, tagText } from '@/lib/constants'
 import { formatClock } from '@/lib/format'
-import type { SyncEvent } from '@/types'
+import type { EventKind, SyncEvent } from '@/types'
 
 import { ServiceLogo } from '../ui/ServiceLogo'
+
+const EVENT_KIND_ICONS: Record<Exclude<EventKind, 'section'>, IconType> = {
+  add: LuListPlus,
+  remove: LuListMinus,
+  hold: LuClockAlert,
+  miss: LuSearchX,
+  download: LuDownload,
+  note: LuInfo,
+  warn: LuTriangleAlert,
+  summary: LuCircleCheckBig,
+}
 
 /** FeedRow — glyph tile · message · service tag · mono clock, per the design
  * spec (add + · remove − · hold ~ · miss × · warn !). Uses flexbox rather
@@ -26,22 +49,29 @@ export function EventRow({ event }: { event: SyncEvent }) {
     )
   }
 
+  const ActionIcon = EVENT_KIND_ICONS[event.kind]
+
   return (
     <li className={cn('flex flex-wrap items-start gap-x-2.5 gap-y-1 rounded-chip px-3 py-[5px] text-[13.5px]', style.row)}>
       <span
+        role="img"
+        aria-label={style.label}
+        data-event-action={event.kind}
         className={cn(
-          'mt-px flex size-5 shrink-0 items-center justify-center rounded-chip font-mono text-xs font-semibold',
+          'mt-px flex size-6 shrink-0 items-center justify-center rounded-control border border-border-strong',
           style.tileBg,
           style.tileText,
         )}
-        aria-hidden="true"
       >
-        {style.glyph}
+        <ActionIcon className="size-3.5" aria-hidden="true" />
       </span>
       {/* `basis-full` forces the message onto its own line below the
           glyph/tag/clock on narrow screens; from `sm` up it sits inline. */}
       <span className={cn('min-w-0 basis-full break-words sm:flex-1 sm:basis-0', style.text)}>{event.message}</span>
-      <span className="inline-flex w-fit shrink-0 items-center gap-1.5 font-mono text-[11px] text-text-3">
+      <span
+        data-service-tag
+        className="inline-flex w-fit shrink-0 items-center gap-1.5 font-mono text-[11px] text-text-3"
+      >
         {logoId ? (
           <>
             <ServiceLogo service={logoId} className={cn('size-3.5 shrink-0', tagText(event.tag))} />

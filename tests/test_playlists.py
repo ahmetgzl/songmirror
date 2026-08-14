@@ -16,7 +16,9 @@ def test_build_one_known_dispatches(monkeypatch):
 
 def test_is_peer_excludes_browse_only():
     # A sync/transfer peer has a MirrorTarget; browse-only Jellyfin does not.
-    assert targets.is_peer("spotify") and targets.is_peer("apple") and targets.is_peer("ytmusic")
+    assert all(targets.is_peer(provider) for provider in (
+        "spotify", "tidal", "qobuz", "deezer", "amazon", "apple", "ytmusic"
+    ))
     assert not targets.is_peer("jellyfin")
     assert not targets.is_peer("bogus")
 
@@ -37,6 +39,7 @@ def test_empty_providers_means_all(monkeypatch):
     monkeypatch.setitem(targets._REGISTRY, "spotify", lambda o, sp, sync_peer=False, songs=None: "SP")
     monkeypatch.setitem(targets._REGISTRY, "apple", lambda o, sp, sync_peer=False, songs=None: "APPLE")
     monkeypatch.setitem(targets._REGISTRY, "ytmusic", lambda o, sp, sync_peer=False, songs=None: "YT")
+    monkeypatch.setattr(targets, "_SOURCE_ORDER", ["spotify", "apple", "ytmusic"])
     opts = parse_args([])
     opts.providers = ""
     opts.sync_source = "spotify"
@@ -102,8 +105,17 @@ def test_pl_image_extraction():
     from songmirror.services.playlists import _pl_image
 
     assert _pl_image({"images": [{"url": "http://sp/cover.jpg"}]}) == "http://sp/cover.jpg"
+    assert _pl_image({"images": ["http://qb/cover.jpg"]}) == "http://qb/cover.jpg"
+    assert _pl_image({"image_rectangle": ["http://qb/playlist.jpg"]}) == "http://qb/playlist.jpg"
+    assert _pl_image({"picture": {"urls": ["http://dz/small.jpg", "http://dz/large.jpg"]}}) == (
+        "http://dz/large.jpg"
+    )
+    assert _pl_image({"picture_xl": "http://dz/xl.jpg"}) == "http://dz/xl.jpg"
     assert _pl_image({"attributes": {"artwork": {"url": "http://ap/{w}x{h}bb.jpg"}}}) == "http://ap/300x300bb.jpg"
     assert _pl_image({"thumbnails": [{"url": "a"}, {"url": "http://yt/big.jpg"}]}) == "http://yt/big.jpg"
+    assert _pl_image({"images": [None, {}, "", {"url": "http://mixed/cover.jpg"}]}) == (
+        "http://mixed/cover.jpg"
+    )
     assert _pl_image({"name": "no art"}) == ""
 
 

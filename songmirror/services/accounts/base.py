@@ -72,5 +72,10 @@ class Connector:
     def submit(self, values: dict) -> ConnStatus:
         raise NotImplementedError
 
+    def disconnect(self) -> None:
+        """Clear connector-managed settings; providers may override for extras."""
+
+        self._store.save({field.key: "" for field in self.config_fields})
+
     def _configured(self, *keys) -> bool:
         return all(self._store.get(k) for k in keys)

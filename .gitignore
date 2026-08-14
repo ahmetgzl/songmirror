@@ -25,6 +25,10 @@ ytmusic_resolve_cache.json
 data/
 downloads/
 
+# Local provider research notes
+docs/monochrome-flac-assessment.md
+docs/qobuz-web-api-assessment.md
+
 # Obsolete state from the old Apple->Spotify direction
 synced_isrcs.json
 apple_spotify_uri_cache.json

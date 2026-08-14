@@ -60,6 +60,14 @@
   /* ---- service identity · dots + badges only, never buttons ---- */
   --color-svc-spotify: #128f43;
   --color-svc-spotify-soft: rgb(18 143 67 / 0.11);
+  --color-svc-tidal: #171717;
+  --color-svc-tidal-soft: rgb(23 23 23 / 0.1);
+  --color-svc-qobuz: #0069c8;
+  --color-svc-qobuz-soft: rgb(0 105 200 / 0.11);
+  --color-svc-deezer: #7f2fbd;
+  --color-svc-deezer-soft: rgb(127 47 189 / 0.11);
+  --color-svc-amazon: #007eb9;
+  --color-svc-amazon-soft: rgb(0 126 185 / 0.11);
   --color-svc-apple: #d93043;
   --color-svc-apple-soft: rgb(217 48 67 / 0.1);
   --color-svc-ytmusic: #c43227;
@@ -123,6 +131,14 @@
 
   --color-svc-spotify: #3bce6e;
   --color-svc-spotify-soft: rgb(59 206 110 / 0.13);
+  --color-svc-tidal: #f5f5f5;
+  --color-svc-tidal-soft: rgb(245 245 245 / 0.13);
+  --color-svc-qobuz: #55aaff;
+  --color-svc-qobuz-soft: rgb(85 170 255 / 0.14);
+  --color-svc-deezer: #c879ff;
+  --color-svc-deezer-soft: rgb(200 121 255 / 0.14);
+  --color-svc-amazon: #43d7ee;
+  --color-svc-amazon-soft: rgb(67 215 238 / 0.14);
   --color-svc-apple: #fa5c71;
   --color-svc-apple-soft: rgb(250 92 113 / 0.12);
   --color-svc-ytmusic: #f4453e;

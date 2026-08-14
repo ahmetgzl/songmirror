@@ -21,6 +21,13 @@ from ..engine.config import (
 )
 from .settings import _open_private
 
+# Before named jobs stored an explicit provider list, an empty value meant
+# "whatever providers happen to be configured right now".  That made a job
+# silently grow when support for a new service was added or an account was
+# connected later.  Freeze legacy jobs to the provider set available when the
+# migration was introduced; all newly saved jobs are explicit.
+LEGACY_NAMED_JOB_PROVIDERS = "spotify,apple,ytmusic"
+
 
 @dataclass
 class SyncJob:
@@ -48,7 +55,14 @@ class SyncStore:
     def list(self):
         try:
             with open(self._path, encoding="utf-8") as f:
-                return [SyncJob(**d) for d in json.load(f)]
+                rows = json.load(f)
+            jobs = []
+            for row in rows:
+                data = dict(row)
+                if not str(data.get("providers") or "").strip():
+                    data["providers"] = LEGACY_NAMED_JOB_PROVIDERS
+                jobs.append(SyncJob(**data))
+            return jobs
         except (FileNotFoundError, json.JSONDecodeError):
             return []
 

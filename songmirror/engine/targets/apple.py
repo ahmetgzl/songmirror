@@ -11,6 +11,7 @@ from ..config import AMP, REQUEST_TIMEOUT, polite_sleep, required_env
 from ..logs import log, log_warn
 from ..matching import normalize_text, romanized, score_candidate
 from .base import MirrorTarget, TargetAuthError
+from .provider_utils import source_playlist_details
 
 # playlist_id -> (lastModifiedDate, track_count): in-process cache so the browse
 # doesn't re-issue a meta.total call for an unchanged Apple playlist (library
@@ -108,10 +109,8 @@ class AppleMusicTarget(MirrorTarget):
         return playlist.get("attributes", {}).get("canEdit") is not False
 
     def create(self, sp_playlist):
-        from .. import spotify
-
-        attributes = {"name": sp_playlist.get("name", "")}
-        desc = spotify.description(sp_playlist)
+        name, desc = source_playlist_details(sp_playlist)
+        attributes = {"name": name}
         if desc:
             attributes["description"] = desc
         r = self._request("POST", f"{AMP}/me/library/playlists", json_body={"attributes": attributes})

@@ -13,6 +13,7 @@ from .. import archive, spotify, spotify_cookie
 from ..config import polite_sleep, spotify_write_backend
 from ..matching import normalize_text, romanized, score_candidate, track_key
 from .base import MirrorTarget, TargetAuthError
+from .provider_utils import source_playlist_details
 
 
 def _uri(track_id):
@@ -72,7 +73,7 @@ class SpotifyTarget(MirrorTarget):
         return spotify.track_total(playlist)
 
     def create(self, sp_playlist):
-        name, desc = sp_playlist.get("name", ""), spotify.description(sp_playlist)
+        name, desc = source_playlist_details(sp_playlist)
         if spotify_write_backend() == "cookie":
             pl = spotify_cookie.create(name, public=False, description=desc)
         else:

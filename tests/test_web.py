@@ -19,7 +19,9 @@ def test_health(tmp_path):
 def test_accounts_list_all_unconfigured(tmp_path):
     with TestClient(_app(tmp_path)) as client:
         accounts = client.get("/api/accounts").json()
-        assert {a["id"] for a in accounts} == {"spotify", "apple", "ytmusic", "jellyfin"}
+        assert {a["id"] for a in accounts} == {
+            "spotify", "tidal", "qobuz", "deezer", "amazon", "apple", "ytmusic", "jellyfin"
+        }
         assert all(a["state"] == "unconfigured" for a in accounts)
 
 

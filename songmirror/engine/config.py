@@ -18,7 +18,7 @@ DEFAULT_SONG_CACHE_FILE = "song_cache.db"
 DEFAULT_STOREFRONT = "us"
 DEFAULT_SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8888/callback"
 DEFAULT_SYNC_MODE = "oneway"                          # oneway (source->targets) | nway (bidirectional)
-DEFAULT_PROVIDERS = "spotify,apple,ytmusic"           # providers participating in sync
+DEFAULT_PROVIDERS = "spotify,tidal,qobuz,deezer,amazon,apple,ytmusic"  # participating providers
 DEFAULT_SYNC_SOURCE = "spotify"                       # one-way source of truth (any connected provider)
 DEFAULT_SPOTIFY_CACHE_FILE = "spotify_resolve_cache.json"
 
@@ -89,7 +89,7 @@ class Options:
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
         prog="songmirror",
-        description="Mirror Spotify playlists to same-named Apple Music and YouTube Music playlists.",
+        description="Mirror playlists across supported streaming services.",
     )
     p.add_argument("--execute", action="store_true", help="Apply changes to the targets (default: dry run).")
     p.add_argument("--loop", action="store_true", help="Run forever, sleeping --interval between passes.")
@@ -121,7 +121,7 @@ def parse_args(argv=None):
     p.add_argument("--providers", default=os.getenv("PROVIDERS", DEFAULT_PROVIDERS),
                    help=f"Providers participating in sync, comma-separated (default: {DEFAULT_PROVIDERS}).")
     p.add_argument("--sync-source", default=os.getenv("SYNC_SOURCE", DEFAULT_SYNC_SOURCE),
-                   choices=("spotify", "apple", "ytmusic"),
+                   choices=("spotify", "tidal", "qobuz", "deezer", "amazon", "apple", "ytmusic"),
                    help=f"One-way source of truth (default: {DEFAULT_SYNC_SOURCE}).")
     p.add_argument("--spotify-cache-file", default=os.getenv("SPOTIFY_CACHE_FILE", DEFAULT_SPOTIFY_CACHE_FILE),
                    help=f"Spotify resolution cache for N-way writes (default: {DEFAULT_SPOTIFY_CACHE_FILE}).")

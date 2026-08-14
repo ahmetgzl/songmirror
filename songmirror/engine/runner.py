@@ -201,12 +201,20 @@ def run_pass(opts, should_continue=None):
     # preview without forcing the one-time re-auth a scope change triggers.
     source_provider = opts.sync_source if opts.sync_mode == "oneway" else "spotify"
     wanted_providers = {s.strip() for s in (opts.providers or "").split(",") if s.strip()}
+    spotify_requested = not wanted_providers or "spotify" in wanted_providers
     # Spotify needs a writable client whenever it's a write destination: any N-way
     # execute, or a one-way execute where another provider is the source and
     # Spotify is one of the (writable) targets.
     spotify_is_target = (opts.sync_mode == "oneway" and source_provider != "spotify"
-                         and "spotify" in wanted_providers)
-    sp = spotify.client(writable=opts.execute and (opts.sync_mode == "nway" or spotify_is_target))
+                         and spotify_requested)
+    sp = None
+    if source_provider == "spotify" or spotify_requested:
+        try:
+            sp = spotify.client(writable=opts.execute and (opts.sync_mode == "nway" or spotify_is_target))
+        except RuntimeError as exc:
+            if source_provider == "spotify":
+                raise
+            log_note(f"Spotify skipped: {exc}", tag="spotify")
 
     # The library whose playlists drive this pass: always Spotify for N-way (the
     # symmetric reconcile's name master), the chosen source-of-truth for one-way.
@@ -376,7 +384,7 @@ def _run_nway(opts, sp, selected, songs, should_continue=None):
     provider propagates to the others via the stored canonical snapshot."""
     peers = build_peers(opts, sp, songs=songs)
     if len(peers) < 2:
-        log_warn("N-way sync needs >=2 configured providers (Spotify + Apple and/or YouTube Music)", indent="  ")
+        log_warn("N-way sync needs at least two configured music providers", indent="  ")
         return []
     log(f"  peers: {paint(', '.join(p.name for p in peers), 'cyan')}"
         + (paint(f"   local downloads -> {opts.download_dir}", "grey") if opts.download_dir and opts.execute else ""))

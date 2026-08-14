@@ -10,6 +10,12 @@ router = APIRouter()
 
 # Never echo secret credentials back to the browser.
 SECRET_KEYS = {f.key for cls in CONNECTORS.values() for f in cls.config_fields if f.secret}
+SECRET_KEYS |= {
+    "TIDAL_OAUTH_VERIFIER",
+    "TIDAL_OAUTH_STATE",
+    "DEEZER_OAUTH_STATE",
+    "AMAZON_MUSIC_OAUTH_STATE",
+}
 
 # Non-secret config the UI manages. When settings.json doesn't have a key, fall
 # back to the process environment — a docker-compose env_file / .env (the user's
