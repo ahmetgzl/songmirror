@@ -10,11 +10,16 @@ caching, safety rails — is provider-agnostic and needs no change.
 """
 
 from .apple import AppleMusicTarget
+from .amazon_music import AmazonMusicTarget
 from .base import MirrorTarget, TargetAuthError, mirror_pair, reconcile
+from .deezer import DeezerTarget
+from .qobuz import QobuzTarget
 from .spotify_target import SpotifyTarget
+from .tidal import TidalTarget
 from . import ytmusic
 
-__all__ = ["AppleMusicTarget", "SpotifyTarget", "MirrorTarget", "TargetAuthError",
+__all__ = ["AppleMusicTarget", "AmazonMusicTarget", "DeezerTarget", "QobuzTarget",
+           "SpotifyTarget", "TidalTarget", "MirrorTarget", "TargetAuthError",
            "mirror_pair", "reconcile", "build_targets", "build_peers", "build_one", "is_peer"]
 
 
@@ -30,16 +35,30 @@ def _apple(opts):
         return None
 
 
+def _rest_provider(target_cls, label):
+    """Build an env-configured REST peer, logging a clean skip when absent."""
+    from ..logs import log_note
+    try:
+        return target_cls()
+    except RuntimeError as e:
+        log_note(f"{label} skipped: {e}", tag=target_cls.tag)
+        return None
+
+
 # source -> builder(opts, sp) -> a ready MirrorTarget, or None when unconfigured.
 # Order matters: ISRC-rich providers first so they seed cross-provider identity.
 # `sp` (the Spotify client) is only needed by peers that read/write Spotify.
 _REGISTRY = {
     "spotify": lambda opts, sp, sync_peer=False, songs=None: (
         SpotifyTarget(sp, opts.spotify_cache_file, sync_peer=sync_peer, songs=songs) if sp is not None else None),
+    "tidal": lambda opts, sp, sync_peer=False, songs=None: _rest_provider(TidalTarget, "TIDAL"),
+    "qobuz": lambda opts, sp, sync_peer=False, songs=None: _rest_provider(QobuzTarget, "Qobuz"),
+    "deezer": lambda opts, sp, sync_peer=False, songs=None: _rest_provider(DeezerTarget, "Deezer"),
+    "amazon": lambda opts, sp, sync_peer=False, songs=None: _rest_provider(AmazonMusicTarget, "Amazon Music"),
     "apple": lambda opts, sp, sync_peer=False, songs=None: _apple(opts),
     "ytmusic": lambda opts, sp, sync_peer=False, songs=None: ytmusic.build(),
 }
-_SOURCE_ORDER = ["spotify", "apple", "ytmusic"]
+_SOURCE_ORDER = ["spotify", "tidal", "qobuz", "deezer", "amazon", "apple", "ytmusic"]
 
 
 def build_targets(opts, sp=None):

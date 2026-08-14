@@ -40,6 +40,10 @@ interface ServiceStyle {
  * always match, plus two internal, non-service tags ("sync", "local"). */
 const SERVICE_STYLES: Record<string, ServiceStyle> = {
   spotify: { label: 'Spotify', dot: 'bg-svc-spotify', soft: 'bg-svc-spotify-soft', text: 'text-svc-spotify' },
+  tidal: { label: 'TIDAL', dot: 'bg-svc-tidal', soft: 'bg-svc-tidal-soft', text: 'text-svc-tidal' },
+  qobuz: { label: 'Qobuz', dot: 'bg-svc-qobuz', soft: 'bg-svc-qobuz-soft', text: 'text-svc-qobuz' },
+  deezer: { label: 'Deezer', dot: 'bg-svc-deezer', soft: 'bg-svc-deezer-soft', text: 'text-svc-deezer' },
+  amazon: { label: 'Amazon Music', dot: 'bg-svc-amazon', soft: 'bg-svc-amazon-soft', text: 'text-svc-amazon' },
   apple: { label: 'Apple Music', dot: 'bg-svc-apple', soft: 'bg-svc-apple-soft', text: 'text-svc-apple' },
   yt: { label: 'YouTube Music', dot: 'bg-svc-ytmusic', soft: 'bg-svc-ytmusic-soft', text: 'text-svc-ytmusic' },
   ytmusic: { label: 'YouTube Music', dot: 'bg-svc-ytmusic', soft: 'bg-svc-ytmusic-soft', text: 'text-svc-ytmusic' },
@@ -69,8 +73,12 @@ export function tagText(tag: string): string {
 
 /** Provider id -> ServiceLogo id (both the "yt" event tag and the "ytmusic"
  * account id resolve to the same YouTube Music mark). */
-export function serviceLogoId(idOrTag: string): 'spotify' | 'apple' | 'ytmusic' | 'jellyfin' | null {
+export function serviceLogoId(idOrTag: string): 'spotify' | 'tidal' | 'qobuz' | 'deezer' | 'amazon' | 'apple' | 'ytmusic' | 'jellyfin' | null {
   if (idOrTag === 'spotify') return 'spotify'
+  if (idOrTag === 'tidal') return 'tidal'
+  if (idOrTag === 'qobuz') return 'qobuz'
+  if (idOrTag === 'deezer') return 'deezer'
+  if (idOrTag === 'amazon') return 'amazon'
   if (idOrTag === 'apple') return 'apple'
   if (idOrTag === 'yt' || idOrTag === 'ytmusic') return 'ytmusic'
   if (idOrTag === 'jellyfin') return 'jellyfin'
@@ -78,11 +86,8 @@ export function serviceLogoId(idOrTag: string): 'spotify' | 'apple' | 'ytmusic' 
 }
 
 interface KindStyle {
-  /** Mono glyph shown in the 20px FeedRow tile. Fixed per the design spec:
-   * add + · remove − · hold ~ · miss × · warn !. `note`/`download` are this
-   * app's own additions (extra event kinds the design's 5-kind sample
-   * doesn't cover) styled to the same grammar. */
-  glyph: string
+  /** Plain-language name exposed alongside EventRow's visual action icon. */
+  label: string
   tileBg: string
   tileText: string
   /** Message text color — miss rows dim relative to the rest. */
@@ -93,27 +98,27 @@ interface KindStyle {
 }
 
 export const KIND_STYLES: Record<EventKind, KindStyle> = {
-  add: { glyph: '+', tileBg: 'bg-success-soft', tileText: 'text-success', text: 'text-text' },
-  remove: { glyph: '−', tileBg: 'bg-danger-soft', tileText: 'text-danger', text: 'text-text' },
-  hold: { glyph: '~', tileBg: 'bg-warning-soft', tileText: 'text-warning', text: 'text-text' },
-  miss: { glyph: '×', tileBg: 'bg-neutral-soft', tileText: 'text-neutral', text: 'text-text-2' },
-  download: { glyph: '↓', tileBg: 'bg-info-soft', tileText: 'text-info', text: 'text-text' },
-  note: { glyph: '·', tileBg: 'bg-neutral-soft', tileText: 'text-neutral', text: 'text-text-2' },
+  add: { label: 'Addition', tileBg: 'bg-success-soft', tileText: 'text-success', text: 'text-text' },
+  remove: { label: 'Removal', tileBg: 'bg-danger-soft', tileText: 'text-danger', text: 'text-text' },
+  hold: { label: 'Held', tileBg: 'bg-warning-soft', tileText: 'text-warning', text: 'text-text' },
+  miss: { label: 'Missing match', tileBg: 'bg-neutral-soft', tileText: 'text-neutral', text: 'text-text-2' },
+  download: { label: 'Download', tileBg: 'bg-info-soft', tileText: 'text-info', text: 'text-text' },
+  note: { label: 'Note', tileBg: 'bg-neutral-soft', tileText: 'text-neutral', text: 'text-text-2' },
   warn: {
-    glyph: '!',
+    label: 'Warning',
     tileBg: 'bg-warning-soft',
     tileText: 'text-warning',
     text: 'font-semibold text-text',
     row: 'bg-warning-soft/40',
   },
   summary: {
-    glyph: '✓',
+    label: 'Pass complete',
     tileBg: 'bg-accent-soft',
     tileText: 'text-accent',
     text: 'font-semibold text-text',
     row: 'bg-surface-2',
   },
-  section: { glyph: '', tileBg: '', tileText: '', text: 'text-text-3' },
+  section: { label: 'Section', tileBg: '', tileText: '', text: 'text-text-3' },
 }
 
 export const DOWNLOAD_FORMAT_OPTIONS: Array<{ value: string; label: string }> = [

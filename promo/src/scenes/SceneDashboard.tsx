@@ -14,9 +14,9 @@ export const SceneDashboard: React.FC<{ dur: number }> = ({ dur }) => (
         <span style={{ color: COLORS.orange }}>every library.</span>
       </>
     }
-    sub="See every sync, service and change at a glance — Spotify, Apple Music, YouTube Music and a local Jellyfin mirror."
+    sub="See every sync, service and change at a glance — across seven music services and a local Jellyfin mirror."
     src="shots/dashboard.png"
-    imgAspect={0.92969}
+    imgAspect={0.80781}
     label="songmirror · dashboard"
     panFrom={0}
     panTo={0.14}

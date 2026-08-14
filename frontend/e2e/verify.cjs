@@ -30,12 +30,21 @@ const TAKE_SCREENSHOTS = !process.env.CI
 // ---------------------------------------------------------------------------
 
 function svgCover(color) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="${color}"/></svg>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${color}"/><stop offset="1" stop-color="#111827"/></linearGradient></defs><rect width="200" height="200" rx="18" fill="url(#g)"/><circle cx="148" cy="52" r="54" fill="#fff" opacity=".16"/><circle cx="54" cy="154" r="72" fill="#000" opacity=".18"/><path d="M26 116c38-54 77 48 148-24" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" opacity=".42"/></svg>`
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
 }
 
 const ACCOUNTS = [
   { id: 'spotify', name: 'Spotify', auth_kind: 'oauth_redirect', fields: [], state: 'connected', detail: null, transferable: true },
+  {
+    id: 'tidal',
+    name: 'TIDAL',
+    auth_kind: 'token_paste',
+    fields: [{ key: 'TIDAL_WEB_HEADERS', label: 'OpenAPI request headers', secret: true, help: '', required: true }],
+    state: 'unconfigured',
+    detail: null,
+    transferable: true,
+  },
   {
     id: 'apple',
     name: 'Apple Music',
@@ -57,6 +66,39 @@ const ACCOUNTS = [
     fields: [],
     state: 'error',
     detail: 'Rate limited by YouTube — try again in a few minutes.',
+    transferable: true,
+  },
+  {
+    id: 'qobuz',
+    name: 'Qobuz',
+    auth_kind: 'token_paste',
+    fields: [{ key: 'QOBUZ_WEB_REQUEST', label: 'Signed-in web API request', secret: true, help: '', required: true }],
+    state: 'unconfigured',
+    detail: null,
+    transferable: true,
+  },
+  {
+    id: 'deezer',
+    name: 'Deezer',
+    auth_kind: 'token_paste',
+    fields: [
+      { key: 'DEEZER_WEB_HEADERS', label: 'Pipe API request headers (optional bootstrap)', secret: true, help: '', required: false },
+      { key: 'DEEZER_REFRESH_TOKEN', label: 'Renewal request or refresh-token cookie', secret: true, help: '', required: true },
+    ],
+    state: 'unconfigured',
+    detail: null,
+    transferable: true,
+  },
+  {
+    id: 'amazon',
+    name: 'Amazon Music',
+    auth_kind: 'token_paste',
+    fields: [
+      { key: 'AMAZON_MUSIC_WEB_HEADERS', label: 'Signed-in config.json response (optional bootstrap)', secret: true, help: '', required: false },
+      { key: 'AMAZON_MUSIC_RENEWAL_REQUEST', label: 'Signed-in renewal request', secret: true, help: '', required: true },
+    ],
+    state: 'unconfigured',
+    detail: null,
     transferable: true,
   },
   {
@@ -190,6 +232,37 @@ const PLAYLISTS = {
   ],
 }
 
+// Polished, deterministic data used only for committed README/promo captures.
+// Every provider is connected and every playlist has cover art so the media
+// demonstrates the finished experience without setup errors or empty states.
+const SHOWCASE_PLAYLIST_ROWS = [
+  ['Road Trip 2025', 118],
+  ['Night Drive', 84],
+  ['Morning Focus', 62],
+  ['Indie Discoveries', 45],
+  ['Sunday Slowdown', 73],
+]
+
+function showcasePlaylists(provider, colors) {
+  return SHOWCASE_PLAYLIST_ROWS.map(([name, count], index) => ({
+    id: `show_${provider}_${index + 1}`,
+    name,
+    count,
+    image: svgCover(colors[index % colors.length]),
+  }))
+}
+
+const SHOWCASE_PLAYLISTS = {
+  spotify: showcasePlaylists('spotify', ['#3b6fd6', '#7b4bc4', '#3aa76d']),
+  tidal: showcasePlaylists('tidal', ['#30343b', '#54606f', '#788594']),
+  apple: showcasePlaylists('apple', ['#fa5276', '#bd3156', '#d45b92']),
+  ytmusic: showcasePlaylists('ytmusic', ['#ff3b30', '#9d2430', '#e05642']),
+  qobuz: showcasePlaylists('qobuz', ['#1877d2', '#1552a4', '#249ad5']),
+  deezer: showcasePlaylists('deezer', ['#a238e5', '#6e34c8', '#d546bc']),
+  amazon: showcasePlaylists('amazon', ['#25d1da', '#168ca8', '#2b9e83']),
+  jellyfin: showcasePlaylists('jellyfin', ['#9b73df', '#654ba5', '#b55ccf']),
+}
+
 const TRANSFER_JOB = {
   id: 'job1',
   status: 'running',
@@ -206,6 +279,15 @@ const TRANSFER_JOB = {
     { key: 'c2', name: 'Silver Springs (Live)', artist: 'Fleetwood Mac', resolved: true },
   ],
   error: null,
+}
+
+const SHOWCASE_TRANSFER_JOB = {
+  ...TRANSFER_JOB,
+  added: 86,
+  deferred: 0,
+  total: 118,
+  processed: 86,
+  conflicts: [],
 }
 
 // ---------------------------------------------------------------------------
@@ -540,6 +622,102 @@ async function main() {
     }
 
     // -----------------------------------------------------------------
+    // Committed README/promo captures: all services connected, playlist
+    // covers loaded, every sync peer selected, and a clean transfer with no
+    // held tracks. Functional error-state screenshots above remain useful
+    // locally, but are intentionally not used as product advertising.
+    // -----------------------------------------------------------------
+    {
+      const context = await browser.newContext()
+      await context.addInitScript(() => window.localStorage.setItem('songmirror-theme', 'dark'))
+      const page = await context.newPage()
+      await installMocks(page)
+      await page.route('**/api/accounts', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(ACCOUNTS.map((account) => ({ ...account, state: 'connected', detail: null }))),
+        })
+      })
+      await page.route('**/api/playlists*', async (route) => {
+        const provider = new URL(route.request().url()).searchParams.get('provider')
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(SHOWCASE_PLAYLISTS[provider] ?? []),
+        })
+      })
+      await page.setViewportSize({ width: 1280, height: 900 })
+
+      await page.goto(BASE_URL + '/accounts', { waitUntil: 'networkidle' })
+      await page.waitForSelector('h1:has-text("Accounts")')
+      const connectedBadges = await page.getByText('Connected', { exact: true }).count()
+      const accountsShowcaseOk = connectedBadges === ACCOUNTS.length
+      console.log(`${accountsShowcaseOk ? 'ok        ' : 'FAIL      '} showcase Accounts has every service connected (found ${connectedBadges}, expected ${ACCOUNTS.length})`)
+      if (!accountsShowcaseOk) results.push({ label: 'showcase accounts connected', overflow: true })
+      await checkOverflow(page, 'Showcase Accounts @ 1280', results)
+      await shot(page, 'accounts-showcase')
+
+      await page.goto(BASE_URL + '/playlists', { waitUntil: 'networkidle' })
+      await page.waitForSelector('text=Night Drive')
+      const coverCount = await page.locator('main img').count()
+      const playlistsShowcaseOk = coverCount >= Object.keys(SHOWCASE_PLAYLISTS).length * SHOWCASE_PLAYLIST_ROWS.length
+      console.log(`${playlistsShowcaseOk ? 'ok        ' : 'FAIL      '} showcase Playlists loads cover art for every provider (found ${coverCount})`)
+      if (!playlistsShowcaseOk) results.push({ label: 'showcase playlist covers', overflow: true })
+      await checkOverflow(page, 'Showcase Playlists @ 1280', results)
+      await shot(page, 'playlists-showcase')
+
+      await page.goto(BASE_URL + '/sync', { waitUntil: 'networkidle' })
+      await page.waitForSelector('h1:has-text("Sync")')
+      const defaultCard = page.locator('h3', { hasText: 'Default' }).locator('xpath=ancestor::div[contains(@class,"rounded-card")][1]')
+      await defaultCard.getByRole('button', { name: 'Edit', exact: true }).click()
+      await page.waitForSelector('text=Edit "Default"')
+      await page.getByRole('radio', { name: 'Services', exact: true }).click()
+      for (const service of ['TIDAL', 'Apple Music', 'YouTube Music', 'Qobuz', 'Deezer', 'Amazon Music']) {
+        const chip = page.getByRole('button', { name: service, exact: true })
+        if ((await chip.getAttribute('aria-pressed')) !== 'true') await chip.click()
+      }
+      await checkOverflow(page, 'Showcase sync wizard @ 1280', results)
+      await shot(page, 'wizard-showcase')
+
+      await context.close()
+    }
+
+    {
+      // Isolate the actively polling transfer from the modal capture above;
+      // enter through a quiet page, then use the SPA navigation link.
+      const context = await browser.newContext()
+      await context.addInitScript(() => window.localStorage.setItem('songmirror-theme', 'dark'))
+      const page = await context.newPage()
+      await installMocks(page)
+      await page.setViewportSize({ width: 1280, height: 900 })
+      await page.route('**/api/transfers/*', async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback()
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(SHOWCASE_TRANSFER_JOB) })
+      })
+      await page.goto(BASE_URL + '/transfers', { waitUntil: 'commit', timeout: 10000 })
+      await page.waitForSelector('h1:has-text("Transfers")', { timeout: 10000 })
+      await page.getByLabel('Service', { exact: true }).first().selectOption('spotify')
+      await page.getByLabel('Playlist', { exact: true }).click()
+      await page.getByRole('option', { name: 'Road Trip 2025' }).click()
+      await page.getByLabel('Service', { exact: true }).nth(1).selectOption('apple')
+      await page.waitForTimeout(200)
+      await page.getByLabel('Existing playlist', { exact: true }).click()
+      await page.getByRole('option', { name: 'Road Trip 2025' }).click()
+      await page.getByRole('button', { name: 'Copy playlist', exact: true }).click()
+      await page.getByRole('dialog').getByRole('button', { name: 'Copy playlist', exact: true }).click()
+      await page.waitForSelector('text=86 / 118', { timeout: 10000 })
+      const transferWarningCount = await page.getByText(/need review|unresolved/i).count()
+      const transferShowcaseOk = transferWarningCount === 0
+      console.log(`${transferShowcaseOk ? 'ok        ' : 'FAIL      '} showcase transfer has no held or unresolved tracks`)
+      if (!transferShowcaseOk) results.push({ label: 'showcase transfer clean', overflow: true })
+      await checkOverflow(page, 'Showcase transfer @ 1280', results)
+      await shot(page, 'transfers-showcase')
+
+      await context.close()
+    }
+
+    // -----------------------------------------------------------------
     // Dashboard, intermediate widths (1024-1440): the desktop sidebar rail
     // kicks in exactly at `lg` (1024px), turning <main> into a flex-row
     // sibling of the sidebar - a regression here previously clipped content
@@ -639,11 +817,12 @@ async function main() {
       const badge = () => page.locator('h2:has-text("Needs a look")').locator('xpath=following-sibling::span[1]')
       const HELD_ALERT = 'Dismiss: 4 changes held from the last pass'
 
-      // ytmusic error + jellyfin unconfigured + 1 held & 3 deferred changes
+      // Every errored/unconfigured account plus the held/deferred sync alert.
+      const expectedAlertCount = ACCOUNTS.filter((account) => account.state !== 'connected').length + 1
       const startCount = await dismissButtons().count()
       const startBadge = await badge().innerText()
-      const startOk = startCount === 3 && startBadge === '3'
-      console.log(`${startOk ? 'ok        ' : 'FAIL      '} every "Needs a look" card has a Dismiss control (${startCount} cards, badge "${startBadge}", expected 3)`)
+      const startOk = startCount === expectedAlertCount && startBadge === String(expectedAlertCount)
+      console.log(`${startOk ? 'ok        ' : 'FAIL      '} every "Needs a look" card has a Dismiss control (${startCount} cards, badge "${startBadge}", expected ${expectedAlertCount})`)
       if (!startOk) results.push({ label: 'needs a look dismissable cards', overflow: true })
       await checkOverflow(page, 'Needs a look, dismissable @ 1280', results)
       await shot(page, 'dashboard-needs-a-look-dismissable')
@@ -653,7 +832,7 @@ async function main() {
       const afterCount = await dismissButtons().count()
       const afterBadge = await badge().innerText()
       const goneNow = !(await page.locator('body').innerText()).includes('4 changes held from the last pass')
-      const dismissOk = afterCount === 2 && afterBadge === '2' && goneNow
+      const dismissOk = afterCount === expectedAlertCount - 1 && afterBadge === String(expectedAlertCount - 1) && goneNow
       console.log(`${dismissOk ? 'ok        ' : 'FAIL      '} dismissing a card removes it and updates the count (${afterCount} cards, badge "${afterBadge}", text gone=${goneNow})`)
       if (!dismissOk) results.push({ label: 'needs a look dismiss', overflow: true })
 
@@ -661,7 +840,7 @@ async function main() {
       await page.waitForSelector('h2:has-text("Needs a look")')
       const afterReload = await dismissButtons().count()
       const stillGone = !(await page.locator('body').innerText()).includes('4 changes held from the last pass')
-      const persistOk = afterReload === 2 && stillGone
+      const persistOk = afterReload === expectedAlertCount - 1 && stillGone
       console.log(`${persistOk ? 'ok        ' : 'FAIL      '} the dismissal survives a reload (${afterReload} cards, still gone=${stillGone})`)
       if (!persistOk) results.push({ label: 'needs a look dismiss persistence', overflow: true })
 
@@ -873,18 +1052,94 @@ async function main() {
       await page.setViewportSize({ width, height: 900 })
 
       // Connect wizard: device-code PairCode step (YouTube Music, in error state).
-      // "Connect"/"Reconnect"/"Disconnect" all contain "Connect" as a
-      // case-insensitive substring, so this must be an exact match — ytmusic
-      // and jellyfin are the only unconnected accounts (exactly "Connect"),
-      // ytmusic first in DOM order.
+      // Scope connection-flow checks to YouTube Music: the browser-session
+      // providers are intentionally unconfigured in this fixture too.
       await page.goto(BASE_URL + '/accounts', { waitUntil: 'networkidle' })
       await page.waitForSelector('h1:has-text("Accounts")')
-      await page.getByRole('button', { name: 'Connect', exact: true }).first().click()
+
+      // Every recognized provider card uses a brand mark. Qobuz and Amazon
+      // Music used to be omitted from serviceLogoId(), which silently sent
+      // both cards through AccountCard's generic colored-dot fallback.
+      for (const providerName of ['Qobuz', 'Amazon Music']) {
+        const providerCard = page
+          .locator('h3', { hasText: providerName })
+          .locator('xpath=ancestor::div[contains(@class,"rounded-card")][1]')
+        const providerLogoCount = await providerCard.locator('svg, img').count()
+        const providerLogoOk = providerLogoCount > 0
+        console.log(
+          `${providerLogoOk ? 'ok        ' : 'FAIL      '} ${providerName} account card shows a branded mark (found ${providerLogoCount})`,
+        )
+        if (!providerLogoOk) results.push({ label: `${providerName} account logo`, overflow: true })
+      }
+
+      await page
+        .locator('h3', { hasText: 'YouTube Music' })
+        .locator('xpath=ancestor::div[contains(@class,"rounded-card")][1]')
+        .getByRole('button', { name: 'Connect', exact: true })
+        .click()
       await page.getByRole('dialog').getByRole('button', { name: 'Save and continue', exact: true }).click()
       await page.waitForSelector('text=Open the sign-in page')
       await checkOverflow(page, `ConnectWizard device step @ ${width}`, results)
       await shot(page, `connect-wizard-device-${width}`)
       await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click()
+
+      // Deezer's durable renewal request is required, but its current Pipe
+      // Bearer is only an optional bootstrap.  Browser-session textareas used
+      // to force every raw-session field required and contradict the schema.
+      await page
+        .locator('h3', { hasText: 'Deezer' })
+        .locator('xpath=ancestor::div[contains(@class,"rounded-card")][1]')
+        .getByRole('button', { name: 'Connect', exact: true })
+        .click()
+      const deezerDialog = page.getByRole('dialog')
+      const bootstrapInput = deezerDialog.locator('#browser-session-DEEZER_WEB_HEADERS')
+      const renewalInput = deezerDialog.locator('#browser-session-DEEZER_REFRESH_TOKEN')
+      const arlInput = deezerDialog.getByLabel('arl cookie (for removals)', { exact: false })
+      const bootstrapLabel = await deezerDialog
+        .locator('label[for="browser-session-DEEZER_WEB_HEADERS"]')
+        .textContent()
+      const renewalLabel = await deezerDialog
+        .locator('label[for="browser-session-DEEZER_REFRESH_TOKEN"]')
+        .textContent()
+      const deezerRequirementsOk =
+        !(await bootstrapInput.evaluate((node) => node.required)) &&
+        !bootstrapLabel?.includes('(required)') &&
+        (await renewalInput.evaluate((node) => node.required)) &&
+        renewalLabel?.includes('(required)') &&
+        (await arlInput.count()) === 0
+      console.log(
+        `${deezerRequirementsOk ? 'ok        ' : 'FAIL      '} Deezer requires renewal, keeps Pipe Bearer optional, and does not request ARL`,
+      )
+      if (!deezerRequirementsOk) results.push({ label: 'Deezer field requirements', overflow: true })
+      await deezerDialog.getByRole('button', { name: 'Close', exact: true }).click()
+
+      // Amazon renewal cookies are required while a copied config.json
+      // response is only an optional access bootstrap.
+      await page
+        .locator('h3', { hasText: 'Amazon Music' })
+        .locator('xpath=ancestor::div[contains(@class,"rounded-card")][1]')
+        .getByRole('button', { name: 'Connect', exact: true })
+        .click()
+      const amazonDialog = page.getByRole('dialog')
+      const amazonBootstrap = amazonDialog.locator('#browser-session-AMAZON_MUSIC_WEB_HEADERS')
+      const amazonRenewal = amazonDialog.locator('#browser-session-AMAZON_MUSIC_RENEWAL_REQUEST')
+      const amazonBootstrapLabel = await amazonDialog
+        .locator('label[for="browser-session-AMAZON_MUSIC_WEB_HEADERS"]')
+        .textContent()
+      const amazonRenewalLabel = await amazonDialog
+        .locator('label[for="browser-session-AMAZON_MUSIC_RENEWAL_REQUEST"]')
+        .textContent()
+      const amazonRequirementsOk =
+        !(await amazonBootstrap.evaluate((node) => node.required)) &&
+        !amazonBootstrapLabel?.includes('(required)') &&
+        (await amazonRenewal.evaluate((node) => node.required)) &&
+        amazonRenewalLabel?.includes('(required)') &&
+        (await amazonDialog.getByText('config.json', { exact: false }).count()) > 0
+      console.log(
+        `${amazonRequirementsOk ? 'ok        ' : 'FAIL      '} Amazon requires a renewable signed-in request and keeps config bootstrap optional`,
+      )
+      if (!amazonRequirementsOk) results.push({ label: 'Amazon field requirements', overflow: true })
+      await amazonDialog.getByRole('button', { name: 'Close', exact: true }).click()
 
       // Connect wizard: Apple's "music.apple.com" guide mention is a real
       // new-tab link, and the header-paste box fills the Bearer token +
@@ -1282,7 +1537,11 @@ async function main() {
       await page.setViewportSize({ width: 1280, height: 900 })
       await page.goto(BASE_URL + '/accounts', { waitUntil: 'networkidle' })
       await page.waitForSelector('h1:has-text("Accounts")')
-      await page.getByRole('button', { name: 'Connect', exact: true }).first().click()
+      await page
+        .locator('h3', { hasText: 'YouTube Music' })
+        .locator('xpath=ancestor::div[contains(@class,"rounded-card")][1]')
+        .getByRole('button', { name: 'Connect', exact: true })
+        .click()
       await page.getByRole('dialog').waitFor()
 
       // Not getByText(..., {exact:true}): once active the summary also
@@ -2435,14 +2694,16 @@ async function main() {
     // -----------------------------------------------------------------
     {
       const context = await browser.newContext()
-      await context.addInitScript(() => window.localStorage.setItem('songmirror-theme', 'light'))
+      await context.addInitScript(() => window.localStorage.setItem('songmirror-theme', 'dark'))
       const page = await context.newPage()
       await installMocks(page)
       await page.route('**/events', async (route) => {
         const lines = [
           { ts: 1700000000, kind: 'section', tag: 'sync', message: 'Pass started' },
           { ts: 1700000001, kind: 'add', tag: 'spotify', message: 'Added "Test Track" by Test Artist' },
-          { ts: 1700000002, kind: 'note', tag: 'local', message: 'Wrote playlist file' },
+          { ts: 1700000002, kind: 'remove', tag: 'spotify', message: 'Removed "Old Track"' },
+          { ts: 1700000003, kind: 'warn', tag: 'sync', message: 'Provider temporarily unavailable' },
+          { ts: 1700000004, kind: 'note', tag: 'local', message: 'Wrote playlist file' },
         ]
         await route.fulfill({
           status: 200,
@@ -2455,23 +2716,25 @@ async function main() {
       await page.waitForSelector('h2:has-text("Your services")')
       await page.waitForSelector('text=Wrote playlist file') // last live-feed line has landed
 
-      // "Your services": every row (all 4 known ids) shows a real brand
+      // "Your services": every row (all known ids) shows a real brand
       // mark, not the old plain dot. Scoped to the <li> rows specifically
       // (not the card's header, whose "Manage" link has its own chevron svg).
       const servicesLogoCount = await page
         .locator('h2:has-text("Your services")')
         .locator('xpath=ancestor::div[contains(@class,"rounded-card")][1]')
-        .locator('li svg')
+        .locator('li svg, li img')
         .count()
-      const servicesOk = servicesLogoCount === 4
-      console.log(`${servicesOk ? 'ok        ' : 'FAIL      '} "Your services" rows show ServiceLogo brand marks (found ${servicesLogoCount} svg, expected 4)`)
+      const servicesOk = servicesLogoCount === ACCOUNTS.length
+      console.log(
+        `${servicesOk ? 'ok        ' : 'FAIL      '} "Your services" rows show ServiceLogo brand marks (found ${servicesLogoCount}, expected ${ACCOUNTS.length})`,
+      )
       if (!servicesOk) results.push({ label: 'your services logo', overflow: true })
 
       // Live feed: the spotify-tagged row gets an icon (+ sr-only label for
       // screen readers); the local-tagged row keeps its plain dot + text
       // since "local" has no brand mark.
       const spotifyRow = page.locator('li', { hasText: 'Added "Test Track"' })
-      const spotifyRowSvgCount = await spotifyRow.locator('svg').count()
+      const spotifyRowSvgCount = await spotifyRow.locator('[data-service-tag] svg').count()
       // textContent(), not innerText() — the label is visually hidden
       // (sr-only) by design, and innerText()'s handling of zero-area/clipped
       // elements varies; textContent() reads the DOM node regardless of CSS.
@@ -2481,11 +2744,71 @@ async function main() {
       if (!spotifyRowOk) results.push({ label: 'live feed spotify logo', overflow: true })
 
       const localRow = page.locator('li', { hasText: 'Wrote playlist file' })
-      const localRowSvgCount = await localRow.locator('svg').count()
+      const localRowSvgCount = await localRow.locator('[data-service-tag] svg').count()
       const localRowText = await localRow.innerText()
       const localRowOk = localRowSvgCount === 0 && /local/i.test(localRowText)
       console.log(`${localRowOk ? 'ok        ' : 'FAIL      '} live feed non-service ("local") row keeps its dot + text, no icon (svg count=${localRowSvgCount})`)
       if (!localRowOk) results.push({ label: 'live feed local fallback', overflow: true })
+
+      for (const [message, label] of [
+        ['Added "Test Track"', 'Addition'],
+        ['Removed "Old Track"', 'Removal'],
+        ['Provider temporarily unavailable', 'Warning'],
+      ]) {
+        const row = page.locator('li', { hasText: message })
+        const actionIcon = row.getByRole('img', { name: label, exact: true })
+        const actionIconOk = (await actionIcon.count()) === 1 && (await actionIcon.locator('svg').count()) === 1
+        console.log(`${actionIconOk ? 'ok        ' : 'FAIL      '} live feed ${label.toLowerCase()} uses a named action icon`)
+        if (!actionIconOk) results.push({ label: `live feed ${label.toLowerCase()} icon`, overflow: true })
+      }
+
+      const addedCounterOk = (await page.getByLabel('1 added this pass', { exact: true }).count()) === 1
+      const removedCounterOk = (await page.getByLabel('1 removed this pass', { exact: true }).count()) === 1
+      console.log(`${addedCounterOk && removedCounterOk ? 'ok        ' : 'FAIL      '} pass counters name additions and removals`)
+      if (!addedCounterOk || !removedCounterOk) results.push({ label: 'live feed named counters', overflow: true })
+
+      // The committed README/promo capture is a showcase state, not the
+      // deliberately broken fixture used by the assertions above. Re-route
+      // the dashboard to a fully connected, successful pass before taking it.
+      await page.route('**/api/accounts', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(ACCOUNTS.map((account) => ({ ...account, state: 'connected', detail: null }))),
+        })
+      })
+      await page.route('**/api/sync/status', async (route) => {
+        const cleanStatus = syncStatusFixture(initialSyncs())
+        cleanStatus.last.per_target = [
+          { name: 'Spotify', added: 4, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
+          { name: 'TIDAL', added: 4, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
+          { name: 'Qobuz', added: 4, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
+          { name: 'Deezer', added: 4, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
+          { name: 'Amazon Music', added: 4, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
+          { name: 'Apple Music', added: 4, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
+          { name: 'YouTube Music', added: 4, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
+        ]
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(cleanStatus) })
+      })
+      await page.unroute('**/events')
+      await page.route('**/events', async (route) => {
+        const lines = [
+          { ts: 1700000100, kind: 'section', tag: 'sync', message: 'Pass started' },
+          { ts: 1700000101, kind: 'add', tag: 'spotify', message: 'Added "Golden Hour" by JVKE' },
+          { ts: 1700000102, kind: 'add', tag: 'tidal', message: 'Added "Midnight City" by M83' },
+          { ts: 1700000103, kind: 'add', tag: 'qobuz', message: 'Added "Dreams" by Fleetwood Mac' },
+          { ts: 1700000104, kind: 'note', tag: 'sync', message: 'Pass completed successfully' },
+        ]
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: lines.map((line) => `data: ${JSON.stringify(line)}\n\n`).join(''),
+        })
+      })
+      await page.evaluate(() => window.localStorage.removeItem('songmirror-live-feed-v1'))
+      await page.reload({ waitUntil: 'networkidle' })
+      await page.waitForSelector('text=Everything\'s in sync.')
+      await page.waitForSelector('text=Pass completed successfully')
 
       await checkOverflow(page, 'Dashboard with ServiceLogo everywhere @ 1280', results)
       await shot(page, 'dashboard-servicelogo')

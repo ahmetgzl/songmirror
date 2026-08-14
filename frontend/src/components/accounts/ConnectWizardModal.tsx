@@ -41,7 +41,7 @@ const YTMUSIC_BROWSER_MODE_DETAIL = 'no-quota (browser cookies) mode'
 const AUTH_KIND_TITLES: Record<Account['auth_kind'], string> = {
   oauth_redirect: 'Connect with a browser sign-in',
   oauth_device: 'Connect with a device code',
-  token_paste: 'Connect by pasting your tokens',
+  token_paste: 'Connect from a signed-in browser session',
   api_key: 'Connect with a server URL and API key',
 }
 
@@ -85,6 +85,81 @@ const CONNECT_GUIDES: Record<string, ConnectGuideContent> = {
       <>Paste both below. On the next step you’ll whitelist the exact redirect URI this wizard shows you.</>,
     ],
     link: { href: 'https://developer.spotify.com/dashboard', label: 'Open Spotify dashboard' },
+  },
+  tidal: {
+    intro: 'Use the short-lived OpenAPI token already issued to your signed-in TIDAL web player.',
+    steps: [
+      <>
+        Open <GuideLink href="https://listen.tidal.com">listen.tidal.com</GuideLink>, sign in, and open dev tools{' '}
+        (<Code>F12</Code>) → <strong>Network</strong>.
+      </>,
+      <>Open one of your playlists, then filter for <Code>openapi.tidal.com/v2</Code>.</>,
+      <>
+        Select a request and choose <strong>Copy → Copy request headers</strong> (or <strong>Copy as cURL</strong>).
+      </>,
+      <>Paste the copied block below. SongMirror extracts only its Bearer token and catalog country.</>,
+    ],
+    note: 'No developer app or TIDAL password is stored. Re-paste a fresh request when the short-lived session expires.',
+  },
+  qobuz: {
+    intro: 'Use the first-party API session from your signed-in Qobuz web player; no business API approval is needed.',
+    steps: [
+      <>
+        Open <GuideLink href="https://play.qobuz.com">play.qobuz.com</GuideLink>, sign in, and open dev tools{' '}
+        (<Code>F12</Code>) → <strong>Network</strong>.
+      </>,
+      <>Play or browse anything, then filter for <Code>api.json/0.2</Code>.</>,
+      <>
+        Choose any request that contains <Code>X-App-Id</Code> and <Code>X-User-Auth-Token</Code>, then copy its{' '}
+        <strong>request headers</strong> or choose <strong>Copy as cURL</strong>.
+      </>,
+      <>Paste it below; SongMirror keeps only those two Qobuz authentication headers.</>,
+    ],
+    note: 'An album/story request works when its signed-in X-App-Id and X-User-Auth-Token headers are included. Cookies are discarded.',
+  },
+  deezer: {
+    intro: 'Use Deezer’s signed-in renewal session to keep its short-lived Pipe token current automatically.',
+    steps: [
+      <>
+        Open <GuideLink href="https://www.deezer.com">deezer.com</GuideLink>, sign in, and open dev tools{' '}
+        (<Code>F12</Code>) → <strong>Network</strong>.
+      </>,
+      <>Reload Deezer, then filter for <Code>auth.deezer.com/login/renew</Code>.</>,
+      <>
+        Select the renewal <Code>POST</Code> and choose <strong>Copy → Copy request headers</strong> (or{' '}
+        <strong>Copy as cURL</strong>), then paste it into the renewal field below.
+      </>,
+      <>
+        SongMirror keeps only the <Code>refresh-token</Code> cookie. A current <Code>pipe.deezer.com/api</Code>{' '}
+        Bearer request is an optional immediate bootstrap.
+      </>,
+      <>
+        Firefox may copy only a semicolon-delimited cookie block; paste that whole block into the renewal field and
+        SongMirror will still extract only <Code>refresh-token</Code>.
+      </>,
+    ],
+    note: 'The Pipe JWT renews automatically and handles both additions and removals. No arl cookie is needed, and the complete browser cookie jar is never retained.',
+  },
+  amazon: {
+    intro: 'Use a signed-in Amazon Music request to keep its short-lived web-player token current automatically.',
+    steps: [
+      <>
+        Open <GuideLink href="https://music.amazon.com">music.amazon.com</GuideLink>, sign in, and open your browser’s
+        dev tools (<Code>F12</Code>, or <Code>⌥⌘I</Code> on Mac).
+      </>,
+      <>
+        In <strong>Network</strong>, reload the page, filter for <Code>config.json</Code>, and select that request.
+      </>,
+      <>
+        Choose <strong>Copy request headers</strong> or <strong>Copy as cURL</strong>, then paste it into the renewal
+        field below.
+      </>,
+      <>
+        Paste those <strong>request</strong> headers into the renewal field. Its <strong>Response</strong> JSON is only
+        an optional bootstrap in the first field.
+      </>,
+    ],
+    note: 'A /pandaToken request works too when it appears, but it is not required. SongMirror keeps only a named allowlist of authentication cookies, renews internally through /pandaToken, and drops unrelated browser data.',
   },
   apple: {
     intro: 'No developer account needed. Copy two tokens the Apple Music web player already uses.',
@@ -165,6 +240,15 @@ const CONNECT_GUIDES: Record<string, ConnectGuideContent> = {
 const HEADER_PASTE_SOURCES: Record<string, { headerName: string; clean?: (value: string) => string }> = {
   APPLE_BEARER_TOKEN: { headerName: 'authorization', clean: (v) => v.replace(/^bearer\s+/i, '').trim() },
   APPLE_USER_TOKEN: { headerName: 'media-user-token' },
+}
+
+const RAW_SESSION_PLACEHOLDERS: Record<string, string> = {
+  TIDAL_WEB_HEADERS: 'authorization: Bearer …\n—or paste Copy as cURL—',
+  QOBUZ_WEB_REQUEST: 'X-App-Id: …\nX-User-Auth-Token: …\n—or paste Copy as cURL—',
+  DEEZER_WEB_HEADERS: 'authorization: Bearer …\n—or paste Copy as cURL—',
+  DEEZER_REFRESH_TOKEN: 'Cookie: refresh-token=…\n—or paste the auth.deezer.com request as cURL—',
+  AMAZON_MUSIC_WEB_HEADERS: '{\n  "accessToken": "…",\n  "deviceId": "…",\n  "deviceType": "…"\n}',
+  AMAZON_MUSIC_RENEWAL_REQUEST: 'Cookie: at-main-music=…; session-id=…\n—or paste config.json Copy as cURL—',
 }
 
 /** Parses a raw "copy request headers" block (case-insensitive, line-based
@@ -482,13 +566,40 @@ function FieldsStep({
       />
       {account.fields.map((field) => {
         const keepable = canKeepBlank && field.configured
+        const required = field.required && !keepable
+        if (RAW_SESSION_PLACEHOLDERS[field.key]) {
+          return (
+            <div key={field.key} className="flex flex-col gap-1.5">
+              <label htmlFor={`browser-session-${field.key}`} className="text-[12.5px] font-semibold text-text-2">
+                {field.label}
+                {required && (
+                  <>
+                    {' '}<span className="text-danger" aria-hidden="true">*</span>
+                    <span className="sr-only"> (required)</span>
+                  </>
+                )}
+              </label>
+              <textarea
+                id={`browser-session-${field.key}`}
+                required={required}
+                rows={8}
+                autoComplete="off"
+                value={values[field.key] ?? ''}
+                onChange={(e) => onChange(field.key, e.target.value)}
+                placeholder={RAW_SESSION_PLACEHOLDERS[field.key]}
+                className="w-full resize-y rounded-control border border-border-strong bg-field px-3 py-2 font-mono text-xs text-text placeholder:text-text-3 focus:border-accent focus:outline-none"
+              />
+              {field.help && <p className="text-xs text-text-3">{field.help}</p>}
+            </div>
+          )
+        }
         return (
           <TextField
             key={field.key}
             label={field.label}
             help={field.help || undefined}
             type={field.secret ? 'password' : 'text'}
-            required={field.required && !keepable}
+            required={required}
             placeholder={keepable && field.secret ? 'saved — leave blank to keep' : undefined}
             autoComplete="off"
             value={values[field.key] ?? ''}

@@ -26,14 +26,12 @@ export function lockedSourceOf(job: Pick<SyncJob, 'mode' | 'source'>): string | 
   return job.mode === 'nway' ? null : job.source || 'spotify'
 }
 
-/** Which providers a job actually includes. An explicit, non-empty
- * `providers` list wins; an empty one defaults to every currently-connected
- * peer (a display-time fallback only — nothing is written back until the
- * user actually touches a toggle). */
+/** Which providers a job explicitly includes. Empty means none; treating it
+ * as "every connected peer" made old jobs silently acquire newly connected
+ * providers. The new-job wizard materializes its initial selection instead. */
 export function enabledProvidersOf(job: Pick<SyncJob, 'providers'>, peers: Account[]): Set<string> {
   const explicit = parseCsv(job.providers)
-  if (explicit.length > 0) return new Set(explicit)
-  return new Set(peers.filter((a) => a.state === 'connected').map((a) => a.id))
+  return new Set(explicit.filter((id) => peers.some((peer) => peer.id === id)))
 }
 
 export interface SyncSummaryRow {

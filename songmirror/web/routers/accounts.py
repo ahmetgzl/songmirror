@@ -106,7 +106,7 @@ async def poll(cid: str, request: Request):
 @router.delete("/api/accounts/{cid}")
 def disconnect(cid: str, request: Request):
     c = _conn(request, cid)
-    request.app.state.settings.save({f.key: "" for f in c.config_fields})  # blanks -> unconfigured
+    c.disconnect()
     return {"ok": True}
 
 

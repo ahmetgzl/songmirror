@@ -7,7 +7,7 @@
 
 # SongMirror
 
-Self-hosted, always-on **playlist sync for Spotify, Apple Music, and YouTube Music** — plus a local, Jellyfin-ready audio mirror.<br/>
+Self-hosted, always-on **playlist sync for Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music, and YouTube Music** — plus a local, Jellyfin-ready audio mirror.<br/>
 A free, open-source, **self-hosted alternative to Soundiiz, TuneMyMusic, and FreeYourMusic** that _you_ own and run.
 
 **One-way mirror or full bidirectional (N-way) sync · one-off playlist transfers · ISRC-accurate matching · all from your browser**
@@ -33,7 +33,7 @@ A free, open-source, **self-hosted alternative to Soundiiz, TuneMyMusic, and Fre
 
 <sup>Set it up once — every playlist you curate stays mirrored across every service, in date-added order.</sup>
 
-<a href="./.github/assets/songmirror-demo.mp4"><img src="./.github/assets/songmirror-demo.gif" alt="SongMirror demo — logo reveal, dashboard, one-way and bidirectional sync setup, live playlist transfers, and ISRC-accurate matching across Spotify, Apple Music, and YouTube Music" width="88%"></a>
+<a href="./.github/assets/songmirror-demo.mp4"><img src="./.github/assets/songmirror-demo.gif" alt="SongMirror demo — logo reveal, dashboard, one-way and bidirectional sync setup, live playlist transfers, and ISRC-accurate matching across seven music services" width="88%"></a>
 
 <sup>▶ <a href="./.github/assets/songmirror-demo.mp4">Watch the 1080p version</a></sup>
 
@@ -56,7 +56,12 @@ A free, open-source, **self-hosted alternative to Soundiiz, TuneMyMusic, and Fre
   - [Bidirectional (N-way) sync](#bidirectional-n-way-sync)
 - [💿 Local download mirror (Jellyfin)](#-local-download-mirror-jellyfin)
 - [🔌 Connecting each service](#-connecting-each-service)
+  - [Credential renewal](#credential-renewal)
   - [Spotify](#spotify)
+  - [TIDAL](#tidal)
+  - [Qobuz](#qobuz)
+  - [Deezer](#deezer)
+  - [Amazon Music](#amazon-music)
   - [Apple Music](#apple-music)
   - [YouTube Music](#youtube-music)
 - [🖥️ Headless CLI](#️-headless-cli)
@@ -102,15 +107,15 @@ SongMirror keeps your playlists identical everywhere without manual re-adding, o
 
 **One dashboard for every library — sync status, jobs, live activity, and service health**
 
-<img src="./.github/assets/dashboard.png" alt="SongMirror dashboard showing sync status, configured sync jobs, a live activity feed, and connected Spotify, Apple Music, YouTube Music, and Jellyfin services" width="82%">
+<img src="./.github/assets/dashboard.png" alt="SongMirror dashboard showing sync status, configured jobs, live activity, and health for Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music, YouTube Music, and Jellyfin" width="82%">
 
 **Set up any number of syncs — one-way or bidirectional — in a short wizard**
 
-<img src="./.github/assets/sync-wizard.png" alt="The SongMirror setup wizard: choosing a one-way or bidirectional (N-way) direction for a sync job" width="82%">
+<img src="./.github/assets/sync-wizard.png" alt="The SongMirror setup wizard selecting services for a bidirectional sync across Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music, and YouTube Music" width="82%">
 
 **Connect every service in your browser — one-click OAuth, guided token paste, or an API key**
 
-<img src="./.github/assets/accounts.png" alt="The Accounts page for connecting Spotify, Apple Music, YouTube Music, and Jellyfin" width="82%">
+<img src="./.github/assets/accounts.png" alt="The Accounts page for connecting Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music, YouTube Music, and Jellyfin" width="82%">
 
 **Browse and pair playlists across services**
 
@@ -161,14 +166,14 @@ docker compose up -d --build     # build + start in the background
 docker compose logs -f           # watch it work
 ```
 
-**No `.env` is needed to start** — everything is configured in the browser and saved under `./data`. Connect Spotify / YouTube Music with one-click OAuth (the wizard shows the exact redirect URI to whitelist), paste your Apple Music tokens, add a Jellyfin API key — all from the Accounts page — then build your syncs on the Sync page.
+**No `.env` is needed to start** — everything is configured in the browser and saved under `./data`. OAuth, partner-token, and API-key setup all live on the Accounts page; each wizard explains the service-specific prerequisites and exact callback URI. Then build your syncs on the Sync page.
 
 | | |
 | --- | --- |
 | **Port** | The UI is published on host **8888** (the `8888:8080` mapping in `docker-compose.yml`; change the host side if it clashes). **LAN-only** — don't port-forward it to the internet; the UI has no login yet. |
 | **Persistence** | `./data` holds credentials, tokens, caches, and the song archive. Back it up to keep your setup across rebuilds. |
 | **Downloads** | Set `DOWNLOAD_DIR` (in `.env` or your shell) to your host music dir (e.g. `F:\Torrent\Music`); compose bind-mounts it to `/music`. From Docker, set `JELLYFIN_URL` to `http://host.docker.internal:8096`. |
-| **Expired Apple tokens** | Re-paste them on the Accounts page; no restart needed. |
+| **Expired sessions** | Renewable sessions recover on the next scheduled or manual pass. TIDAL web, Qobuz, and Apple Music tokens must be re-pasted on the Accounts page when rejected; no restart is needed. |
 
 <div align="right">
 
@@ -181,11 +186,11 @@ docker compose logs -f           # watch it work
 Every pass, for each selected playlist name that exists on the source:
 
 1. Snapshot the source playlist (tracks, ISRCs, added-at dates).
-2. Reconcile the same-named playlist on each target — Apple Music (via the web player's amp-api) and YouTube Music (via the official [YouTube Data API v3](https://developers.google.com/youtube/v3)) — concurrently.
+2. Reconcile the same-named playlist on every selected, connected target concurrently through that service's account-authorized playlist API.
 3. Missing tracks are resolved (cached links → ISRC → scored search) and appended oldest-first; tracks gone from the source are removed behind guards.
 4. Optionally, [spotDL](https://github.com/spotDL/spotify-downloader) syncs a local audio folder per playlist.
 
-The default source of truth is Spotify, but **one-way mode is provider-agnostic** — Apple Music or YouTube Music can be the source instead.
+The default source of truth is Spotify, but **one-way mode is provider-agnostic** — any connected playlist peer can be the source instead.
 
 ### Matching
 
@@ -203,7 +208,7 @@ The **duration anchor** unlocks the looser title match, so a different version (
 
 ### Bidirectional (N-way) sync
 
-By default one provider is the source of truth and edits flow one way. In **N-way mode** every provider is a peer: add or remove a track on Spotify, Apple Music, _or_ YouTube Music and the change propagates to the others.
+By default one provider is the source of truth and edits flow one way. In **N-way mode** every selected provider is a peer: add or remove a track on any one and the change propagates to the others.
 
 Bidirectional sync is impossible statelessly, so each logical playlist's canonical membership is snapshotted after every clean pass. Each pass diffs every provider against that snapshot, unions the changes, and reconciles everyone to the result:
 
@@ -245,9 +250,9 @@ uv tool install spotdl       # isolated CLI; or: pipx install spotdl
 - **Incremental** — after the first full download, only newly-added tracks are fetched; removed tracks (and their emptied album folders) are pruned. An interrupted run continues next pass.
 - **Newest-first `.m3u8`** — written in date-added order, newest at the top (set `LOCAL_MIRROR_ORDER=oldest` to flip). Rebuild covers / tags / mtimes from existing files with `uv run main.py --refresh-local`.
 - **Playlist covers in Jellyfin** — Jellyfin ignores a cover file next to an m3u, so set `JELLYFIN_URL` + `JELLYFIN_API_KEY` and each pass uploads the real playlist cover via the Jellyfin API.
-- **Audio quality** — the source is YouTube, so without a YT Music **Premium** cookie the ceiling is ~128–160 kbps. `LOCAL_MIRROR_FORMAT=opus` keeps YouTube's native stream without an mp3 re-encode; a Premium cookie (`LOCAL_MIRROR_COOKIE_FILE`) unlocks 256 kbps AAC.
+- **Audio quality** — the source is YouTube, so without a YT Music **Premium** cookie the ceiling is ~128–160 kbps. `LOCAL_MIRROR_FORMAT=opus` keeps YouTube's native stream without an mp3 re-encode; a Premium cookie (`LOCAL_MIRROR_COOKIE_FILE`) unlocks 256 kbps AAC. Selecting `flac` changes the output container but cannot turn a lossy source into lossless audio.
 
-<sub>Downloading audio is for personal use of content you have access to — your call.</sub>
+Monochrome's current FLAC path uses browser-gated, single-use playback resources rather than a stable, provider-authorized file-export API, so SongMirror does not automate it. Use the local mirror only for content you own or are otherwise authorized to copy.
 
 <div align="right">
 
@@ -257,7 +262,22 @@ uv tool install spotdl       # isolated CLI; or: pipx install spotdl
 
 ## 🔌 Connecting each service
 
-In the web app, the **Accounts** page walks you through each service and shows the exact values to paste. You supply your own API app credentials once — nothing is proxied through a third party.
+In the web app, the **Accounts** page walks you through each service and shows the exact values to paste. Nothing is proxied through a third party.
+
+### Credential renewal
+
+SongMirror refreshes credentials **just in time**, not with a separate token-refresh timer. Every manual or scheduled sync pass validates the connectors it uses and renews supported access tokens before the first request (or once after an authentication rejection). It is normal for a short-lived access token to expire between passes—the durable refresh token or renewal cookie is what matters. The Accounts page validates status when it loads or regains focus, but it is not the background keep-alive; enabled sync schedules are.
+
+| Service | Renewal behavior |
+| --- | --- |
+| **Spotify** | OAuth access tokens refresh automatically from the saved refresh token when a client is built. Cookie mode mints a web access token from the saved `sp_dc` cookie on demand and retries with a new token after a `401`; the underlying cookie can still be revoked. |
+| **TIDAL** | A pasted web-player Bearer cannot be renewed and must be captured again after expiry. The optional developer OAuth fallback refreshes automatically when a refresh token is available. |
+| **Qobuz** | The pasted `X-User-Auth-Token` is used until Qobuz rejects it, then must be captured again. |
+| **Deezer** | The short-lived Pipe JWT renews automatically from the saved `refresh-token` before use and once after a `401/403`; rotated renewal state is persisted. |
+| **Amazon Music** | The web access token renews from the allowlisted signed-in browser cookies shortly before known expiry and once after a `401/403`; refreshed device context and rotated cookies are persisted. Logout, security changes, or server-side revocation still require a fresh capture. |
+| **Apple Music** | The pasted Bearer and Media-User-Token cannot be renewed by SongMirror and must be captured again after rejection. |
+| **YouTube Music** | Data API OAuth refreshes automatically within 60 seconds of expiry. Browser mode attempts Google's cookie rotation whenever a sync target is built; an already-expired browser session must be exported again. |
+| **Jellyfin** | The API key has no access-token refresh cycle; replace it only if it is revoked or deleted. |
 
 ### Spotify
 
@@ -265,6 +285,35 @@ In the web app, the **Accounts** page walks you through each service and shows t
 2. Add a redirect URI — the connect wizard shows the exact one, e.g. `http://127.0.0.1:8888/oauth/spotify/callback` (Docker) or `http://127.0.0.1:8080/oauth/spotify/callback` (direct run). Spotify only allows an `http` redirect on the loopback IP, so authorize via `http://127.0.0.1:<port>`, not a LAN IP.
 
 The web UI requests read + write scopes up front (Spotify is a write target in N-way syncs and reverse transfers). The CLI reads Spotify read-only in one-way mode.
+
+### TIDAL
+
+Sign in at <https://listen.tidal.com>, open DevTools → **Network**, open a playlist, and filter for `openapi.tidal.com/v2`. Copy a request's headers (or copy it as cURL) into the wizard. SongMirror keeps only the Bearer token and two-letter catalog country. An existing developer OAuth token remains supported as an environment fallback.
+
+Only catalog metadata and the signed-in user's playlists are used; playback assets are outside this integration. Browser tokens are short-lived, so re-paste when the account reports **Expired**.
+
+### Qobuz
+
+Sign in at <https://play.qobuz.com>, open DevTools → **Network**, and filter for `api.json/0.2`. Choose any request containing `X-App-Id` and `X-User-Auth-Token`—including an authenticated `album/story` request—then copy its request headers or copy it as cURL and paste it into the wizard. SongMirror persists only those two values, sends them using the same header-based flow as the web player, and discards cookies and unrelated browser metadata. No business API approval or user id is required; existing partner credentials remain a compatible environment fallback.
+
+The adapter uses catalog search and playlist endpoints only—it does not request stream or file URLs.
+
+### Deezer
+
+Sign in at <https://www.deezer.com>, open DevTools → **Network**, and reload the page. Filter for `auth.deezer.com/login/renew`, copy that request's headers (or copy it as cURL), and paste it into the renewal field. Firefox may instead copy the request cookies as a bare semicolon-delimited block; that shape is accepted too. SongMirror retains only the dedicated `refresh-token` cookie and uses it to renew Deezer's short-lived Pipe JWT automatically. You may also paste a current `pipe.deezer.com/api` request as an immediate bootstrap, but it is not required when renewal is configured. Playlist additions and removals both use the renewable Pipe session; no `arl` cookie is needed. Existing developer OAuth tokens remain a compatible environment fallback.
+
+### Amazon Music
+
+No developer approval is required for the default connector. It uses the same authenticated GraphQL and token-renewal routes as the Amazon Music web player:
+
+1. Sign in at <https://music.amazon.com> and open DevTools → **Network**.
+2. Reload the page, filter for `config.json`, and select the signed-in request. (`pandaToken` works too when it appears, but it is not required.)
+3. Choose **Copy request headers** or **Copy as cURL**, then paste it into the renewal field.
+4. Optionally copy the signed-in `config.json` **Response** into the bootstrap field; SongMirror can normally fetch that device context using the renewal session.
+
+SongMirror derives the same `AmznMusic` authorization value locally and refreshes it through `music.amazon.com/pandaToken` before expiry or once after an authentication rejection. It stores only a named allowlist of Amazon authentication/session cookies plus limited Music-client device context; analytics, experiment, AWS-console, CSRF, and other unrelated browser data are discarded. Those retained cookies are still sensitive, so keep SongMirror private on your LAN. A logout, password/security change, or Amazon-side revocation can still require one fresh capture.
+
+This is an unsupported first-party web-client interface and Amazon can change it without notice. The documented [Amazon Music Web API](https://developer.amazon.com/docs/music/API_web_overview.html) is still a closed beta; approved partner credentials remain an optional fallback when configured through environment variables.
 
 ### Apple Music
 
@@ -310,7 +359,7 @@ uv run main.py --execute --loop --interval 15m        # run forever
 uv run main.py --execute --max-removals 100           # one-off larger cleanup
 ```
 
-Key env vars (see `.env.example`): `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET`, `APPLE_BEARER_TOKEN` / `APPLE_USER_TOKEN`, `PLAYLISTS`, `SYNC_INTERVAL`, `MAX_ADDS` / `MAX_REMOVALS`, `DOWNLOAD_DIR`, `SYNC_MODE=nway`, `PROVIDERS`.
+Key env vars (see `.env.example`): the credentials for whichever providers you use, `PLAYLISTS`, `SYNC_INTERVAL`, `MAX_ADDS` / `MAX_REMOVALS`, `DOWNLOAD_DIR`, `SYNC_MODE=nway`, and `PROVIDERS`.
 
 <div align="right">
 
@@ -327,7 +376,7 @@ Removals are destructive, so they're guarded:
 - **Removals are off by default** — `MAX_REMOVALS=0` holds every removal back (logged, never applied), so a licensing takedown on one platform can't cascade a deletion to the rest. Opt in per sync with the "Mirror removals" toggle (or set `MAX_REMOVALS`), and even then more pending removals than the cap in one pass → all skipped and logged.
 - More than `MAX_ADDS` pending additions → the rest continue next pass (giant one-burst backfills are what trip bot detection).
 - **Net-loss protection** — a target-side track resembling a source track that has no match on that service is held, not deleted.
-- Any Apple `401/403` aborts the pass immediately — no partial deletes on expired tokens.
+- Any provider authentication failure aborts that provider's pass immediately — no partial deletes on expired tokens.
 
 <div align="right">
 
@@ -363,7 +412,7 @@ songmirror/
 frontend/       # React + Vite SPA (built and served by the API in production)
 ```
 
-**Adding a service** (Tidal, Deezer, …): subclass `MirrorTarget`, implement ~8 methods, add its builder to `engine/targets`' `_REGISTRY`, and add a matching `Connector` under `services/accounts`. All reconciliation — diff, ordering, safety rails, logging, snapshot-skip — is inherited.
+**Adding another service**: subclass `MirrorTarget`, implement ~8 methods, add its builder to `engine/targets`' `_REGISTRY`, and add a matching `Connector` under `services/accounts`. All reconciliation — diff, ordering, safety rails, logging, snapshot-skip — is inherited.
 
 <div align="right">
 
@@ -374,7 +423,10 @@ frontend/       # React + Vite SPA (built and served by the API in production)
 ## 🩺 Troubleshooting
 
 - **`Missing required environment variable`** — fill in `.env` (CLI) or connect the service in the UI.
-- **`Apple rejected … (401/403)`** — re-capture the two Apple tokens (they expire).
+- **TIDAL, Qobuz, or Apple reports `Expired` / `401` / `403`** — these pasted sessions have no renewable secret; capture a fresh signed-in request or token in Accounts.
+- **Deezer renewal fails** — capture a fresh `auth.deezer.com/login/renew` request (or its `refresh-token` cookie). A current Pipe Bearer alone is only a temporary bootstrap.
+- **Amazon Music renewal fails** — capture a fresh signed-in `config.json` request. The response JSON is optional; the request's allowlisted authentication cookies are the durable renewal material.
+- **YouTube Music browser mode expires** — export fresh browser request headers. For the most durable unattended setup, use Data API OAuth with an in-production consent screen.
 - **Spotify OAuth redirect mismatch** — the redirect URI in your Spotify app must exactly match the one the wizard shows (including the port).
 - **A playlist isn't syncing** — confirm it's in the sync's playlist scope and exists on the source (targets are auto-created on a real pass).
 
@@ -383,10 +435,6 @@ frontend/       # React + Vite SPA (built and served by the API in production)
 [![][back-to-top]](#readme-top)
 
 </div>
-
-## ⭐ Star history
-
-[![Star History Chart](https://api.star-history.com/svg?repos=ahnafnafee/songmirror&type=Date)](https://star-history.com/#ahnafnafee/songmirror&Date)
 
 ## 📄 License
 
@@ -414,8 +462,8 @@ This project is [MIT](./LICENSE) licensed.
 [last-commit-link]: https://github.com/ahnafnafee/songmirror/commits/main
 [github-issues-link]: https://github.com/ahnafnafee/songmirror/issues
 [share-x-shield]: https://img.shields.io/badge/-share%20on%20x-black?labelColor=black&logo=x&logoColor=white&style=flat-square
-[share-x-link]: https://x.com/intent/tweet?text=SongMirror%20%E2%80%94%20self-hosted%20playlist%20sync%20for%20Spotify%2C%20Apple%20Music%20%26%20YouTube%20Music&url=https%3A%2F%2Fgithub.com%2Fahnafnafee%2Fsongmirror
+[share-x-link]: https://x.com/intent/tweet?text=SongMirror%20%E2%80%94%20self-hosted%20playlist%20sync%20across%20seven%20music%20services&url=https%3A%2F%2Fgithub.com%2Fahnafnafee%2Fsongmirror
 [share-reddit-shield]: https://img.shields.io/badge/-share%20on%20reddit-black?labelColor=black&logo=reddit&logoColor=white&style=flat-square
-[share-reddit-link]: https://www.reddit.com/submit?title=SongMirror%20%E2%80%94%20self-hosted%20playlist%20sync%20across%20Spotify%2C%20Apple%20Music%20%26%20YouTube%20Music&url=https%3A%2F%2Fgithub.com%2Fahnafnafee%2Fsongmirror
+[share-reddit-link]: https://www.reddit.com/submit?title=SongMirror%20%E2%80%94%20self-hosted%20playlist%20sync%20across%20seven%20music%20services&url=https%3A%2F%2Fgithub.com%2Fahnafnafee%2Fsongmirror
 [share-linkedin-shield]: https://img.shields.io/badge/-share%20on%20linkedin-black?labelColor=black&logo=linkedin&logoColor=white&style=flat-square
 [share-linkedin-link]: https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fgithub.com%2Fahnafnafee%2Fsongmirror

@@ -9,8 +9,10 @@ def _conn(cid, tmp_path):
     return CONNECTORS[cid](SettingsStore(dir=tmp_path))
 
 
-def test_registry_has_all_four():
-    assert set(CONNECTORS) == {"spotify", "apple", "ytmusic", "jellyfin"}
+def test_registry_has_all_supported_services():
+    assert set(CONNECTORS) == {
+        "spotify", "tidal", "qobuz", "deezer", "amazon", "apple", "ytmusic", "jellyfin"
+    }
 
 
 def test_apple_unconfigured_then_submit_stores(tmp_path, monkeypatch):

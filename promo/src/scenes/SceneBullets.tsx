@@ -94,7 +94,7 @@ export const SceneBullets: React.FC<{ dur: number }> = ({ dur }) => {
     <AbsoluteFill style={{ opacity: fadeInOut(frame, dur) }}>
       <GhostCard
         src="shots/accounts.png"
-        aspect={0.70313}
+        aspect={0.77188}
         left={-120}
         rotate={-8}
         frame={frame}
@@ -103,7 +103,7 @@ export const SceneBullets: React.FC<{ dur: number }> = ({ dur }) => {
       />
       <GhostCard
         src="shots/playlists.png"
-        aspect={0.8289}
+        aspect={1.12188}
         left={1520}
         rotate={7}
         frame={frame}

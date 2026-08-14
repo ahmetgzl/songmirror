@@ -29,19 +29,57 @@ def _pl_id(pl):
 
 def _pl_image(pl):
     """Best-effort cover-art URL across provider shapes (empty string if none)."""
-    imgs = pl.get("images")  # Spotify: [{"url": ...}]
-    if imgs and (imgs[0] or {}).get("url"):
-        return imgs[0]["url"]
+    def entry_url(value):
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, dict):
+            for key in ("url", "href", "src"):
+                url = value.get(key)
+                if isinstance(url, str) and url.strip():
+                    return url.strip()
+        return ""
+
+    def first_url(values, *, reverse=False):
+        if not isinstance(values, (list, tuple)):
+            return entry_url(values)
+        entries = reversed(values) if reverse else values
+        for entry in entries:
+            if url := entry_url(entry):
+                return url
+        return ""
+
+    # Qobuz returns playlist and collage artwork as lists of URL strings.
+    for key in ("image_rectangle", "images300", "image_rectangle_mini"):
+        if url := first_url(pl.get(key)):
+            return url
+
+    # Deezer's Pipe API returns Picture objects, while its REST API returns
+    # size-specific scalar fields. Picture.urls is ordered from small to large.
+    for key in ("picture_xl", "picture_big", "picture_medium"):
+        if url := entry_url(pl.get(key)):
+            return url
+    for key in ("picture", "defaultPicture"):
+        picture = pl.get(key)
+        if isinstance(picture, dict) and (url := first_url(picture.get("urls"), reverse=True)):
+            return url
+        if url := entry_url(picture):
+            return url
+
+    # Spotify, TIDAL, and Amazon use image objects; current Qobuz responses use
+    # strings. Mixed/empty arrays are tolerated so one malformed card cannot
+    # fail the entire provider browse response.
+    if url := first_url(pl.get("images")):
+        return url
     art = (pl.get("attributes") or {}).get("artwork") or {}  # Apple: {w}x{h} template
-    if art.get("url"):
+    if isinstance(art, dict) and art.get("url"):
         return art["url"].replace("{w}", "300").replace("{h}", "300")
     thumbs = pl.get("thumbnails") or (pl.get("snippet") or {}).get("thumbnails")  # YouTube
     if isinstance(thumbs, list) and thumbs:
-        return (thumbs[-1] or {}).get("url", "")
+        return first_url(thumbs, reverse=True)
     if isinstance(thumbs, dict):
         for size in ("high", "medium", "default"):
-            if thumbs.get(size):
-                return thumbs[size].get("url", "")
+            if url := entry_url(thumbs.get(size)):
+                return url
     return ""
 
 

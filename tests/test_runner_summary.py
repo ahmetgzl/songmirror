@@ -40,6 +40,48 @@ def test_oneway_returns_summary_shape(monkeypatch):
     assert isinstance(s["duration_s"], float)
 
 
+def test_non_spotify_oneway_does_not_require_an_unselected_spotify_account(monkeypatch):
+    class Source:
+        source, name = "tidal", "TIDAL"
+
+        @staticmethod
+        def list_playlists():
+            return {}
+
+    def unexpected_spotify(*args, **kwargs):
+        raise AssertionError("Spotify should not be initialized when it is not participating")
+
+    monkeypatch.setattr(runner.spotify, "client", unexpected_spotify)
+    monkeypatch.setattr(runner, "build_one", lambda *args, **kwargs: Source())
+    monkeypatch.setattr(runner, "build_targets", lambda opts, sp=None: [])
+
+    summary = runner.run_pass(_opts(sync_source="tidal", providers="tidal,deezer"))
+
+    assert summary["ok"] is True
+    assert summary["per_target"] == []
+
+
+def test_non_spotify_oneway_skips_unconfigured_spotify_when_providers_are_auto(monkeypatch):
+    class Source:
+        source, name = "tidal", "TIDAL"
+
+        @staticmethod
+        def list_playlists():
+            return {}
+
+    def unavailable_spotify(**kwargs):
+        raise RuntimeError("Missing required environment variable: SPOTIFY_CLIENT_ID")
+
+    monkeypatch.setattr(runner.spotify, "client", unavailable_spotify)
+    monkeypatch.setattr(runner, "build_one", lambda *args, **kwargs: Source())
+    monkeypatch.setattr(runner, "build_targets", lambda opts, sp=None: [])
+
+    summary = runner.run_pass(_opts(sync_source="tidal", providers=""))
+
+    assert summary["ok"] is True
+    assert summary["per_target"] == []
+
+
 def test_nway_wraps_accumulated_summary(monkeypatch):
     monkeypatch.setattr(runner.spotify, "client", lambda writable=False: object())
     monkeypatch.setattr(runner.spotify, "playlists_by_name", lambda sp: {})

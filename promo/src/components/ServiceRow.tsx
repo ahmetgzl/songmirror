@@ -6,11 +6,15 @@ import { enter, rise } from "../util/anim";
 
 const SERVICES = [
   { name: "Spotify", color: COLORS.spotify },
+  { name: "TIDAL", color: COLORS.tidal },
+  { name: "Qobuz", color: COLORS.qobuz },
+  { name: "Deezer", color: COLORS.deezer },
+  { name: "Amazon Music", color: COLORS.amazon },
   { name: "Apple Music", color: COLORS.apple },
   { name: "YouTube Music", color: COLORS.ytmusic },
 ];
 
-// A row of brand-dot chips for the three supported streaming services.
+// A row of brand-dot chips for every supported streaming service.
 export const ServiceRow: React.FC<{ delay?: number }> = ({ delay = 0 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();

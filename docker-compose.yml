@@ -25,6 +25,15 @@ services:
       DOWNLOAD_STATE_FILE: /data/download_state.json
       YTMUSIC_AUTH_FILE: /data/ytmusic_oauth.json   # YouTube Data API v3 OAuth refresh token
       YTMUSIC_CACHE_FILE: /data/ytmusic_resolve_cache.json
+      TIDAL_TOKEN_FILE: /data/tidal_oauth.json
+      TIDAL_CACHE_FILE: /data/tidal_resolve_cache.json
+      DEEZER_TOKEN_FILE: /data/deezer_oauth.json
+      DEEZER_WEB_SESSION_FILE: /data/deezer_web_session.json
+      DEEZER_CACHE_FILE: /data/deezer_resolve_cache.json
+      QOBUZ_CACHE_FILE: /data/qobuz_resolve_cache.json
+      AMAZON_MUSIC_TOKEN_FILE: /data/amazon_music_oauth.json
+      AMAZON_MUSIC_WEB_SESSION_FILE: /data/amazon_music_web_session.json
+      AMAZON_MUSIC_CACHE_FILE: /data/amazon_music_resolve_cache.json
       # Opt-in no-quota (youtubei) backend: drop a ytmusicapi browser-auth file
       # here and set YTMUSIC_PREFER_BROWSER=1 (Settings) to route YT reads/writes
       # through it instead of the quota-capped Data API — the fix for large

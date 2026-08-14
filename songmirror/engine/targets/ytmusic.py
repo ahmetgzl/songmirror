@@ -31,6 +31,7 @@ from ..config import REQUEST_TIMEOUT, polite_sleep
 from ..logs import log, log_note, log_warn
 from ..matching import normalize_text, romanized, score_candidate, track_key
 from .base import MirrorTarget, TargetAuthError
+from .provider_utils import source_playlist_details
 
 DEFAULT_AUTH_FILE = "ytmusic_oauth.json"
 API = "https://www.googleapis.com/youtube/v3"
@@ -257,13 +258,12 @@ class YTMusicTarget(MirrorTarget):
         return playlist.get("title", "")
 
     def create(self, sp_playlist):
-        from .. import spotify
-
-        body = {"snippet": {"title": sp_playlist.get("name", ""), "description": spotify.description(sp_playlist)},
+        name, description = source_playlist_details(sp_playlist)
+        body = {"snippet": {"title": name, "description": description},
                 "status": {"privacyStatus": "private"}}
         pid = self._request("POST", "playlists", params={"part": "snippet,status"}, json_body=body).json()["id"]
         polite_sleep(2.0)  # let the new playlist settle before writing to it
-        return {"playlistId": pid, "title": sp_playlist["name"], "count": 0}
+        return {"playlistId": pid, "title": name, "count": 0}
 
     def playlist_tracks(self, playlist):
         tracks = []
@@ -393,13 +393,12 @@ class YTMusicBrowserTarget(YTMusicTarget):
         return out
 
     def create(self, sp_playlist):
-        from .. import spotify
-        pid = self._api.create_playlist(
-            sp_playlist.get("name", ""), spotify.description(sp_playlist), privacy_status="PRIVATE")
+        name, description = source_playlist_details(sp_playlist)
+        pid = self._api.create_playlist(name, description, privacy_status="PRIVATE")
         if not isinstance(pid, str):  # ytmusicapi returns a status dict/response on failure
             raise TargetAuthError(f"YouTube Music refused to create the playlist ({pid!r}).")
         polite_sleep(2.0)
-        return {"playlistId": pid, "title": sp_playlist.get("name", ""), "count": 0}
+        return {"playlistId": pid, "title": name, "count": 0}
 
     def playlist_tracks(self, playlist):
         data = _expired(lambda: self._api.get_playlist(playlist["playlistId"], limit=None),

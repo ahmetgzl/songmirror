@@ -1,0 +1,997 @@
+"""Contract tests for the additional account-authorized playlist peers."""
+
+import json
+
+from songmirror.services.settings import SettingsStore
+
+
+def test_tidal_jsonapi_track_shape_carries_isrc_artist_and_entry_id():
+    from songmirror.engine.targets.tidal import TidalTarget
+
+    body = {
+        "data": [{"type": "tracks", "id": "t1", "meta": {"itemId": "entry-1", "addedAt": "2026-01-01"}}],
+        "included": [
+            {
+                "type": "tracks",
+                "id": "t1",
+                "attributes": {"title": "Song", "duration": "PT3M2.5S", "isrc": "USAAA2600001"},
+                "relationships": {
+                    "artists": {"data": [{"type": "artists", "id": "a1"}]},
+                    "albums": {"data": [{"type": "albums", "id": "al1"}]},
+                },
+            },
+            {"type": "artists", "id": "a1", "attributes": {"name": "Artist"}},
+            {"type": "albums", "id": "al1", "attributes": {"title": "Album"}},
+        ],
+    }
+    track = TidalTarget._tracks_from_body(body)[0]
+    assert track == {
+        "id": "t1",
+        "relationship_id": "entry-1",
+        "name": "Song",
+        "artist": "Artist",
+        "artists": ["Artist"],
+        "album": "Album",
+        "duration_ms": 182500,
+        "isrc": "USAAA2600001",
+        "added_at": "2026-01-01",
+    }
+
+
+def test_tidal_connector_accepts_minimized_browser_headers(tmp_path, monkeypatch):
+    from songmirror.services.accounts.tidal import TidalConnector
+    from songmirror.tidal_web import parse_web_headers
+
+    store = SettingsStore(dir=tmp_path / "settings")
+    monkeypatch.setenv("TIDAL_WEB_HEADERS", "")
+    connector = TidalConnector(store)
+    monkeypatch.setattr(connector, "_validate", lambda raw=None: (True, "accepted"))
+    status = connector.submit(
+        {
+            "TIDAL_WEB_HEADERS": (
+                "GET /v2/playlists?countryCode=GB HTTP/2\n"
+                "authorization: Bearer header.eyJleHAiOjQxMDI0NDQ4MDB9.sig\n"
+                "cookie: do-not-keep"
+            )
+        }
+    )
+    assert status.state == "connected"
+    stored = parse_web_headers(connector._store.get("TIDAL_WEB_HEADERS"))
+    assert stored["authorization"].startswith("Bearer ")
+    assert stored["country_code"] == "US"  # relative request lines do not expose a parseable URL
+    assert "do-not-keep" not in connector._store.get("TIDAL_WEB_HEADERS")
+
+
+def test_tidal_legacy_country_rejects_token_like_value(tmp_path, monkeypatch):
+    from songmirror.engine.targets.tidal import TidalTarget
+    from songmirror.oauth import write_token
+
+    token_file = tmp_path / "tidal.json"
+    write_token(str(token_file), {"access_token": "access"})
+    monkeypatch.setenv("TIDAL_WEB_HEADERS", "")
+    monkeypatch.setenv("TIDAL_CLIENT_ID", "client")
+    monkeypatch.setenv("TIDAL_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("TIDAL_COUNTRY_CODE", "not-a-country-token-value")
+    assert TidalTarget().country == "US"
+
+
+def test_tidal_search_uses_query_endpoint_and_included_tracks(monkeypatch):
+    from songmirror.engine.targets.tidal import TidalTarget
+
+    target = TidalTarget.__new__(TidalTarget)
+    target.country = "US"
+    calls = []
+
+    class Response:
+        def json(self):
+            return {
+                "data": [
+                    {
+                        "type": "searchResults",
+                        "id": "opaque-result-id",
+                        "relationships": {
+                            "tracks": {"data": [{"type": "tracks", "id": "t1"}]},
+                        },
+                    }
+                ],
+                "included": [
+                    {
+                        "type": "tracks",
+                        "id": "t1",
+                        "attributes": {
+                            "title": "A Narnia Lullaby",
+                            "duration": "PT3M41S",
+                            "isrc": "USWD10527980",
+                        },
+                        "relationships": {
+                            "artists": {"data": [{"type": "artists", "id": "a1"}]},
+                            "albums": {"data": []},
+                        },
+                    },
+                    {"type": "artists", "id": "a1", "attributes": {"name": "Harry Gregson-Williams"}},
+                ],
+            }
+
+    def request(method, path, params=None):
+        calls.append((method, path, params))
+        return Response()
+
+    target._request = request
+    monkeypatch.setattr("songmirror.engine.targets.tidal.polite_sleep", lambda _seconds: None)
+    track = {
+        "id": "source-1",
+        "name": "A Narnia Lullaby",
+        "artists": ["Harry Gregson-Williams"],
+        "isrc": None,
+    }
+    cache = {"isrc": {}, "search": {}, "dirty": False}
+
+    assert target.resolve(track, cache) == ("t1", "search")
+    assert calls == [
+        (
+            "GET",
+            "searchResults",
+            {
+                "filter[query]": "A Narnia Lullaby Harry Gregson-Williams",
+                "include": ["tracks", "tracks.artists", "tracks.albums"],
+                "countryCode": "US",
+            },
+        )
+    ]
+
+
+def test_tidal_isrc_prefetch_respects_twenty_value_api_limit(monkeypatch):
+    from songmirror.engine.targets.tidal import TidalTarget
+
+    target = TidalTarget.__new__(TidalTarget)
+    target.country = "US"
+    batch_sizes = []
+
+    class Response:
+        def json(self):
+            return {"data": [], "included": []}
+
+    def request(method, path, params=None):
+        assert (method, path) == ("GET", "tracks")
+        batch_sizes.append(len(params["filter[isrc]"]))
+        return Response()
+
+    target._request = request
+    monkeypatch.setattr("songmirror.engine.targets.tidal.polite_sleep", lambda _seconds: None)
+    source_tracks = [{"isrc": f"USAAA26{index:05d}"} for index in range(41)]
+    cache = {"isrc": {}, "search": {}, "dirty": False}
+
+    target.prefetch(source_tracks, cache)
+
+    assert batch_sizes == [20, 20, 1]
+
+
+def test_legacy_named_sync_does_not_gain_new_providers(tmp_path):
+    from songmirror.services.syncs import LEGACY_NAMED_JOB_PROVIDERS, SyncStore
+
+    (tmp_path / "syncs.json").write_text(
+        json.dumps([{"id": "old", "name": "Old", "mode": "nway", "providers": ""}]),
+        encoding="utf-8",
+    )
+    assert SyncStore(dir=tmp_path).get("old").providers == LEGACY_NAMED_JOB_PROVIDERS
+    assert "tidal" not in LEGACY_NAMED_JOB_PROVIDERS.split(",")
+
+
+def test_qobuz_maps_playlist_tracks_and_entry_ids(monkeypatch):
+    from songmirror.engine.targets.qobuz import QobuzTarget
+
+    monkeypatch.setenv("QOBUZ_APP_ID", "app")
+    monkeypatch.setenv("QOBUZ_USER_AUTH_TOKEN", "token")
+    monkeypatch.setenv("QOBUZ_USER_ID", "7")
+    target = QobuzTarget()
+
+    def request(method, endpoint, params=None):
+        if endpoint == "playlist/getUserPlaylists":
+            return {"playlists": {"items": [{"id": 3, "name": "Mix", "tracks_count": 1}], "total": 1}}
+        if endpoint == "playlist/get":
+            return {
+                "tracks": {
+                    "items": [
+                        {
+                            "id": 9,
+                            "playlist_track_id": 44,
+                            "title": "Track",
+                            "duration": 201,
+                            "isrc": "GBBBB2600002",
+                            "performer": {"name": "Singer"},
+                            "album": {"title": "Record"},
+                        }
+                    ],
+                    "total": 1,
+                }
+            }
+        raise AssertionError(endpoint)
+
+    target._request = request
+    playlist = target.list_playlists()["mix"]
+    track = target.playlist_tracks(playlist)[0]
+    assert target.playlist_count(playlist) == 1
+    assert (track["id"], track["relationship_id"], track["artist"], track["duration_ms"], track["isrc"]) == (
+        "9", 44, "Singer", 201000, "GBBBB2600002"
+    )
+
+
+def test_qobuz_connector_extracts_signed_in_playlist_request(tmp_path, monkeypatch):
+    from songmirror.services.accounts.qobuz import QobuzConnector
+    from songmirror.qobuz_web import parse_web_request
+
+    monkeypatch.setenv("QOBUZ_WEB_REQUEST", "")
+    connector = QobuzConnector(SettingsStore(dir=tmp_path))
+    assert connector.status().state == "unconfigured"
+    monkeypatch.setattr(connector, "_validate", lambda credentials=None: (True, "accepted"))
+    status = connector.submit(
+        {
+            "QOBUZ_WEB_REQUEST": (
+                "curl 'https://www.qobuz.com/api.json/0.2/playlist/getUserPlaylists?"
+                "app_id=app&user_auth_token=tok&user_id=1' -H 'cookie: discarded=yes'"
+            )
+        }
+    )
+    assert status.state == "connected"
+    assert parse_web_request(connector._store.get("QOBUZ_WEB_REQUEST")) == {
+        "app_id": "app",
+        "user_auth_token": "tok",
+        "user_id": "1",
+    }
+    assert "discarded" not in connector._store.get("QOBUZ_WEB_REQUEST")
+
+
+def test_qobuz_accepts_any_authenticated_web_request_without_user_id():
+    from songmirror.qobuz_web import parse_web_request, serialize_web_request
+
+    raw = """GET /api.json/0.2/album/story?album_id=album-1 HTTP/3
+Host: www.qobuz.com
+X-User-Auth-Token: signed-in-user-token
+X-App-Id: 798273057
+Cookie: must-not-be-kept
+"""
+    assert parse_web_request(raw) == {
+        "app_id": "798273057",
+        "user_auth_token": "signed-in-user-token",
+    }
+    minimized = serialize_web_request(raw)
+    assert "must-not-be-kept" not in minimized
+    assert json.loads(minimized) == {
+        "app_id": "798273057",
+        "user_auth_token": "signed-in-user-token",
+    }
+
+
+def test_qobuz_web_mode_uses_first_party_auth_headers_and_no_user_id(monkeypatch):
+    from songmirror.engine.targets.qobuz import QobuzTarget
+
+    monkeypatch.setenv(
+        "QOBUZ_WEB_REQUEST",
+        json.dumps({"app_id": "web-app", "user_auth_token": "web-user-token"}),
+    )
+    target = QobuzTarget()
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"items": [], "total": 0}
+
+    class Session:
+        def __init__(self):
+            self.calls = []
+
+        def request(self, method, url, **kwargs):
+            self.calls.append((method, url, kwargs))
+            return Response()
+
+    target._session = Session()
+    target._request("GET", "playlist/getUserPlaylists", params={"limit": 1, "offset": 0})
+    target._request("POST", "playlist/create", params={"name": "Web playlist", "is_public": "false"})
+
+    get_call, post_call = target._session.calls
+    expected_headers = {"X-App-Id": "web-app", "X-User-Auth-Token": "web-user-token"}
+    assert get_call[2] == {"params": {"limit": 1, "offset": 0}, "headers": expected_headers, "timeout": 30}
+    assert post_call[2] == {
+        "data": {"name": "Web playlist", "is_public": "false"},
+        "headers": expected_headers,
+        "timeout": 30,
+    }
+
+
+def test_qobuz_connector_validates_minimized_header_session(tmp_path, monkeypatch):
+    from songmirror.services.accounts.qobuz import QobuzConnector
+
+    calls = []
+
+    class Response:
+        ok = True
+        status_code = 200
+
+    def get(url, **kwargs):
+        calls.append((url, kwargs))
+        return Response()
+
+    monkeypatch.setenv("QOBUZ_WEB_REQUEST", "")
+    monkeypatch.setattr("songmirror.services.accounts.qobuz.requests.get", get)
+    connector = QobuzConnector(SettingsStore(dir=tmp_path))
+    status = connector.submit(
+        {
+            "QOBUZ_WEB_REQUEST": (
+                "X-App-Id: web-app\n"
+                "X-User-Auth-Token: web-user-token\n"
+                "Cookie: must-not-be-kept"
+            )
+        }
+    )
+
+    assert status.state == "connected"
+    assert calls == [
+        (
+            "https://www.qobuz.com/api.json/0.2/playlist/getUserPlaylists",
+            {
+                "params": {"limit": 1, "offset": 0},
+                "headers": {"X-App-Id": "web-app", "X-User-Auth-Token": "web-user-token"},
+                "timeout": 30,
+            },
+        )
+    ]
+    assert "must-not-be-kept" not in connector._store.get("QOBUZ_WEB_REQUEST")
+
+
+def test_deezer_track_shape_and_browser_header_minimization(tmp_path, monkeypatch):
+    from songmirror.engine.targets.deezer import _normalized_track
+    from songmirror.services.accounts.deezer import DeezerConnector
+
+    track = _normalized_track(
+        {
+            "id": 12,
+            "title": "Hello",
+            "duration": 123,
+            "isrc": "FRCCC2600003",
+            "contributors": [{"name": "One"}, {"name": "Two"}],
+            "album": {"title": "World"},
+        }
+    )
+    assert (track["id"], track["artist"], track["duration_ms"], track["isrc"]) == (
+        "12", "One, Two", 123000, "FRCCC2600003"
+    )
+
+    monkeypatch.setenv("DEEZER_WEB_HEADERS", "")
+    monkeypatch.setenv("DEEZER_REFRESH_TOKEN", "")
+    store = SettingsStore(dir=tmp_path / "settings")
+    connector = DeezerConnector(store)
+    assert [field.key for field in connector.config_fields] == [
+        "DEEZER_WEB_HEADERS",
+        "DEEZER_REFRESH_TOKEN",
+    ]
+    monkeypatch.setattr(
+        connector,
+        "_validate",
+        lambda raw=None, refresh_token=None, **kwargs: (True, "accepted"),
+    )
+    status = connector.submit(
+        {
+            "DEEZER_WEB_HEADERS": (
+                "authorization: Bearer header.eyJleHAiOjQxMDI0NDQ4MDB9.sig\n"
+                "cookie: arl=must-not-be-stored"
+            ),
+            "DEEZER_REFRESH_TOKEN": (
+                "Cookie: unrelated=discard; refresh-token=keep-only-this; arl=discard-too"
+            ),
+        }
+    )
+    assert status.state == "connected"
+    stored = json.loads(connector._store.get("DEEZER_WEB_HEADERS"))
+    assert set(stored) == {"authorization"}
+    assert "must-not-be-stored" not in connector._store.get("DEEZER_WEB_HEADERS")
+    assert connector._store.get("DEEZER_REFRESH_TOKEN") == "keep-only-this"
+    assert "discard" not in connector._store.get("DEEZER_REFRESH_TOKEN")
+
+
+def test_deezer_refresh_cookie_parser_keeps_only_dedicated_token():
+    from songmirror.deezer_web import parse_refresh_token
+
+    assert parse_refresh_token(
+        "Cookie: arl=discard; refresh-token=renew-me; session=discard-too"
+    ) == "renew-me"
+    assert parse_refresh_token(
+        "A1786727449988; ab.storage.userId.example=value; "
+        "refresh-token=from-firefox-cookie-block; cjs_user_id=discard"
+    ) == "from-firefox-cookie-block"
+    assert parse_refresh_token(
+        "curl 'https://auth.deezer.com/login/renew' -H 'cookie: refresh-token=from-curl; arl=nope'"
+    ) == "from-curl"
+    assert parse_refresh_token("direct-token-value") == "direct-token-value"
+
+
+def test_deezer_client_renews_expired_pipe_jwt_and_persists_rotation(tmp_path):
+    from songmirror.deezer_web import AUTH_ENDPOINT, DeezerWebClient
+
+    future_jwt = "header.eyJleHAiOjQxMDI0NDQ4MDB9.sig"
+
+    class Cookies:
+        def get(self, key):
+            return "rotated-refresh" if key == "refresh-token" else None
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def __init__(self, body, *, cookies=None):
+            self._body = body
+            self.cookies = cookies or Cookies()
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._body
+
+    class Session:
+        def __init__(self):
+            self.calls = []
+
+        def post(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            if url == AUTH_ENDPOINT:
+                assert kwargs["cookies"] == {"refresh-token": "initial-refresh"}
+                return Response({"jwt": future_jwt})
+            assert kwargs["headers"]["authorization"] == f"Bearer {future_jwt}"
+            return Response({"data": {"me": {"id": "user-1"}}})
+
+    token_file = tmp_path / "deezer_web_session.json"
+    session = Session()
+    client = DeezerWebClient(
+        "",
+        refresh_token="initial-refresh",
+        token_file=str(token_file),
+        session=session,
+    )
+
+    assert client.validate() == "user-1"
+    assert [url for url, _ in session.calls] == [AUTH_ENDPOINT, "https://pipe.deezer.com/api"]
+    persisted = json.loads(token_file.read_text(encoding="utf-8"))
+    assert persisted["access_token"] == future_jwt
+    assert persisted["refresh_token"] == "rotated-refresh"
+
+
+def test_deezer_removal_uses_pipe_graphql_without_arl():
+    from songmirror.deezer_web import DeezerWebClient, REMOVE_MUTATION
+
+    calls = []
+    client = DeezerWebClient.__new__(DeezerWebClient)
+
+    def execute(operation, query, variables=None, mutation=False):
+        calls.append((operation, query, variables, mutation))
+        return {"removeTracksFromPlaylist": {"removedTrackIds": ["12", "34"]}}
+
+    client.execute = execute
+    client.remove("playlist-1", ["12", "34"])
+
+    assert "removeTracksFromPlaylist" in REMOVE_MUTATION
+    assert calls == [
+        (
+            "SongMirrorDeezerRemoveTracks",
+            REMOVE_MUTATION,
+            {"input": {"playlistId": "playlist-1", "trackIds": ["12", "34"]}},
+            True,
+        )
+    ]
+
+
+def test_amazon_playlist_read_hydrates_metadata_and_keeps_entry_id(monkeypatch):
+    from songmirror.engine.targets.amazon_music import AmazonMusicTarget
+
+    target = AmazonMusicTarget.__new__(AmazonMusicTarget)
+
+    def request(method, path, params=None, json_body=None):
+        if path == "playlists/p1/tracks":
+            return {
+                "data": {
+                    "playlist": {
+                        "tracks": {
+                            "pageInfo": {"hasNextPage": False},
+                            "edges": [{"cursor": "0:entry-9", "node": {"id": "ASIN9", "title": "Sparse"}}],
+                        }
+                    }
+                }
+            }
+        if path == "tracks":
+            return {
+                "data": {
+                    "tracks": [
+                        {
+                            "id": "ASIN9",
+                            "title": "Full title",
+                            "duration": 211,
+                            "isrc": "USDDD2600004",
+                            "artists": [{"name": "Artist"}],
+                            "album": {"title": "Album"},
+                        }
+                    ]
+                }
+            }
+        raise AssertionError(path)
+
+    target._request = request
+    track = target.playlist_tracks({"id": "p1"})[0]
+    assert (track["id"], track["relationship_id"], track["name"], track["artist"], track["isrc"]) == (
+        "ASIN9", "entry-9", "Full title", "Artist", "USDDD2600004"
+    )
+
+
+def test_amazon_web_header_parser_keeps_auth_and_discards_cookies():
+    from songmirror.amazon_music_web import parse_web_headers, serialize_web_headers
+
+    raw = """authorization: AmznMusic abc123
+x-api-key: amzn1.application.web
+device-id: device-1
+Cookie: session-id=retail-secret
+sec-fetch-site: same-site
+"""
+    headers = parse_web_headers(raw)
+    assert headers == {
+        "authorization": "AmznMusic abc123",
+        "x-api-key": "amzn1.application.web",
+        "device-id": "device-1",
+    }
+    assert "\n" not in serialize_web_headers(raw)
+    assert "retail-secret" not in serialize_web_headers(raw)
+
+
+def test_amazon_config_response_builds_web_auth_without_retail_cookies():
+    import base64
+
+    from songmirror.amazon_music_web import FIREFLY_WEB_API_KEY, parse_web_headers
+
+    headers = parse_web_headers(
+        json.dumps(
+            {
+                "accessToken": "signed-in-access",
+                "deviceId": "device-7",
+                "deviceType": "A16ZV8BU3SN1N3",
+                "musicTerritory": "US",
+                "sessionId": "session-7",
+                "version": "1.2.3",
+                "csrf": {"token": "must-not-be-stored"},
+            }
+        )
+    )
+    payload = json.loads(base64.b64decode(headers["authorization"].split(None, 1)[1]))
+    assert payload == {
+        "deviceId": "device-7",
+        "deviceType": "A16ZV8BU3SN1N3",
+        "access_token": "signed-in-access",
+    }
+    assert headers["x-api-key"] == FIREFLY_WEB_API_KEY
+    assert "csrf" not in headers
+
+
+def test_amazon_web_header_parser_rejects_missing_or_multiline_auth():
+    from songmirror.amazon_music_web import parse_web_headers
+
+    try:
+        parse_web_headers("x-api-key: app")
+    except ValueError as exc:
+        assert "authorization" in str(exc)
+    else:
+        raise AssertionError("missing authorization header was accepted")
+
+    raw = json.dumps({"authorization": "AmznMusic abc\r\ninjected: yes", "x-api-key": "app"})
+    try:
+        parse_web_headers(raw)
+    except ValueError as exc:
+        assert "line break" in str(exc)
+    else:
+        raise AssertionError("multiline authorization header was accepted")
+
+
+def test_amazon_web_auth_error_does_not_misclassify_cursor_tokens():
+    from songmirror.amazon_music_web import AmazonMusicWebClient
+
+    assert AmazonMusicWebClient._auth_error("access token expired")
+    assert not AmazonMusicWebClient._auth_error("invalid pagination token")
+
+
+def test_amazon_renewal_parser_keeps_only_known_auth_cookies():
+    from songmirror.amazon_music_web import parse_renewal_cookies, serialize_renewal_cookies
+
+    raw = (
+        "curl 'https://music.amazon.com/pandaToken' "
+        "-H 'cookie: session-id=session; at-main-music=music-auth; "
+        "session-token=retail-session; sid=music-session; AMCV_AdobeOrg=analytics; "
+        "aws-userInfo=console-profile; am-loader-experiment=bucket'"
+    )
+
+    assert parse_renewal_cookies(raw) == {
+        "at-main-music": "music-auth",
+        "session-id": "session",
+        "session-token": "retail-session",
+        "sid": "music-session",
+    }
+    minimized = serialize_renewal_cookies(raw)
+    assert json.loads(minimized) == {
+        "at-main-music": "music-auth",
+        "session-id": "session",
+        "session-token": "retail-session",
+        "sid": "music-session",
+    }
+    assert "analytics" not in minimized
+    assert "console-profile" not in minimized
+    assert "bucket" not in minimized
+
+
+def test_amazon_renewal_parser_stops_cookie_at_the_next_request_header():
+    from songmirror.amazon_music_web import parse_renewal_cookies
+
+    raw = """GET /config.json HTTP/2
+Host: music.amazon.com
+Cookie: session-id=session; session-token=session-secret; at-main-music=Atza|music-token
+Sec-Fetch-Dest: empty
+Sec-Fetch-Mode: cors
+Pragma: no-cache
+"""
+
+    assert parse_renewal_cookies(raw) == {
+        "at-main-music": "Atza|music-token",
+        "session-id": "session",
+        "session-token": "session-secret",
+    }
+
+
+def test_amazon_web_client_renews_rejected_token_and_retries_mutation_once(tmp_path):
+    import base64
+
+    from songmirror.amazon_music_web import (
+        CONFIG_ENDPOINT,
+        ENDPOINT,
+        PANDA_TOKEN_ENDPOINT,
+        AmazonMusicWebClient,
+    )
+
+    class Cookies:
+        def __init__(self, values=None):
+            self._values = values or {}
+
+        def get_dict(self):
+            return dict(self._values)
+
+    class Response:
+        headers = {}
+
+        def __init__(self, status_code, body, *, cookies=None):
+            self.status_code = status_code
+            self._body = body
+            self.cookies = Cookies(cookies)
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise AssertionError(f"unexpected HTTP {self.status_code}")
+
+        def json(self):
+            return self._body
+
+    class Session:
+        def __init__(self):
+            self.calls = []
+            self.graphql_calls = 0
+
+        def get(self, url, **kwargs):
+            self.calls.append(("GET", url, kwargs))
+            if url == CONFIG_ENDPOINT:
+                assert kwargs["cookies"] == {
+                    "at-main-music": "initial-music-auth",
+                    "session-id": "session",
+                }
+                return Response(
+                    200,
+                    {
+                        "deviceId": "device-7",
+                        "deviceType": "A16ZV8BU3SN1N3",
+                        "musicTerritory": "US",
+                    },
+                    cookies={"at-main-music": "rotated-music-auth", "tracking": "discard"},
+                )
+            assert url == PANDA_TOKEN_ENDPOINT
+            assert kwargs["cookies"] == {
+                "at-main-music": "rotated-music-auth",
+                "session-id": "session",
+            }
+            return Response(200, {"accessToken": "fresh-access", "expiresIn": 3600})
+
+        def post(self, url, **kwargs):
+            assert url == ENDPOINT
+            self.calls.append(("POST", url, kwargs))
+            self.graphql_calls += 1
+            if self.graphql_calls == 1:
+                return Response(401, {"errors": [{"message": "expired"}]})
+            encoded = kwargs["headers"]["authorization"].split(None, 1)[1]
+            auth = json.loads(base64.b64decode(encoded))
+            assert auth == {
+                "deviceId": "device-7",
+                "deviceType": "A16ZV8BU3SN1N3",
+                "access_token": "fresh-access",
+            }
+            return Response(200, {"data": {"createPlaylist": {"id": "playlist-1"}}})
+
+    token_file = tmp_path / "amazon_music_web_session.json"
+    session = Session()
+    client = AmazonMusicWebClient(
+        "authorization: AmznMusic expired\nx-api-key: web-app",
+        renewal_request="Cookie: at-main-music=initial-music-auth; session-id=session; analytics=drop",
+        token_file=str(token_file),
+        session=session,
+    )
+
+    assert client.execute("Create", "mutation Create { createPlaylist { id } }", mutation=True) == {
+        "createPlaylist": {"id": "playlist-1"}
+    }
+    assert [url for _, url, _ in session.calls] == [
+        ENDPOINT,
+        CONFIG_ENDPOINT,
+        PANDA_TOKEN_ENDPOINT,
+        ENDPOINT,
+    ]
+    persisted = json.loads(token_file.read_text(encoding="utf-8"))
+    assert persisted["renewal_cookies"] == {
+        "at-main-music": "rotated-music-auth",
+        "session-id": "session",
+    }
+    assert persisted["headers"] == client.headers
+    assert persisted["expires_at"] > 0
+
+
+def test_amazon_connector_accepts_web_session_without_beta_approval(tmp_path, monkeypatch):
+    from songmirror.services.accounts.amazon_music import AmazonMusicConnector
+
+    # SettingsStore projects saves into os.environ; register the key with
+    # monkeypatch first so the test cannot leak its fake session to later tests.
+    monkeypatch.setenv("AMAZON_MUSIC_WEB_HEADERS", "")
+    monkeypatch.setenv("AMAZON_MUSIC_RENEWAL_REQUEST", "")
+    monkeypatch.setenv("AMAZON_MUSIC_WEB_SESSION_FILE", str(tmp_path / "amazon-session.json"))
+    connector = AmazonMusicConnector(SettingsStore(dir=tmp_path))
+    status = connector.status()
+    assert status.state == "unconfigured"
+    assert "no developer approval" in status.detail
+
+    assert [(field.key, field.required) for field in connector.config_fields] == [
+        ("AMAZON_MUSIC_WEB_HEADERS", False),
+        ("AMAZON_MUSIC_RENEWAL_REQUEST", True),
+    ]
+
+    monkeypatch.setattr(
+        connector,
+        "_validate",
+        lambda raw=None, renewal_request=None, **kwargs: (True, "auto-renewing web session"),
+    )
+    connected = connector.submit(
+        {
+            "AMAZON_MUSIC_WEB_HEADERS": (
+                "authorization: AmznMusic abc123\n"
+                "x-api-key: amzn1.application.web\n"
+                "cookie: should-not-be-stored"
+            ),
+            "AMAZON_MUSIC_RENEWAL_REQUEST": (
+                "Cookie: at-main-music=renew-me; AMCV_AdobeOrg=discard"
+            ),
+        }
+    )
+    assert connected.state == "connected"
+    stored = json.loads(connector._store.get("AMAZON_MUSIC_WEB_HEADERS"))
+    assert set(stored) == {"authorization", "x-api-key"}
+    assert json.loads(connector._store.get("AMAZON_MUSIC_RENEWAL_REQUEST")) == {
+        "at-main-music": "renew-me"
+    }
+
+
+def test_amazon_web_backend_maps_playlists_tracks_and_mutations():
+    from songmirror.engine.targets.amazon_music import AmazonMusicTarget
+
+    class Web:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, operation, query, variables=None, mutation=False):
+            self.calls.append((operation, variables, mutation))
+            if operation == "SongMirrorAmazonPlaylists":
+                return {
+                    "user": {
+                        "playlists": {
+                            "edges": [{"node": {"id": "p1", "title": "Mix", "trackCount": 1}}],
+                            "pageInfo": {"hasNextPage": False},
+                        }
+                    }
+                }
+            if operation == "SongMirrorAmazonPlaylistTracks":
+                return {
+                    "playlist": {
+                        "tracks": {
+                            "edges": [
+                                {
+                                    "itemId": "entry-1",
+                                    "node": {
+                                        "id": "asin-1",
+                                        "title": "Song",
+                                        "isrc": "USWEB2600001",
+                                        "duration": 202,
+                                        "album": {"title": "Album"},
+                                        "contributingArtists": {
+                                            "edges": [{"node": {"name": "Artist"}, "role": "PRIMARY"}]
+                                        },
+                                    },
+                                }
+                            ],
+                            "pageInfo": {"hasNextPage": False},
+                        }
+                    }
+                }
+            if operation in ("SongMirrorAmazonAppendTracks", "SongMirrorAmazonRemoveTracks"):
+                return {"appendTracks": {"id": "p1"}}
+            raise AssertionError(operation)
+
+    target = AmazonMusicTarget.__new__(AmazonMusicTarget)
+    target._web = Web()
+    playlist = target.list_playlists()["mix"]
+    track = target.playlist_tracks(playlist)[0]
+    assert (track["relationship_id"], track["artist"], track["album"], track["isrc"]) == (
+        "entry-1", "Artist", "Album", "USWEB2600001"
+    )
+    target.add(playlist, ["asin-1", "asin-2"])
+    target.remove(playlist, track)
+    assert target._web.calls[-2][2] is True
+    assert target._web.calls[-1][2] is True
+
+
+def test_new_provider_create_helpers_accept_non_spotify_shapes():
+    from songmirror.engine.targets.provider_utils import source_playlist_details
+
+    assert source_playlist_details({"attributes": {"name": "Tidal list", "description": "d"}}) == (
+        "Tidal list", "d"
+    )
+    assert source_playlist_details({"title": "Amazon list", "description": "x"}) == ("Amazon list", "x")
+    assert source_playlist_details({"name": "Spotify list", "description": " A &amp; B "}) == (
+        "Spotify list", "A & B"
+    )
+
+
+def test_tidal_playlist_listing_includes_and_maps_cover_art():
+    from songmirror.engine.targets.tidal import TidalTarget
+
+    target = TidalTarget.__new__(TidalTarget)
+    target.country = "US"
+    calls = []
+
+    def pages(path, params):
+        calls.append((path, params))
+        yield {
+            "data": [
+                {
+                    "type": "playlists",
+                    "id": "p1",
+                    "attributes": {"name": "Mix", "numberOfItems": 3},
+                    "relationships": {
+                        "coverArt": {"data": [{"type": "artworks", "id": "art-1"}]}
+                    },
+                }
+            ],
+            "included": [
+                {
+                    "type": "artworks",
+                    "id": "art-1",
+                    "attributes": {
+                        "files": [
+                            {"href": "https://tidal/160.jpg", "meta": {"width": 160, "height": 160}},
+                            {"href": "https://tidal/320.jpg", "meta": {"width": 320, "height": 320}},
+                        ]
+                    },
+                }
+            ],
+        }
+
+    target._pages = pages
+    playlist = target.list_playlists()["mix"]
+
+    assert calls == [
+        (
+            "playlists",
+            {"filter[owners.id]": "me", "countryCode": "US", "include": ["coverArt"]},
+        )
+    ]
+    assert playlist["images"] == [{"url": "https://tidal/320.jpg"}]
+
+
+def test_deezer_web_playlist_contract_has_art_and_omits_blank_description():
+    from songmirror.deezer_web import (
+        CREATE_MUTATION,
+        PLAYLIST_QUERY,
+        PLAYLISTS_QUERY,
+        DeezerWebClient,
+    )
+
+    calls = []
+    client = DeezerWebClient.__new__(DeezerWebClient)
+
+    def execute(operation, query, variables=None, mutation=False):
+        calls.append((operation, query, variables, mutation))
+        return {"createPlaylist": {"playlist": {"id": "p1", "title": "Argonaut"}}}
+
+    client.execute = execute
+    playlist = client.create("Argonaut", "")
+
+    assert playlist["id"] == "p1"
+    picture_request = "urls(pictureRequest: {width: 256, height: 256})"
+    for query in (PLAYLISTS_QUERY, PLAYLIST_QUERY, CREATE_MUTATION):
+        assert query.count(picture_request) == 2
+    assert calls[0][2] == {
+        "input": {"title": "Argonaut", "isPrivate": True, "isCollaborative": False}
+    }
+
+
+def test_deezer_web_recognizes_auth_error_from_graphql_extensions():
+    from songmirror.deezer_web import DeezerWebAuthError, DeezerWebClient
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "errors": [
+                    {
+                        "message": "Playlist creation failed",
+                        "extensions": {"type": "JwtTokenExpiredError"},
+                    }
+                ]
+            }
+
+    class Session:
+        def post(self, *args, **kwargs):
+            return Response()
+
+    client = DeezerWebClient.__new__(DeezerWebClient)
+    client.headers = {"authorization": "Bearer redacted"}
+    client._access_token = "redacted"
+    client.refresh_token = ""
+    client._token_file = ""
+    client.endpoint = "https://pipe.deezer.com/api"
+    client.session = Session()
+
+    try:
+        client.execute("Create", "mutation Create { createPlaylist { playlist { id } } }", mutation=True)
+    except DeezerWebAuthError:
+        pass
+    else:
+        raise AssertionError("GraphQL extension auth failures must expire the Deezer connection")
+
+
+def test_amazon_web_playlist_contract_has_art_and_omits_empty_optional_create_values(monkeypatch):
+    import songmirror.engine.targets.amazon_music as amazon_module
+    from songmirror.engine.targets.amazon_music import AmazonMusicTarget
+
+    class Web:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, operation, query, variables=None, mutation=False):
+            self.calls.append((operation, query, variables, mutation))
+            return {"createPlaylist": {"id": "p1", "title": "Argonaut", "trackCount": 0}}
+
+    monkeypatch.setattr(amazon_module, "polite_sleep", lambda *_: None)
+    target = AmazonMusicTarget.__new__(AmazonMusicTarget)
+    target._web = Web()
+    playlist = target.create({"name": "Argonaut", "description": ""})
+
+    assert playlist["id"] == "p1"
+    operation, query, variables, mutation = target._web.calls[0]
+    assert operation == "SongMirrorAmazonCreatePlaylist"
+    assert "images { url width height imageType aspectRatio }" in query
+    assert variables == {"title": "Argonaut", "visibility": "PRIVATE"}
+    assert mutation is True
