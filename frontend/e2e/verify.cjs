@@ -30,7 +30,7 @@ const TAKE_SCREENSHOTS = !process.env.CI
 // ---------------------------------------------------------------------------
 
 function svgCover(color) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="${color}"/></svg>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${color}"/><stop offset="1" stop-color="#111827"/></linearGradient></defs><rect width="200" height="200" rx="18" fill="url(#g)"/><circle cx="148" cy="52" r="54" fill="#fff" opacity=".16"/><circle cx="54" cy="154" r="72" fill="#000" opacity=".18"/><path d="M26 116c38-54 77 48 148-24" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" opacity=".42"/></svg>`
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
 }
 
@@ -232,6 +232,37 @@ const PLAYLISTS = {
   ],
 }
 
+// Polished, deterministic data used only for committed README/promo captures.
+// Every provider is connected and every playlist has cover art so the media
+// demonstrates the finished experience without setup errors or empty states.
+const SHOWCASE_PLAYLIST_ROWS = [
+  ['Road Trip 2025', 118],
+  ['Night Drive', 84],
+  ['Morning Focus', 62],
+  ['Indie Discoveries', 45],
+  ['Sunday Slowdown', 73],
+]
+
+function showcasePlaylists(provider, colors) {
+  return SHOWCASE_PLAYLIST_ROWS.map(([name, count], index) => ({
+    id: `show_${provider}_${index + 1}`,
+    name,
+    count,
+    image: svgCover(colors[index % colors.length]),
+  }))
+}
+
+const SHOWCASE_PLAYLISTS = {
+  spotify: showcasePlaylists('spotify', ['#3b6fd6', '#7b4bc4', '#3aa76d']),
+  tidal: showcasePlaylists('tidal', ['#30343b', '#54606f', '#788594']),
+  apple: showcasePlaylists('apple', ['#fa5276', '#bd3156', '#d45b92']),
+  ytmusic: showcasePlaylists('ytmusic', ['#ff3b30', '#9d2430', '#e05642']),
+  qobuz: showcasePlaylists('qobuz', ['#1877d2', '#1552a4', '#249ad5']),
+  deezer: showcasePlaylists('deezer', ['#a238e5', '#6e34c8', '#d546bc']),
+  amazon: showcasePlaylists('amazon', ['#25d1da', '#168ca8', '#2b9e83']),
+  jellyfin: showcasePlaylists('jellyfin', ['#9b73df', '#654ba5', '#b55ccf']),
+}
+
 const TRANSFER_JOB = {
   id: 'job1',
   status: 'running',
@@ -248,6 +279,15 @@ const TRANSFER_JOB = {
     { key: 'c2', name: 'Silver Springs (Live)', artist: 'Fleetwood Mac', resolved: true },
   ],
   error: null,
+}
+
+const SHOWCASE_TRANSFER_JOB = {
+  ...TRANSFER_JOB,
+  added: 86,
+  deferred: 0,
+  total: 118,
+  processed: 86,
+  conflicts: [],
 }
 
 // ---------------------------------------------------------------------------
@@ -577,6 +617,102 @@ async function main() {
         await checkOverflow(page, `Settings @ ${width} ${theme}`, results)
         if (width !== 320) await shot(page, `settings-${width}-${theme}`)
       }
+
+      await context.close()
+    }
+
+    // -----------------------------------------------------------------
+    // Committed README/promo captures: all services connected, playlist
+    // covers loaded, every sync peer selected, and a clean transfer with no
+    // held tracks. Functional error-state screenshots above remain useful
+    // locally, but are intentionally not used as product advertising.
+    // -----------------------------------------------------------------
+    {
+      const context = await browser.newContext()
+      await context.addInitScript(() => window.localStorage.setItem('songmirror-theme', 'dark'))
+      const page = await context.newPage()
+      await installMocks(page)
+      await page.route('**/api/accounts', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(ACCOUNTS.map((account) => ({ ...account, state: 'connected', detail: null }))),
+        })
+      })
+      await page.route('**/api/playlists*', async (route) => {
+        const provider = new URL(route.request().url()).searchParams.get('provider')
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(SHOWCASE_PLAYLISTS[provider] ?? []),
+        })
+      })
+      await page.setViewportSize({ width: 1280, height: 900 })
+
+      await page.goto(BASE_URL + '/accounts', { waitUntil: 'networkidle' })
+      await page.waitForSelector('h1:has-text("Accounts")')
+      const connectedBadges = await page.getByText('Connected', { exact: true }).count()
+      const accountsShowcaseOk = connectedBadges === ACCOUNTS.length
+      console.log(`${accountsShowcaseOk ? 'ok        ' : 'FAIL      '} showcase Accounts has every service connected (found ${connectedBadges}, expected ${ACCOUNTS.length})`)
+      if (!accountsShowcaseOk) results.push({ label: 'showcase accounts connected', overflow: true })
+      await checkOverflow(page, 'Showcase Accounts @ 1280', results)
+      await shot(page, 'accounts-showcase')
+
+      await page.goto(BASE_URL + '/playlists', { waitUntil: 'networkidle' })
+      await page.waitForSelector('text=Night Drive')
+      const coverCount = await page.locator('main img').count()
+      const playlistsShowcaseOk = coverCount >= Object.keys(SHOWCASE_PLAYLISTS).length * SHOWCASE_PLAYLIST_ROWS.length
+      console.log(`${playlistsShowcaseOk ? 'ok        ' : 'FAIL      '} showcase Playlists loads cover art for every provider (found ${coverCount})`)
+      if (!playlistsShowcaseOk) results.push({ label: 'showcase playlist covers', overflow: true })
+      await checkOverflow(page, 'Showcase Playlists @ 1280', results)
+      await shot(page, 'playlists-showcase')
+
+      await page.goto(BASE_URL + '/sync', { waitUntil: 'networkidle' })
+      await page.waitForSelector('h1:has-text("Sync")')
+      const defaultCard = page.locator('h3', { hasText: 'Default' }).locator('xpath=ancestor::div[contains(@class,"rounded-card")][1]')
+      await defaultCard.getByRole('button', { name: 'Edit', exact: true }).click()
+      await page.waitForSelector('text=Edit "Default"')
+      await page.getByRole('radio', { name: 'Services', exact: true }).click()
+      for (const service of ['TIDAL', 'Apple Music', 'YouTube Music', 'Qobuz', 'Deezer', 'Amazon Music']) {
+        const chip = page.getByRole('button', { name: service, exact: true })
+        if ((await chip.getAttribute('aria-pressed')) !== 'true') await chip.click()
+      }
+      await checkOverflow(page, 'Showcase sync wizard @ 1280', results)
+      await shot(page, 'wizard-showcase')
+
+      await context.close()
+    }
+
+    {
+      // Isolate the actively polling transfer from the modal capture above;
+      // enter through a quiet page, then use the SPA navigation link.
+      const context = await browser.newContext()
+      await context.addInitScript(() => window.localStorage.setItem('songmirror-theme', 'dark'))
+      const page = await context.newPage()
+      await installMocks(page)
+      await page.setViewportSize({ width: 1280, height: 900 })
+      await page.route('**/api/transfers/*', async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback()
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(SHOWCASE_TRANSFER_JOB) })
+      })
+      await page.goto(BASE_URL + '/transfers', { waitUntil: 'commit', timeout: 10000 })
+      await page.waitForSelector('h1:has-text("Transfers")', { timeout: 10000 })
+      await page.getByLabel('Service', { exact: true }).first().selectOption('spotify')
+      await page.getByLabel('Playlist', { exact: true }).click()
+      await page.getByRole('option', { name: 'Road Trip 2025' }).click()
+      await page.getByLabel('Service', { exact: true }).nth(1).selectOption('apple')
+      await page.waitForTimeout(200)
+      await page.getByLabel('Existing playlist', { exact: true }).click()
+      await page.getByRole('option', { name: 'Road Trip 2025' }).click()
+      await page.getByRole('button', { name: 'Copy playlist', exact: true }).click()
+      await page.getByRole('dialog').getByRole('button', { name: 'Copy playlist', exact: true }).click()
+      await page.waitForSelector('text=86 / 118', { timeout: 10000 })
+      const transferWarningCount = await page.getByText(/need review|unresolved/i).count()
+      const transferShowcaseOk = transferWarningCount === 0
+      console.log(`${transferShowcaseOk ? 'ok        ' : 'FAIL      '} showcase transfer has no held or unresolved tracks`)
+      if (!transferShowcaseOk) results.push({ label: 'showcase transfer clean', overflow: true })
+      await checkOverflow(page, 'Showcase transfer @ 1280', results)
+      await shot(page, 'transfers-showcase')
 
       await context.close()
     }
@@ -2558,7 +2694,7 @@ async function main() {
     // -----------------------------------------------------------------
     {
       const context = await browser.newContext()
-      await context.addInitScript(() => window.localStorage.setItem('songmirror-theme', 'light'))
+      await context.addInitScript(() => window.localStorage.setItem('songmirror-theme', 'dark'))
       const page = await context.newPage()
       await installMocks(page)
       await page.route('**/events', async (route) => {
@@ -2630,6 +2766,49 @@ async function main() {
       const removedCounterOk = (await page.getByLabel('1 removed this pass', { exact: true }).count()) === 1
       console.log(`${addedCounterOk && removedCounterOk ? 'ok        ' : 'FAIL      '} pass counters name additions and removals`)
       if (!addedCounterOk || !removedCounterOk) results.push({ label: 'live feed named counters', overflow: true })
+
+      // The committed README/promo capture is a showcase state, not the
+      // deliberately broken fixture used by the assertions above. Re-route
+      // the dashboard to a fully connected, successful pass before taking it.
+      await page.route('**/api/accounts', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(ACCOUNTS.map((account) => ({ ...account, state: 'connected', detail: null }))),
+        })
+      })
+      await page.route('**/api/sync/status', async (route) => {
+        const cleanStatus = syncStatusFixture(initialSyncs())
+        cleanStatus.last.per_target = [
+          { name: 'Spotify', added: 4, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
+          { name: 'TIDAL', added: 4, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
+          { name: 'Qobuz', added: 4, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
+          { name: 'Deezer', added: 4, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
+          { name: 'Amazon Music', added: 4, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
+          { name: 'Apple Music', added: 4, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
+          { name: 'YouTube Music', added: 4, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
+        ]
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(cleanStatus) })
+      })
+      await page.unroute('**/events')
+      await page.route('**/events', async (route) => {
+        const lines = [
+          { ts: 1700000100, kind: 'section', tag: 'sync', message: 'Pass started' },
+          { ts: 1700000101, kind: 'add', tag: 'spotify', message: 'Added "Golden Hour" by JVKE' },
+          { ts: 1700000102, kind: 'add', tag: 'tidal', message: 'Added "Midnight City" by M83' },
+          { ts: 1700000103, kind: 'add', tag: 'qobuz', message: 'Added "Dreams" by Fleetwood Mac' },
+          { ts: 1700000104, kind: 'note', tag: 'sync', message: 'Pass completed successfully' },
+        ]
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: lines.map((line) => `data: ${JSON.stringify(line)}\n\n`).join(''),
+        })
+      })
+      await page.evaluate(() => window.localStorage.removeItem('songmirror-live-feed-v1'))
+      await page.reload({ waitUntil: 'networkidle' })
+      await page.waitForSelector('text=Everything\'s in sync.')
+      await page.waitForSelector('text=Pass completed successfully')
 
       await checkOverflow(page, 'Dashboard with ServiceLogo everywhere @ 1280', results)
       await shot(page, 'dashboard-servicelogo')

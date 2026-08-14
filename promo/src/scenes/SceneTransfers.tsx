@@ -16,7 +16,7 @@ export const SceneTransfers: React.FC<{ dur: number }> = ({ dur }) => (
     }
     sub="One-off copies between any two services. Watch tracks land in real time — pause, resume or stop whenever."
     src="shots/transfers.png"
-    imgAspect={1.13828}
+    imgAspect={0.85156}
     label="songmirror · transfers"
     panFrom={0.04}
     panTo={0.62}

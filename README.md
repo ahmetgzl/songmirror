@@ -33,7 +33,7 @@ A free, open-source, **self-hosted alternative to Soundiiz, TuneMyMusic, and Fre
 
 <sup>Set it up once — every playlist you curate stays mirrored across every service, in date-added order.</sup>
 
-<a href="./.github/assets/songmirror-demo.mp4"><img src="./.github/assets/songmirror-demo.gif" alt="SongMirror demo — logo reveal, dashboard, one-way and bidirectional sync setup, live playlist transfers, and ISRC-accurate matching across Spotify, Apple Music, and YouTube Music" width="88%"></a>
+<a href="./.github/assets/songmirror-demo.mp4"><img src="./.github/assets/songmirror-demo.gif" alt="SongMirror demo — logo reveal, dashboard, one-way and bidirectional sync setup, live playlist transfers, and ISRC-accurate matching across seven music services" width="88%"></a>
 
 <sup>▶ <a href="./.github/assets/songmirror-demo.mp4">Watch the 1080p version</a></sup>
 
@@ -107,15 +107,15 @@ SongMirror keeps your playlists identical everywhere without manual re-adding, o
 
 **One dashboard for every library — sync status, jobs, live activity, and service health**
 
-<img src="./.github/assets/dashboard.png" alt="SongMirror dashboard showing sync status, configured sync jobs, a live activity feed, and connected Spotify, Apple Music, YouTube Music, and Jellyfin services" width="82%">
+<img src="./.github/assets/dashboard.png" alt="SongMirror dashboard showing sync status, configured jobs, live activity, and health for Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music, YouTube Music, and Jellyfin" width="82%">
 
 **Set up any number of syncs — one-way or bidirectional — in a short wizard**
 
-<img src="./.github/assets/sync-wizard.png" alt="The SongMirror setup wizard: choosing a one-way or bidirectional (N-way) direction for a sync job" width="82%">
+<img src="./.github/assets/sync-wizard.png" alt="The SongMirror setup wizard selecting services for a bidirectional sync across Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music, and YouTube Music" width="82%">
 
 **Connect every service in your browser — one-click OAuth, guided token paste, or an API key**
 
-<img src="./.github/assets/accounts.png" alt="The Accounts page for connecting Spotify, Apple Music, YouTube Music, and Jellyfin" width="82%">
+<img src="./.github/assets/accounts.png" alt="The Accounts page for connecting Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music, YouTube Music, and Jellyfin" width="82%">
 
 **Browse and pair playlists across services**
 
@@ -436,10 +436,6 @@ frontend/       # React + Vite SPA (built and served by the API in production)
 
 </div>
 
-## ⭐ Star history
-
-[![Star History Chart](https://api.star-history.com/svg?repos=ahnafnafee/songmirror&type=Date)](https://star-history.com/#ahnafnafee/songmirror&Date)
-
 ## 📄 License
 
 Copyright © 2026 [Ahnaf An Nafee](https://github.com/ahnafnafee).<br/>
@@ -466,8 +462,8 @@ This project is [MIT](./LICENSE) licensed.
 [last-commit-link]: https://github.com/ahnafnafee/songmirror/commits/main
 [github-issues-link]: https://github.com/ahnafnafee/songmirror/issues
 [share-x-shield]: https://img.shields.io/badge/-share%20on%20x-black?labelColor=black&logo=x&logoColor=white&style=flat-square
-[share-x-link]: https://x.com/intent/tweet?text=SongMirror%20%E2%80%94%20self-hosted%20playlist%20sync%20for%20Spotify%2C%20Apple%20Music%20%26%20YouTube%20Music&url=https%3A%2F%2Fgithub.com%2Fahnafnafee%2Fsongmirror
+[share-x-link]: https://x.com/intent/tweet?text=SongMirror%20%E2%80%94%20self-hosted%20playlist%20sync%20across%20seven%20music%20services&url=https%3A%2F%2Fgithub.com%2Fahnafnafee%2Fsongmirror
 [share-reddit-shield]: https://img.shields.io/badge/-share%20on%20reddit-black?labelColor=black&logo=reddit&logoColor=white&style=flat-square
-[share-reddit-link]: https://www.reddit.com/submit?title=SongMirror%20%E2%80%94%20self-hosted%20playlist%20sync%20across%20Spotify%2C%20Apple%20Music%20%26%20YouTube%20Music&url=https%3A%2F%2Fgithub.com%2Fahnafnafee%2Fsongmirror
+[share-reddit-link]: https://www.reddit.com/submit?title=SongMirror%20%E2%80%94%20self-hosted%20playlist%20sync%20across%20seven%20music%20services&url=https%3A%2F%2Fgithub.com%2Fahnafnafee%2Fsongmirror
 [share-linkedin-shield]: https://img.shields.io/badge/-share%20on%20linkedin-black?labelColor=black&logo=linkedin&logoColor=white&style=flat-square
 [share-linkedin-link]: https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fgithub.com%2Fahnafnafee%2Fsongmirror

@@ -23,6 +23,10 @@ export const COLORS = {
 
   // Service brand accents
   spotify: "#1DB954",
+  tidal: "#FFFFFF",
+  qobuz: "#0070EF",
+  deezer: "#A238FF",
+  amazon: "#25D1DA",
   apple: "#FA2D48",
   ytmusic: "#FF3B30",
   jellyfin: "#AA5CC3",
