@@ -224,6 +224,7 @@ function RepoLink() {
 
 function Logo() {
   // Orange mark on a transparent background — theme-agnostic, no light/dark
-  // swap needed.
-  return <img src={songmirrorMark} alt="" className="size-7 shrink-0" />
+  // swap needed. The source is intentionally taller than it is wide, so only
+  // pin its height; forcing a square box visibly distorts the waveform.
+  return <img src={songmirrorMark} alt="" className="h-7 w-auto shrink-0" />
 }

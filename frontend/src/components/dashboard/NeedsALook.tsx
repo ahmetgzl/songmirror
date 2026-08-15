@@ -18,6 +18,12 @@ const HELD_REMOVAL_PREVIEW = 6
  * same reason, which the first few already name. */
 const FAILURE_PREVIEW = 4
 
+const COUNT_FORMATTER = new Intl.NumberFormat('en-US')
+
+function formatCount(value: number): string {
+  return COUNT_FORMATTER.format(value)
+}
+
 interface NeedsLookItem {
   key: string
   icon: IconType
@@ -103,13 +109,36 @@ function buildItems(accounts: Account[] | null, status: SyncStatus | null): Need
     })
   }
 
-  const heldTotal = status?.last?.per_target.reduce((sum, t) => sum + t.held + t.deferred, 0) ?? 0
+  const targets = status?.last?.per_target ?? []
+  const heldTotal = targets.reduce((sum, target) => sum + target.held, 0)
   if (heldTotal > 0) {
+    const details = targets
+      .filter((target) => target.held > 0)
+      .map((target) => `${target.name}: ${formatCount(target.held)} kept`)
     items.push({
       key: 'held',
       icon: LuTriangleAlert,
-      title: `${heldTotal} change${heldTotal === 1 ? '' : 's'} held from the last pass`,
-      description: 'A service needs a follow-up pass — an unmatched track was kept, or additions exceeded the cap. Nothing was lost.',
+      title: `${formatCount(heldTotal)} target track${heldTotal === 1 ? '' : 's'} kept because matching was uncertain`,
+      description:
+        "SongMirror found a similar source track that it couldn't confidently match on this target, " +
+        'so it kept the target copy instead of deleting it. Check the live feed for the missing match; nothing was lost.',
+      details,
+    })
+  }
+
+  const deferredTotal = targets.reduce((sum, target) => sum + target.deferred, 0)
+  if (deferredTotal > 0) {
+    const details = targets
+      .filter((target) => target.deferred > 0)
+      .map((target) => `${target.name}: ${formatCount(target.deferred)} waiting`)
+    items.push({
+      key: 'deferred-additions',
+      icon: LuTriangleAlert,
+      title: `${formatCount(deferredTotal)} addition${deferredTotal === 1 ? '' : 's'} deferred by the cap`,
+      description:
+        "These tracks weren't skipped. SongMirror will continue adding them in later passes, " +
+        "up to each playlist's configured limit per pass.",
+      details,
       action: { label: 'Review caps', to: '/sync' },
     })
   }

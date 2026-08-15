@@ -761,6 +761,59 @@ async function main() {
       await page.setViewportSize({ width: 1280, height: 900 })
       await page.goto(BASE_URL + '/', { waitUntil: 'networkidle' })
       await page.waitForSelector('text=Next check')
+
+      const brandGeometry = await page.locator('aside a[title="Dashboard"] img').evaluate((img) => {
+        const rect = img.getBoundingClientRect()
+        return {
+          naturalRatio: img.naturalWidth / img.naturalHeight,
+          renderedRatio: rect.width / rect.height,
+        }
+      })
+      const logoKeepsAspectRatio = Math.abs(brandGeometry.renderedRatio - brandGeometry.naturalRatio) < 0.01
+      console.log(`${logoKeepsAspectRatio ? 'ok        ' : 'FAIL      '} sidebar logo preserves its natural aspect ratio (natural=${brandGeometry.naturalRatio.toFixed(3)} rendered=${brandGeometry.renderedRatio.toFixed(3)})`)
+      if (!logoKeepsAspectRatio) results.push({ label: 'sidebar logo aspect ratio', overflow: true })
+
+      const faviconGeometry = await page.evaluate(async () => {
+        const link = document.querySelector('link[rel="icon"][sizes="64x64"]')
+        const img = new Image()
+        img.src = link.href
+        await img.decode()
+        const canvas = document.createElement('canvas')
+        canvas.width = img.naturalWidth
+        canvas.height = img.naturalHeight
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0)
+        const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height)
+        let minX = canvas.width
+        let minY = canvas.height
+        let maxX = -1
+        let maxY = -1
+        for (let y = 0; y < canvas.height; y++) {
+          for (let x = 0; x < canvas.width; x++) {
+            const i = (y * canvas.width + x) * 4
+            const r = data[i]
+            const g = data[i + 1]
+            const b = data[i + 2]
+            const a = data[i + 3]
+            if (r > 180 && g > 35 && g < 180 && b < 100 && a > 0) {
+              minX = Math.min(minX, x)
+              minY = Math.min(minY, y)
+              maxX = Math.max(maxX, x)
+              maxY = Math.max(maxY, y)
+            }
+          }
+        }
+        return {
+          coverage: (maxY - minY + 1) / canvas.height,
+          markRatio: (maxX - minX + 1) / (maxY - minY + 1),
+        }
+      })
+      const faviconUsesCanvas = faviconGeometry.coverage >= 0.6
+      const faviconKeepsAspectRatio = Math.abs(faviconGeometry.markRatio - brandGeometry.naturalRatio) < 0.05
+      const faviconOk = faviconUsesCanvas && faviconKeepsAspectRatio
+      console.log(`${faviconOk ? 'ok        ' : 'FAIL      '} favicon mark is proportional and fills the tile (ratio=${faviconGeometry.markRatio.toFixed(3)} coverage=${faviconGeometry.coverage.toFixed(3)})`)
+      if (!faviconOk) results.push({ label: 'favicon mark geometry', overflow: true })
+
       await checkOverflow(page, 'Sidebar expanded (default) @ 1280', results)
       await shot(page, 'sidebar-expanded-1280')
 
@@ -815,15 +868,23 @@ async function main() {
 
       const dismissButtons = () => page.getByRole('button', { name: /^Dismiss: / })
       const badge = () => page.locator('h2:has-text("Needs a look")').locator('xpath=following-sibling::span[1]')
-      const HELD_ALERT = 'Dismiss: 4 changes held from the last pass'
+      const HELD_ALERT = 'Dismiss: 1 target track kept because matching was uncertain'
 
-      // Every errored/unconfigured account plus the held/deferred sync alert.
-      const expectedAlertCount = ACCOUNTS.filter((account) => account.state !== 'connected').length + 1
+      // Every errored/unconfigured account plus distinct matching-safety and
+      // additions-cap alerts. Those causes need different explanations/actions.
+      const expectedAlertCount = ACCOUNTS.filter((account) => account.state !== 'connected').length + 2
       const startCount = await dismissButtons().count()
       const startBadge = await badge().innerText()
       const startOk = startCount === expectedAlertCount && startBadge === String(expectedAlertCount)
       console.log(`${startOk ? 'ok        ' : 'FAIL      '} every "Needs a look" card has a Dismiss control (${startCount} cards, badge "${startBadge}", expected ${expectedAlertCount})`)
       if (!startOk) results.push({ label: 'needs a look dismissable cards', overflow: true })
+
+      const needsLookText = await page.locator('body').innerText()
+      const heldExplained = needsLookText.includes('1 target track kept because matching was uncertain') && needsLookText.includes('Apple Music: 1 kept')
+      const deferredExplained = needsLookText.includes('3 additions deferred by the cap') && needsLookText.includes('YouTube Music: 3 waiting')
+      const causesSeparated = heldExplained && deferredExplained && !needsLookText.includes('4 changes held from the last pass')
+      console.log(`${causesSeparated ? 'ok        ' : 'FAIL      '} held matches and capped additions are explained separately by service`)
+      if (!causesSeparated) results.push({ label: 'needs a look held/deferred details', overflow: true })
       await checkOverflow(page, 'Needs a look, dismissable @ 1280', results)
       await shot(page, 'dashboard-needs-a-look-dismissable')
 
@@ -831,7 +892,7 @@ async function main() {
       await page.waitForTimeout(150)
       const afterCount = await dismissButtons().count()
       const afterBadge = await badge().innerText()
-      const goneNow = !(await page.locator('body').innerText()).includes('4 changes held from the last pass')
+      const goneNow = !(await page.locator('body').innerText()).includes('1 target track kept because matching was uncertain')
       const dismissOk = afterCount === expectedAlertCount - 1 && afterBadge === String(expectedAlertCount - 1) && goneNow
       console.log(`${dismissOk ? 'ok        ' : 'FAIL      '} dismissing a card removes it and updates the count (${afterCount} cards, badge "${afterBadge}", text gone=${goneNow})`)
       if (!dismissOk) results.push({ label: 'needs a look dismiss', overflow: true })
@@ -839,7 +900,7 @@ async function main() {
       await page.reload({ waitUntil: 'networkidle' })
       await page.waitForSelector('h2:has-text("Needs a look")')
       const afterReload = await dismissButtons().count()
-      const stillGone = !(await page.locator('body').innerText()).includes('4 changes held from the last pass')
+      const stillGone = !(await page.locator('body').innerText()).includes('1 target track kept because matching was uncertain')
       const persistOk = afterReload === expectedAlertCount - 1 && stillGone
       console.log(`${persistOk ? 'ok        ' : 'FAIL      '} the dismissal survives a reload (${afterReload} cards, still gone=${stillGone})`)
       if (!persistOk) results.push({ label: 'needs a look dismiss persistence', overflow: true })
@@ -865,7 +926,7 @@ async function main() {
       await page.reload({ waitUntil: 'networkidle' })
       await page.waitForSelector('h2:has-text("Needs a look")')
       await page.waitForTimeout(150)
-      const resurfaced = (await page.locator('body').innerText()).includes('9 changes held from the last pass')
+      const resurfaced = (await page.locator('body').innerText()).includes('9 target tracks kept because matching was uncertain')
       const stored = await page.evaluate(() => window.localStorage.getItem('songmirror-dismissed-alerts'))
       const prunedOk = resurfaced && stored === '[]'
       console.log(`${prunedOk ? 'ok        ' : 'FAIL      '} a changed situation resurfaces and prunes the stale dismissal (resurfaced=${resurfaced}, stored=${stored})`)
