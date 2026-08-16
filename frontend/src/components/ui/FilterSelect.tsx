@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { LuCheck, LuChevronDown } from 'react-icons/lu'
@@ -9,6 +9,8 @@ export interface FilterSelectOption<T extends string = string> {
   value: T
   label: string
   leading?: ReactNode
+  group?: string
+  hint?: string
 }
 
 interface FilterSelectProps<T extends string> {
@@ -237,32 +239,50 @@ export function FilterSelect<T extends string>({
           {options.map((option, index) => {
             const isSelected = option.value === value
             const isActive = index === activeIndex
+            const showGroup = option.group && option.group !== options[index - 1]?.group
             return (
-              <button
-                key={option.value}
-                id={`${selectId}-option-${index}`}
-                type="button"
-                role="option"
-                tabIndex={-1}
-                aria-selected={isSelected}
-                onPointerMove={() => setActiveIndex(index)}
-                onClick={() => choose(index)}
-                className={cn(
-                  'flex min-h-8 w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-text-2 transition-colors duration-fast',
-                  isActive && 'bg-surface-2 text-text',
-                  isSelected && 'font-semibold text-text',
-                )}
-              >
-                {option.leading ? (
-                  <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden="true">
-                    {option.leading}
+              <Fragment key={option.value}>
+                {showGroup ? (
+                  <div
+                    role="presentation"
+                    data-activity-filter-group
+                    className="px-2 pb-1 pt-2 font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-text-3 first:pt-1"
+                  >
+                    {option.group}
+                  </div>
+                ) : null}
+                <button
+                  id={`${selectId}-option-${index}`}
+                  type="button"
+                  role="option"
+                  tabIndex={-1}
+                  aria-selected={isSelected}
+                  onPointerMove={() => setActiveIndex(index)}
+                  onClick={() => choose(index)}
+                  className={cn(
+                    'flex min-h-8 w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-text-2 transition-colors duration-fast',
+                    isActive && 'bg-surface-2 text-text',
+                    isSelected && 'font-semibold text-text',
+                  )}
+                >
+                  {option.leading ? (
+                    <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden="true">
+                      {option.leading}
+                    </span>
+                  ) : (
+                    <span className="size-4 shrink-0" aria-hidden="true" />
+                  )}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{option.label}</span>
+                    {option.hint ? (
+                      <span className="mt-0.5 block truncate text-[10px] font-normal leading-tight text-text-3">
+                        {option.hint}
+                      </span>
+                    ) : null}
                   </span>
-                ) : (
-                  <span className="size-4 shrink-0" aria-hidden="true" />
-                )}
-                <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                {isSelected ? <LuCheck className="size-3.5 shrink-0 text-accent" aria-hidden="true" /> : null}
-              </button>
+                  {isSelected ? <LuCheck className="size-3.5 shrink-0 text-accent" aria-hidden="true" /> : null}
+                </button>
+              </Fragment>
             )
           })}
         </div>,

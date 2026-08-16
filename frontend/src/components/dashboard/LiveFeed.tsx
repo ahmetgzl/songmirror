@@ -1,8 +1,10 @@
 import { useDeferredValue, useMemo, useState } from 'react'
 import type { IconType } from 'react-icons'
 import {
+  LuArrowRightLeft,
   LuArrowDownUp,
   LuClockAlert,
+  LuDownload,
   LuHistory,
   LuInfo,
   LuLayers3,
@@ -23,7 +25,8 @@ import { useEventStream } from '@/hooks/useEventStream'
 import type { EventCounterKey } from '@/hooks/useEventStream'
 import { cn } from '@/lib/cn'
 import { activitySourceId, serviceLogoId, tagDot, tagLabel, tagText } from '@/lib/constants'
-import type { EventKind, SyncEvent } from '@/types'
+import { parseCsv } from '@/lib/syncSummary'
+import type { Account, EventKind, SyncEvent, SyncJob } from '@/types'
 
 import { CountChip, type CountChipTone } from '../ui/CountChip'
 import { FilterSelect, type FilterSelectOption } from '../ui/FilterSelect'
@@ -159,6 +162,9 @@ function matchesKind(event: SyncEvent, filter: KindFilter): boolean {
 }
 
 function ServiceOptionMark({ tag }: { tag: string }) {
+  if (tag === 'sync') return <LuRefreshCw className="size-3.5 text-accent" />
+  if (tag === 'local') return <LuDownload className="size-3.5 text-info" />
+  if (tag === 'transfer') return <LuArrowRightLeft className="size-3.5 text-info" />
   const logo = serviceLogoId(tag)
   return logo ? (
     <ServiceLogo service={logo} className={cn('size-3.5', tagText(tag))} />
@@ -167,10 +173,21 @@ function ServiceOptionMark({ tag }: { tag: string }) {
   )
 }
 
+const INTERNAL_SOURCE_HINTS: Record<string, string> = {
+  sync: 'Run status and safety messages',
+  local: 'Music files saved on this server',
+  transfer: 'One-time playlist copy jobs',
+}
+
+interface LiveFeedProps {
+  accounts?: Account[] | null
+  syncs?: SyncJob[] | null
+}
+
 /** A live signal desk: current-pass counters disclose their service/evidence
  * ledger, while the persisted event stream can be searched, sliced and sorted
  * without changing what the sync engine records. */
-export function LiveFeed() {
+export function LiveFeed({ accounts = null, syncs = null }: LiveFeedProps = {}) {
   const { events, counters, breakdown, holdReasons, connected } = useEventStream()
   const [query, setQuery] = useState('')
   const [source, setSource] = useState('all')
@@ -178,19 +195,38 @@ export function LiveFeed() {
   const [sort, setSort] = useState<SortOrder>('oldest')
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase())
 
-  const sources = useMemo(
-    () => [...new Set(events.map((event) => activitySourceId(event.tag)).filter(Boolean))]
-      .sort((a, b) => tagLabel(a).localeCompare(tagLabel(b))),
-    [events],
-  )
-  const sourceOptions = useMemo<Array<FilterSelectOption<string>>>(() => [
-    { value: 'all', label: 'All sources', leading: <LuLayers3 className="size-3.5 text-text-3" /> },
-    ...sources.map((tag) => ({
-      value: tag,
-      label: tagLabel(tag),
-      leading: <ServiceOptionMark tag={tag} />,
-    })),
-  ], [sources])
+  const sources = useMemo(() => {
+    const ids = new Set(events.map((event) => activitySourceId(event.tag)).filter(Boolean))
+    for (const job of syncs ?? []) {
+      if (job.source) ids.add(activitySourceId(job.source))
+      for (const provider of parseCsv(job.providers)) ids.add(activitySourceId(provider))
+      if (job.download) ids.add('local')
+    }
+    for (const account of accounts ?? []) {
+      if (account.state !== 'unconfigured') ids.add(activitySourceId(account.id))
+    }
+    return [...ids].sort((a, b) => tagLabel(a).localeCompare(tagLabel(b)))
+  }, [accounts, events, syncs])
+  const sourceOptions = useMemo<Array<FilterSelectOption<string>>>(() => {
+    const services = sources.filter((tag) => serviceLogoId(tag) !== null)
+    const internal = sources.filter((tag) => serviceLogoId(tag) === null)
+    return [
+      { value: 'all', label: 'All sources', leading: <LuLayers3 className="size-3.5 text-text-3" /> },
+      ...services.map((tag) => ({
+        value: tag,
+        label: tagLabel(tag),
+        group: 'Music services',
+        leading: <ServiceOptionMark tag={tag} />,
+      })),
+      ...internal.map((tag) => ({
+        value: tag,
+        label: tagLabel(tag),
+        group: 'SongMirror activity',
+        hint: INTERNAL_SOURCE_HINTS[tag],
+        leading: <ServiceOptionMark tag={tag} />,
+      })),
+    ]
+  }, [sources])
 
   const visibleEvents = useMemo(() => {
     const filtered = events.filter((event) => {

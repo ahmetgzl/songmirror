@@ -2876,6 +2876,37 @@ async function main() {
       console.log(`${tooltipOk ? 'ok        ' : 'FAIL      '} held counter tooltip explains per-service totals and evidence reason`)
       if (!tooltipOk) results.push({ label: 'live feed counter evidence tooltip', overflow: true })
 
+      const tooltipPlacementOk = await page.getByRole('tooltip').evaluate((node) => {
+        const tip = node.getBoundingClientRect()
+        let ancestor = node.parentElement
+        while (ancestor) {
+          const style = getComputedStyle(ancestor)
+          const rect = ancestor.getBoundingClientRect()
+          const clipsX = ['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowX)
+          const clipsY = ['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowY)
+          if ((clipsX && (tip.left < rect.left || tip.right > rect.right))
+            || (clipsY && (tip.top < rect.top || tip.bottom > rect.bottom))) return false
+          ancestor = ancestor.parentElement
+        }
+        return tip.top >= 8 && tip.left >= 8
+          && tip.right <= window.innerWidth - 8 && tip.bottom <= window.innerHeight - 8
+      })
+      console.log(`${tooltipPlacementOk ? 'ok        ' : 'FAIL      '} counter tooltip escapes clipping cards and stays inside the viewport`)
+      if (!tooltipPlacementOk) results.push({ label: 'live feed counter tooltip clipped', overflow: true })
+
+      await page.mouse.move(0, 0)
+      await page.getByRole('tooltip').waitFor({ state: 'detached' })
+      await heldCounter.focus()
+      const focusTooltip = page.getByRole('tooltip')
+      await focusTooltip.waitFor()
+      const focusTooltipId = await focusTooltip.getAttribute('id')
+      const focusDescribedBy = await heldCounter.getAttribute('aria-describedby')
+      await page.keyboard.press('Escape')
+      await focusTooltip.waitFor({ state: 'detached' })
+      const tooltipKeyboardOk = Boolean(focusTooltipId && focusDescribedBy?.split(' ').includes(focusTooltipId))
+      console.log(`${tooltipKeyboardOk ? 'ok        ' : 'FAIL      '} counter tooltip is described on keyboard focus and closes with Escape`)
+      if (!tooltipKeyboardOk) results.push({ label: 'live feed counter tooltip keyboard access', overflow: true })
+
       // These controls must render their menus inside the app. A native <select>
       // hands the popup to Windows/macOS, producing a visually unrelated grey
       // menu that cannot inherit SongMirror's tokens (the reported regression).
@@ -2890,12 +2921,18 @@ async function main() {
       const sourceTrigger = page.getByRole('button', { name: 'Filter by source', exact: true })
       await sourceTrigger.click()
       const sourceListbox = page.getByRole('listbox', { name: 'Filter by source', exact: true })
-      const sourceLabels = await sourceListbox.getByRole('option').allInnerTexts()
-      const sourceLabelsOk = ['All sources', 'Jellyfin', 'Local library', 'Qobuz', 'SongMirror', 'Spotify']
+      const sourceOptionText = await sourceListbox.getByRole('option').allInnerTexts()
+      const sourceLabels = sourceOptionText.map((text) => text.split('\n')[0])
+      const sourceGroups = (await sourceListbox.locator('[data-activity-filter-group]').allInnerTexts())
+        .map((label) => label.toLowerCase())
+      const sourceLabelsOk = ['All sources', 'Apple Music', 'Jellyfin', 'Qobuz', 'Spotify', 'Download mirror', 'Sync engine']
         .every((label) => sourceLabels.includes(label))
         && !sourceLabels.includes('jelly')
         && !sourceLabels.includes('Sync')
-      console.log(`${sourceLabelsOk ? 'ok        ' : 'FAIL      '} activity source labels use product names instead of raw engine tags (${sourceLabels.join(' | ')})`)
+        && sourceGroups.includes('music services')
+        && sourceGroups.includes('songmirror activity')
+        && sourceOptionText.some((text) => text.includes('Download mirror') && text.includes('Music files saved on this server'))
+      console.log(`${sourceLabelsOk ? 'ok        ' : 'FAIL      '} source menu keeps configured services and explains internal activity (${sourceOptionText.join(' | ')})`)
       if (!sourceLabelsOk) results.push({ label: 'live feed source labels', overflow: true })
 
       const feed = page.getByRole('log', { name: 'Live sync activity' })

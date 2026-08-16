@@ -43,7 +43,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.65fr_1fr] lg:items-start">
         <Card className="flex flex-col gap-3 overflow-hidden p-4 sm:p-5">
           <h2 className="text-[15px] font-extrabold text-text">Recent activity</h2>
-          <LiveFeed />
+          <LiveFeed accounts={accounts} syncs={syncs} />
         </Card>
         <YourServices accounts={accounts} status={status} />
       </div>

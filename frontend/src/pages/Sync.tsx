@@ -96,7 +96,7 @@ export default function Sync() {
 
       {syncs && syncs.length > 0 && (
         <Card className="p-4 sm:p-5">
-          <LiveFeed />
+          <LiveFeed accounts={accounts} syncs={syncs} />
         </Card>
       )}
 

@@ -46,9 +46,9 @@ const SERVICE_STYLES: Record<string, ServiceStyle> = {
   apple: { label: 'Apple Music', dot: 'bg-svc-apple', soft: 'bg-svc-apple-soft', text: 'text-svc-apple' },
   ytmusic: { label: 'YouTube Music', dot: 'bg-svc-ytmusic', soft: 'bg-svc-ytmusic-soft', text: 'text-svc-ytmusic' },
   jellyfin: { label: 'Jellyfin', dot: 'bg-svc-jellyfin', soft: 'bg-svc-jellyfin-soft', text: 'text-svc-jellyfin' },
-  sync: { label: 'SongMirror', dot: 'bg-accent', soft: 'bg-accent-soft', text: 'text-accent' },
-  local: { label: 'Local library', dot: 'bg-info', soft: 'bg-info-soft', text: 'text-info' },
-  transfer: { label: 'Playlist transfer', dot: 'bg-info', soft: 'bg-info-soft', text: 'text-info' },
+  sync: { label: 'Sync engine', dot: 'bg-accent', soft: 'bg-accent-soft', text: 'text-accent' },
+  local: { label: 'Download mirror', dot: 'bg-info', soft: 'bg-info-soft', text: 'text-info' },
+  transfer: { label: 'Playlist transfers', dot: 'bg-info', soft: 'bg-info-soft', text: 'text-info' },
 }
 const SOURCE_ALIASES: Record<string, string> = {
   jelly: 'jellyfin',
