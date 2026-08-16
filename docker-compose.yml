@@ -8,6 +8,8 @@ services:
     # under ./data. Keep a .env only to preset things like DOWNLOAD_DIR or
     # credentials. (`required: false` needs Docker Compose v2.24+; on older
     # versions either create an empty `.env` or drop the `path:`/`required:` keys.)
+    # For redirect-based OAuth on a remote host, set SONGMIRROR_PUBLIC_URL in
+    # that file to the browser-visible HTTPS base URL.
     env_file:
       - path: .env
         required: false

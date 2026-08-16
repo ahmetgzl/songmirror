@@ -45,6 +45,30 @@ def test_spotify_begin_redirect_returns_url(tmp_path, monkeypatch):
     assert c._store.get("SPOTIFY_REDIRECT_URI") == "http://host/oauth/spotify/callback"
 
 
+def test_spotify_oauth_mode_uses_docker_env_credentials(tmp_path, monkeypatch):
+    from songmirror.services.accounts.spotify import SpotifyConnector
+
+    captured = {}
+
+    class FakeOAuth:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setenv("SPOTIFY_AUTH_MODE", "oauth")
+    monkeypatch.setenv("SPOTIFY_CLIENT_ID", "env-client")
+    monkeypatch.setenv("SPOTIFY_CLIENT_SECRET", "env-secret")
+    monkeypatch.setattr("spotipy.oauth2.SpotifyOAuth", FakeOAuth)
+
+    c = SpotifyConnector(SettingsStore(dir=tmp_path))
+    c._oauth("https://music.example.test/oauth/spotify/callback")
+
+    assert c.auth_kind == "oauth_redirect"
+    assert [field.key for field in c.config_fields] == ["SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"]
+    assert captured["client_id"] == "env-client"
+    assert captured["client_secret"] == "env-secret"
+    assert captured["redirect_uri"] == "https://music.example.test/oauth/spotify/callback"
+
+
 def test_spotify_cookie_only_account_is_connected_without_developer_credentials(tmp_path, monkeypatch):
     from songmirror.engine import spotify_cookie
 
