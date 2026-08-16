@@ -62,14 +62,14 @@ def save_config(cid: str, request: Request, values: dict = Body(...)):
 
 
 @router.post("/api/accounts/{cid}/connect")
-async def connect(cid: str, request: Request):
+async def connect(cid: str, request: Request, body: dict | None = Body(default=None)):
     c = _conn(request, cid)
     if c.auth_kind == "oauth_redirect":
         uri = _redirect_uri(request, cid)
         return {"kind": "redirect", "url": c.begin_redirect(uri), "redirect_uri": uri}
     if c.auth_kind == "oauth_device":
         return {"kind": "device", **asdict(c.begin_device())}
-    st = c.submit(await request.json())  # token_paste / api_key
+    st = c.submit(body or {})  # token_paste / api_key
     return {"kind": c.auth_kind, "state": st.state, "detail": st.detail}
 
 

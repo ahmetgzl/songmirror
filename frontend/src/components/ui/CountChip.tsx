@@ -1,6 +1,9 @@
 import type { IconType } from 'react-icons'
+import type { ReactNode } from 'react'
 
 import { cn } from '@/lib/cn'
+
+import { Tooltip } from './Tooltip'
 
 export type CountChipTone = 'success' | 'danger' | 'warning' | 'neutral'
 
@@ -18,14 +21,15 @@ interface CountChipProps {
   label?: string
   value: number
   className?: string
+  tooltip?: ReactNode
 }
 
 /** font-mono tabular figures so ticking numbers never wobble. */
-export function CountChip({ tone, sign = '', icon: Icon, label, value, className }: CountChipProps) {
-  return (
+export function CountChip({ tone, sign = '', icon: Icon, label, value, className, tooltip }: CountChipProps) {
+  const chip = (
     <span
       aria-label={label ? `${value} ${label} this pass` : undefined}
-      title={label ? `${value} ${label} this pass` : undefined}
+      tabIndex={tooltip ? 0 : undefined}
       className={cn(
         'inline-flex h-6 items-center gap-1.5 rounded-chip border border-border px-2 font-mono text-xs font-bold tabular-nums',
         TONE_CLASSES[tone],
@@ -37,4 +41,5 @@ export function CountChip({ tone, sign = '', icon: Icon, label, value, className
       {label ? <span className="hidden font-sans text-[10px] font-semibold sm:inline">{label}</span> : null}
     </span>
   )
+  return tooltip ? <Tooltip content={tooltip}>{chip}</Tooltip> : chip
 }

@@ -35,10 +35,10 @@ SPOTIFY_SCOPE = ("playlist-read-private playlist-read-collaborative "
 # or a reconnect updates a file the engine never reads and its auth stays stale.
 DEFAULT_SPOTIFY_TOKEN_CACHE = "data/spotify_token_cache"
 
-# Which credential Spotify WRITES use. `oauth` = the registered dev app — refused by
-# Spotify Development Mode on playlist create / track edits. `cookie` = the first-party
-# web client via an sp_dc cookie (engine/spotify_cookie.py), which bypasses that gate.
-# Reads are unaffected either way.
+# Which complete Spotify adapter to use. `cookie` routes library reads, playlist
+# reads/writes, and catalog search through the signed-in web client and needs no
+# developer app. `oauth` preserves the registered-app integration for existing
+# installations. The Accounts wizard selects `cookie` when it stores ``sp_dc``.
 DEFAULT_SPOTIFY_WRITE_BACKEND = "oauth"
 
 

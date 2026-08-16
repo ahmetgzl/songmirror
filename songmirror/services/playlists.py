@@ -10,8 +10,8 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from ..engine import spotify
-from ..engine.config import parse_args
+from ..engine import spotify, spotify_cookie
+from ..engine.config import parse_args, spotify_write_backend
 from ..engine.targets import build_one
 from .settings import _open_private
 
@@ -101,7 +101,9 @@ class PlaylistService:
             return sorted(rows, key=lambda r: (r["name"] or "").casefold())
         opts = parse_args([])
         try:
-            sp = spotify.client() if provider_id == "spotify" else None  # only the Spotify target needs a client
+            cookie = (provider_id == "spotify" and spotify_write_backend() == "cookie"
+                      and spotify_cookie.configured())
+            sp = spotify.client() if provider_id == "spotify" and not cookie else None
             target = build_one(provider_id, opts, sp)
         except Exception:
             return []  # e.g. Spotify not authorized yet -> nothing to browse

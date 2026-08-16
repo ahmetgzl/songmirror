@@ -1,10 +1,9 @@
-"""Spotify as a writable mirror peer (N-way sync only).
+"""Spotify as a writable mirror peer.
 
 In one-way mode Spotify is just the source and this target isn't built. In
 N-way mode it becomes a first-class peer: the same reconcile that edits Apple
-and YouTube Music also adds/removes on Spotify. Reads reuse the helpers in
-spotify.py; writes go through spotipy's playlist-modify endpoints and therefore
-need the modify scopes (see spotify.client(writable=True)).
+and YouTube Music also adds/removes on Spotify. Cookie mode is complete and
+needs no developer app; OAuth remains a compatible fallback.
 """
 
 import spotipy
@@ -29,18 +28,19 @@ class SpotifyTarget(MirrorTarget):
         self._sp = sp
         self.cache_file = cache_file
         self._me = None
-        # True when built as an N-way reconcile peer (not a one-off transfer). In
-        # cookie mode this makes the read backfill ISRC and FAIL CLOSED if it can't —
-        # so a sync never matches Spotify on name/artist alone and churns playlists.
+        # True when built as an N-way reconcile peer (not a one-off transfer).
         self._sync_peer = sync_peer
-        # The songs archive (sqlite conn) — a persistent ISRC cache so the peer read
-        # fetches each track's ISRC from /tracks once ever, not every pass (see
-        # playlist_tracks). None for transfers/browse, which don't need ISRC.
+        # The songs archive (sqlite conn) supplies identities previously proven
+        # by another peer. New cookie-only tracks are seeded during the all-peer
+        # read instead of being fetched from Spotify's developer API.
         self._songs = songs
 
     def _user(self):
         if self._me is None:
-            self._me = spotify._retry(lambda: self._sp.current_user(), "current_user")["id"]
+            if spotify_write_backend() == "cookie" or self._sp is None:
+                self._me = spotify_cookie.current_user_id()
+            else:
+                self._me = spotify._retry(lambda: self._sp.current_user(), "current_user")["id"]
         return self._me
 
     def _write(self, fn, what):
@@ -57,15 +57,29 @@ class SpotifyTarget(MirrorTarget):
 
     # -- MirrorTarget ----------------------------------------------------------
     def list_playlists(self):
+        if spotify_write_backend() == "cookie" or self._sp is None:
+            best = {}
+            for playlist in spotify_cookie.library_playlists():
+                key = self.playlist_name(playlist).strip().casefold()
+                if not key:
+                    continue
+                rank = (bool(playlist.get("_editable")), playlist.get("snapshot_id") or "")
+                if key not in best or rank > best[key][0]:
+                    best[key] = (rank, playlist)
+            return {key: playlist for key, (_, playlist) in best.items()}
         return spotify.playlists_by_name(self._sp)
 
     def browse_playlists(self):
         # Un-deduped, with `_owned` — so browse lists (and the inherited find_playlist
         # scans) every playlist, including a followed one that shares a name with an
         # owned one. list_playlists() name-dedupes for the sync engine and would hide it.
+        if spotify_write_backend() == "cookie" or self._sp is None:
+            return spotify_cookie.library_playlists()
         return spotify.all_playlists(self._sp)
 
     def is_editable(self, playlist):
+        if "_editable" in playlist:
+            return bool(playlist["_editable"])
         owner = (playlist.get("owner") or {}).get("id")
         return owner is None or owner == self._user()
 
@@ -84,17 +98,15 @@ class SpotifyTarget(MirrorTarget):
         return pl
 
     def playlist_tracks(self, playlist):
-        # In cookie mode the official track read 403s under Development Mode (and a
-        # just-created private playlist has no public scraper fallback), so read via
-        # the same web-player path the writes use. As an N-way peer (sync_peer), the
-        # read backfills ISRC and fails closed if it can't — so a bidirectional sync
-        # never matches Spotify on name/artist alone and churns.
+        # Cookie mode reads the web-player payload. It reuses persisted ISRCs but
+        # never backfills cache misses through the developer API; reconcile learns
+        # those identities from the other ISRC-bearing peers in the same read phase.
         if spotify_write_backend() == "cookie":
             known = None
             if self._sync_peer and self._songs is not None:
                 known = lambda ids: archive.get_isrcs(self._songs, "spotify", ids)  # noqa: E731
             return spotify_cookie.playlist_tracks(
-                playlist["id"], require_isrc=self._sync_peer, known_isrc=known)
+                playlist["id"], require_isrc=False, known_isrc=known)
         return spotify.playlist_tracks(self._sp, playlist["id"])
 
     def track_id(self, track):
@@ -131,6 +143,8 @@ class SpotifyTarget(MirrorTarget):
         return None, None
 
     def _query(self, q):
+        if spotify_write_backend() == "cookie" or self._sp is None:
+            return spotify_cookie.search_tracks(q, limit=8)
         try:
             res = spotify._retry(lambda: self._sp.search(q=q, type="track", limit=8), "search")
         except spotipy.SpotifyException:

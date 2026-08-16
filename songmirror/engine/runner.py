@@ -12,7 +12,8 @@ import time
 
 from dotenv import load_dotenv
 
-from . import archive, spotify
+from . import archive, spotify, spotify_cookie
+from .config import spotify_write_backend
 from .logs import fmt_counts, fmt_secs, log, log_note, log_section, log_summary, log_warn, paint
 from .targets import TargetAuthError, build_one, build_peers, build_targets, mirror_pair, reconcile
 from .targets.base import _normalize
@@ -48,12 +49,14 @@ def save_cache(cache_file, cache):
 
 
 _SUMMARY_KEYS = ("added", "removed", "missing", "held", "deferred", "removals_skipped",
-                 "created", "skipped", "failed", "isrc_fallback")
+                 "created", "skipped", "failed", "isrc_fallback", "identity_changes",
+                 "unconfirmed_absences", "confirmed_absences", "read_anomalies")
 
 
 # How many held-back removals travel with a pass summary. The counts above stay
 # authoritative for the total; this only bounds what the UI can list.
 HELD_REMOVAL_DETAIL = 50
+CHANGE_DIAGNOSTIC_DETAIL = 50
 
 # Same bound for failed playlists. Smaller because a pass that fails this many is
 # failing for one shared reason, which the first few already name.
@@ -62,6 +65,12 @@ FAILURE_DETAIL = 20
 
 def _collect_held(dest, records):
     room = HELD_REMOVAL_DETAIL - len(dest)
+    if room > 0:
+        dest.extend(records[:room])
+
+
+def _collect_diagnostics(dest, records):
+    room = CHANGE_DIAGNOSTIC_DETAIL - len(dest)
     if room > 0:
         dest.extend(records[:room])
 
@@ -80,6 +89,7 @@ def _summary_entry(name, agg):
     for k in _SUMMARY_KEYS:
         entry[k] = agg.get(k, 0)
     entry["held_removals"] = agg.get("held_removals", [])
+    entry["change_diagnostics"] = agg.get("change_diagnostics", [])
     entry["failures"] = agg.get("failures", [])
     return entry
 
@@ -208,13 +218,17 @@ def run_pass(opts, should_continue=None):
     spotify_is_target = (opts.sync_mode == "oneway" and source_provider != "spotify"
                          and spotify_requested)
     sp = None
+    cookie_spotify = spotify_write_backend() == "cookie" and spotify_cookie.configured()
     if source_provider == "spotify" or spotify_requested:
-        try:
-            sp = spotify.client(writable=opts.execute and (opts.sync_mode == "nway" or spotify_is_target))
-        except RuntimeError as exc:
-            if source_provider == "spotify":
-                raise
-            log_note(f"Spotify skipped: {exc}", tag="spotify")
+        if cookie_spotify:
+            log_note("Spotify is using its signed-in web session (no developer API)", tag="spotify")
+        else:
+            try:
+                sp = spotify.client(writable=opts.execute and (opts.sync_mode == "nway" or spotify_is_target))
+            except RuntimeError as exc:
+                if source_provider == "spotify":
+                    raise
+                log_note(f"Spotify skipped: {exc}", tag="spotify")
 
     # The library whose playlists drive this pass: always Spotify for N-way (the
     # symmetric reconcile's name master), the chosen source-of-truth for one-way.
@@ -298,7 +312,7 @@ def run_pass(opts, should_continue=None):
             if entry and snap and entry.get("snapshot") == snap:
                 sp_memo[playlist_id] = entry["tracks"]  # unchanged since last pass
                 return entry["tracks"]
-            tracks = spotify.playlist_tracks(sp, playlist_id)
+            tracks = source.playlist_tracks(playlist)
             sp_memo[playlist_id] = tracks
             if snap:
                 tracks_cache[playlist_id] = {"snapshot": snap, "tracks": tracks}
@@ -389,15 +403,15 @@ def _run_nway(opts, sp, selected, songs, should_continue=None):
     log(f"  peers: {paint(', '.join(p.name for p in peers), 'cyan')}"
         + (paint(f"   local downloads -> {opts.download_dir}", "grey") if opts.download_dir and opts.execute else ""))
 
-    from . import spotify_cookie
-
     spotify_cookie.take_singles_used()   # drop any residue from a pass that died mid-read
     dirs = {p.source: p.list_playlists() for p in peers}
     caches = {p.source: load_cache(p.cache_file) for p in peers}
     total = {"added": 0, "removed": 0, "missing": 0, "held": 0, "deferred": 0,
-             "removals_skipped": 0, "failed": 0}
+             "removals_skipped": 0, "failed": 0, "identity_changes": 0,
+             "unconfirmed_absences": 0, "confirmed_absences": 0, "read_anomalies": 0}
     # Both lists stay out of `total` so the scalar accumulate loop stays scalar.
     held_detail = []
+    change_diagnostics = []
     failures = []
     try:
         for sp_playlist in selected:
@@ -437,6 +451,7 @@ def _run_nway(opts, sp, selected, songs, should_continue=None):
                 for k in total:
                     total[k] += stats.get(k, 0)
                 _collect_held(held_detail, stats.get("held_removals", []))
+                _collect_diagnostics(change_diagnostics, stats.get("change_diagnostics", []))
             except TargetAuthError:
                 raise
             except Exception as e:
@@ -446,8 +461,9 @@ def _run_nway(opts, sp, selected, songs, should_continue=None):
         for p in peers:
             save_cache(p.cache_file, caches[p.source])
     total["held_removals"] = held_detail
+    total["change_diagnostics"] = change_diagnostics
     total["failures"] = failures
-    # Only N-way reads request ISRC, so this is the only path that can spend the
-    # degraded per-track budget.
+    # Drain any legacy explicit-ISRC caller residue. Cookie-only reconciliation
+    # never enters that developer-catalog path.
     total["isrc_fallback"] = spotify_cookie.take_singles_used()
     return [_summary_entry("N-way", total)]

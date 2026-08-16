@@ -20,9 +20,39 @@ export interface EventCounters {
   removed: number
   held: number
   missing: number
+  repaired: number
 }
 
-const ZERO_COUNTERS: EventCounters = { added: 0, removed: 0, held: 0, missing: 0 }
+export type EventCounterKey = keyof EventCounters
+export type EventBreakdown = Record<EventCounterKey, Record<string, number>>
+
+interface EventActivity {
+  counters: EventCounters
+  byProvider: EventBreakdown
+  holdReasons: Record<string, number>
+}
+
+function emptyActivity(): EventActivity {
+  return {
+    counters: { added: 0, removed: 0, held: 0, missing: 0, repaired: 0 },
+    byProvider: { added: {}, removed: {}, held: {}, missing: {}, repaired: {} },
+    holdReasons: {},
+  }
+}
+
+function eventCount(event: SyncEvent): number {
+  const count = event.data?.count
+  return typeof count === 'number' && Number.isFinite(count) && count > 0 ? Math.floor(count) : 1
+}
+
+function counterKey(event: SyncEvent): EventCounterKey | null {
+  if (event.kind === 'add') return 'added'
+  if (event.kind === 'remove') return 'removed'
+  if (event.kind === 'hold') return 'held'
+  if (event.kind === 'miss') return 'missing'
+  if (event.kind === 'repair') return 'repaired'
+  return null
+}
 
 /** Reads the persisted feed history. Defensive on every axis — a disabled
  * or inaccessible store (SSR, privacy mode, a browser extension blocking
@@ -73,7 +103,7 @@ function persistEvents(events: SyncEvent[]) {
  * both read and write the same key and never diverge. */
 export function useEventStream() {
   const [events, setEvents] = useState<SyncEvent[]>(loadPersistedEvents)
-  const [counters, setCounters] = useState<EventCounters>(ZERO_COUNTERS)
+  const [activity, setActivity] = useState<EventActivity>(emptyActivity)
   const [connected, setConnected] = useState(false)
 
   useEffect(() => {
@@ -101,21 +131,27 @@ export function useEventStream() {
         return next
       })
 
-      setCounters((prev) => {
+      setActivity((prev) => {
         if (parsed.kind === 'section' && PASS_STARTED_RE.test(parsed.message)) {
-          return ZERO_COUNTERS
+          return emptyActivity()
         }
-        switch (parsed.kind) {
-          case 'add':
-            return { ...prev, added: prev.added + 1 }
-          case 'remove':
-            return { ...prev, removed: prev.removed + 1 }
-          case 'hold':
-            return { ...prev, held: prev.held + 1 }
-          case 'miss':
-            return { ...prev, missing: prev.missing + 1 }
-          default:
-            return prev
+        const key = counterKey(parsed)
+        if (!key) return prev
+        const count = eventCount(parsed)
+        const provider = parsed.tag || 'sync'
+        const byProvider = {
+          ...prev.byProvider,
+          [key]: { ...prev.byProvider[key], [provider]: (prev.byProvider[key][provider] ?? 0) + count },
+        }
+        const classification = parsed.kind === 'hold' && typeof parsed.data?.classification === 'string'
+          ? parsed.data.classification
+          : null
+        return {
+          counters: { ...prev.counters, [key]: prev.counters[key] + count },
+          byProvider,
+          holdReasons: classification
+            ? { ...prev.holdReasons, [classification]: (prev.holdReasons[classification] ?? 0) + count }
+            : prev.holdReasons,
         }
       })
     }
@@ -125,8 +161,9 @@ export function useEventStream() {
 
   const clear = useCallback(() => {
     setEvents([])
-    setCounters(ZERO_COUNTERS)
+    setActivity(emptyActivity())
   }, [])
 
-  return { events, counters, connected, clear }
+  return { events, counters: activity.counters, breakdown: activity.byProvider,
+    holdReasons: activity.holdReasons, connected, clear }
 }

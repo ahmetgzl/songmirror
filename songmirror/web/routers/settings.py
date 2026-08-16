@@ -11,6 +11,15 @@ router = APIRouter()
 # Never echo secret credentials back to the browser.
 SECRET_KEYS = {f.key for cls in CONNECTORS.values() for f in cls.config_fields if f.secret}
 SECRET_KEYS |= {
+    # Legacy/fallback credentials stay sensitive even after their connector UI
+    # moves to a different authentication method.  Settings written by an older
+    # release must never become readable merely because a field left the wizard.
+    "AMAZON_MUSIC_API_KEY",
+    "AMAZON_MUSIC_CLIENT_SECRET",
+    "DEEZER_APP_SECRET",
+    "QOBUZ_USER_AUTH_TOKEN",
+    "SPOTIFY_CLIENT_SECRET",
+    "SPOTIFY_ISRC_CLIENTS",
     "TIDAL_OAUTH_VERIFIER",
     "TIDAL_OAUTH_STATE",
     "DEEZER_OAUTH_STATE",

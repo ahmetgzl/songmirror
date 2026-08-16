@@ -35,7 +35,11 @@ function svgCover(color) {
 }
 
 const ACCOUNTS = [
-  { id: 'spotify', name: 'Spotify', auth_kind: 'oauth_redirect', fields: [], state: 'connected', detail: null, transferable: true },
+  {
+    id: 'spotify', name: 'Spotify', auth_kind: 'token_paste', state: 'connected',
+    detail: 'signed-in web session · no developer API', transferable: true,
+    fields: [{ key: 'SPOTIFY_SP_DC', label: 'sp_dc cookie', secret: true, help: 'From open.spotify.com → browser dev tools → Cookies', required: true }],
+  },
   {
     id: 'tidal',
     name: 'TIDAL',
@@ -178,8 +182,27 @@ function syncStatusFixture(syncsData) {
       ok: true,
       error: null,
       per_target: [
-        { name: 'Spotify', added: 4, removed: 1, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
-        { name: 'Apple Music', added: 3, removed: 0, missing: 2, held: 1, deferred: 0, created: 1, skipped: 0 },
+        {
+          name: 'Spotify', added: 4, removed: 1, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0,
+          identity_changes: 2,
+          change_diagnostics: [{ category: 'identity_migration', playlist: 'Road Trip 2025', provider: 'Spotify', count: 2, evidence: 'the provider track ID stayed the same while its canonical metadata changed' }],
+        },
+        {
+          name: 'Apple Music', added: 3, removed: 0, missing: 2, held: 1, deferred: 0, created: 1, skipped: 0,
+          removals_skipped: 3, unconfirmed_absences: 2, confirmed_absences: 1, read_anomalies: 1,
+          held_removals: [
+            { target: 'Apple Music', playlist: 'Road Trip 2025', track: 'First Read Only', artist: 'Signal', reason: 'awaiting confirmation', category: 'unconfirmed_absence', source: 'Qobuz', evidence: 'one trusted snapshot; two are required' },
+            { target: 'Apple Music', playlist: 'Road Trip 2025', track: 'Second First Read', artist: 'Signal', reason: 'awaiting confirmation', category: 'unconfirmed_absence', source: 'Qobuz', evidence: 'one trusted snapshot; two are required' },
+            { target: 'Apple Music', playlist: 'Road Trip 2025', track: 'Confirmed Candidate', artist: 'Signal', reason: 'removal mirroring is off for this sync', category: 'confirmed_removal_disabled', source: 'Qobuz', evidence: 'two trusted source snapshots confirmed the absence' },
+          ],
+          change_diagnostics: [
+            { category: 'uncertain_match', playlist: 'Road Trip 2025', provider: 'Apple Music', count: 1, evidence: 'a similar destination track had no safe source-side replacement match' },
+            { category: 'unconfirmed_absence', playlist: 'Road Trip 2025', provider: 'Qobuz', count: 2, evidence: 'missing from one trusted snapshot; a second trusted snapshot is required' },
+            { category: 'incomplete_read', playlist: 'Some Old Mix', provider: 'YouTube Music', count: 1, evidence: 'read 8 of 10 baseline identities; changes ignored' },
+            { category: 'confirmed_absence', playlist: 'Road Trip 2025', provider: 'Qobuz', count: 1, evidence: 'missing from two consecutive trusted snapshots on this provider' },
+            { category: 'confirmed_removal_disabled', playlist: 'Road Trip 2025', provider: 'Apple Music', count: 1, evidence: 'the absence was confirmed, but removal mirroring is disabled' },
+          ],
+        },
         { name: 'YouTube Music', added: 0, removed: 0, missing: 1, held: 0, deferred: 3, created: 0, skipped: 0 },
       ],
     },
@@ -322,7 +345,7 @@ async function installMocks(page, opts = {}) {
     if (/^\/api\/accounts\/[^/]+\/config$/.test(p) && method === 'POST') return json({ ok: true })
     if (/^\/api\/accounts\/[^/]+\/connect$/.test(p) && method === 'POST') {
       const id = p.split('/')[3]
-      if (id === 'spotify') return json({ kind: 'redirect', url: 'https://accounts.spotify.com/authorize?mock=1', redirect_uri: 'http://localhost:4300/oauth/spotify/callback' })
+      if (id === 'spotify') return json({ kind: 'token_paste', state: 'connected', detail: 'signed-in web session · no developer API' })
       if (id === 'ytmusic') return json({ kind: 'device', user_code: 'ABCD-WXYZ', verification_url: 'https://google.com/device', device_code: 'devcode123', interval: 30 })
       if (id === 'apple') return json({ kind: 'token_paste', state: 'connected', detail: null })
       return json({ kind: 'api_key', state: 'unconfigured', detail: 'Could not reach the Jellyfin server at that URL.' })
@@ -538,10 +561,11 @@ async function main() {
   server.stderr.on('data', (d) => console.error('[preview]', d.toString()))
 
   const results = []
+  let browser = null
   try {
     await waitForServer(BASE_URL)
 
-    const browser = await chromium.launch()
+    browser = await chromium.launch()
 
     // Diagnostic only, opt-in: THROTTLE_RATE=N node e2e/verify.cjs slows
     // every page's CPU by Nx via CDP, to empirically surface event-loop-
@@ -868,11 +892,11 @@ async function main() {
 
       const dismissButtons = () => page.getByRole('button', { name: /^Dismiss: / })
       const badge = () => page.locator('h2:has-text("Needs a look")').locator('xpath=following-sibling::span[1]')
-      const HELD_ALERT = 'Dismiss: 1 target track kept because matching was uncertain'
+      const HELD_ALERT = 'Dismiss: 1 destination match remained uncertain'
 
-      // Every errored/unconfigured account plus distinct matching-safety and
-      // additions-cap alerts. Those causes need different explanations/actions.
-      const expectedAlertCount = ACCOUNTS.filter((account) => account.state !== 'connected').length + 2
+      // Every errored/unconfigured account plus five distinct evidence/action
+      // states. Identity migrations intentionally do not become warning cards.
+      const expectedAlertCount = ACCOUNTS.filter((account) => account.state !== 'connected').length + 5
       const startCount = await dismissButtons().count()
       const startBadge = await badge().innerText()
       const startOk = startCount === expectedAlertCount && startBadge === String(expectedAlertCount)
@@ -880,10 +904,15 @@ async function main() {
       if (!startOk) results.push({ label: 'needs a look dismissable cards', overflow: true })
 
       const needsLookText = await page.locator('body').innerText()
-      const heldExplained = needsLookText.includes('1 target track kept because matching was uncertain') && needsLookText.includes('Apple Music: 1 kept')
+      const heldExplained = needsLookText.includes('1 destination match remained uncertain') && needsLookText.includes('Road Trip 2025')
+      const firstReadExplained = needsLookText.includes('2 playlist absences awaiting verification') && needsLookText.includes('not treated as a deletion')
+      const anomalyExplained = needsLookText.includes('1 provider read signal rejected as unsafe') && needsLookText.includes('changes ignored')
+      const confirmedExplained = needsLookText.includes('1 confirmed removal candidate kept') && needsLookText.includes('two consecutive complete reads')
       const deferredExplained = needsLookText.includes('3 additions deferred by the cap') && needsLookText.includes('YouTube Music: 3 waiting')
-      const causesSeparated = heldExplained && deferredExplained && !needsLookText.includes('4 changes held from the last pass')
-      console.log(`${causesSeparated ? 'ok        ' : 'FAIL      '} held matches and capped additions are explained separately by service`)
+      const identityNotWarning = !needsLookText.includes('identity migrations need attention')
+      const causesSeparated = heldExplained && firstReadExplained && anomalyExplained && confirmedExplained
+        && deferredExplained && identityNotWarning && !needsLookText.includes('changes held from the last pass')
+      console.log(`${causesSeparated ? 'ok        ' : 'FAIL      '} identity drift, first-read absences, confirmed candidates, read anomalies, and caps have distinct labels`)
       if (!causesSeparated) results.push({ label: 'needs a look held/deferred details', overflow: true })
       await checkOverflow(page, 'Needs a look, dismissable @ 1280', results)
       await shot(page, 'dashboard-needs-a-look-dismissable')
@@ -892,7 +921,7 @@ async function main() {
       await page.waitForTimeout(150)
       const afterCount = await dismissButtons().count()
       const afterBadge = await badge().innerText()
-      const goneNow = !(await page.locator('body').innerText()).includes('1 target track kept because matching was uncertain')
+      const goneNow = !(await page.locator('body').innerText()).includes('1 destination match remained uncertain')
       const dismissOk = afterCount === expectedAlertCount - 1 && afterBadge === String(expectedAlertCount - 1) && goneNow
       console.log(`${dismissOk ? 'ok        ' : 'FAIL      '} dismissing a card removes it and updates the count (${afterCount} cards, badge "${afterBadge}", text gone=${goneNow})`)
       if (!dismissOk) results.push({ label: 'needs a look dismiss', overflow: true })
@@ -900,7 +929,7 @@ async function main() {
       await page.reload({ waitUntil: 'networkidle' })
       await page.waitForSelector('h2:has-text("Needs a look")')
       const afterReload = await dismissButtons().count()
-      const stillGone = !(await page.locator('body').innerText()).includes('1 target track kept because matching was uncertain')
+      const stillGone = !(await page.locator('body').innerText()).includes('1 destination match remained uncertain')
       const persistOk = afterReload === expectedAlertCount - 1 && stillGone
       console.log(`${persistOk ? 'ok        ' : 'FAIL      '} the dismissal survives a reload (${afterReload} cards, still gone=${stillGone})`)
       if (!persistOk) results.push({ label: 'needs a look dismiss persistence', overflow: true })
@@ -926,7 +955,7 @@ async function main() {
       await page.reload({ waitUntil: 'networkidle' })
       await page.waitForSelector('h2:has-text("Needs a look")')
       await page.waitForTimeout(150)
-      const resurfaced = (await page.locator('body').innerText()).includes('9 target tracks kept because matching was uncertain')
+      const resurfaced = (await page.locator('body').innerText()).includes('9 destination matches remained uncertain')
       const stored = await page.evaluate(() => window.localStorage.getItem('songmirror-dismissed-alerts'))
       const prunedOk = resurfaced && stored === '[]'
       console.log(`${prunedOk ? 'ok        ' : 'FAIL      '} a changed situation resurfaces and prunes the stale dismissal (resurfaced=${resurfaced}, stored=${stored})`)
@@ -1237,27 +1266,34 @@ async function main() {
       await shot(page, `connect-wizard-apple-headerpaste-${width}`)
       await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click()
 
-      // Connect wizard: Spotify's oauth_redirect "Continue to sign in" must
-      // open in a new tab — the backend's callback page is a bare "you can
-      // close this tab" response, not a redirect back into the SPA, so a
-      // same-tab click strands the user on it.
+      // Spotify's primary connection is the signed-in web session: the guide
+      // links to open.spotify.com and asks only for sp_dc—no developer app.
       await page
         .locator('h3', { hasText: 'Spotify' })
         .locator('xpath=ancestor::div[contains(@class,"rounded-card")][1]')
         .getByRole('button', { name: 'Reconnect', exact: true })
         .click()
       await page.waitForSelector('text=Connect Spotify')
-      await page.getByRole('dialog').getByRole('button', { name: 'Save and continue', exact: true }).click()
-      const spotifyLink = page.getByRole('link', { name: 'Continue to sign in', exact: true })
-      await spotifyLink.waitFor()
+      const spotifyDialog = page.getByRole('dialog')
+      const spotifyLink = spotifyDialog.getByRole('link', { name: 'Open Spotify web player', exact: true })
       const spotifyLinkHref = await spotifyLink.getAttribute('href')
       const spotifyLinkTarget = await spotifyLink.getAttribute('target')
-      const spotifyLinkOk = spotifyLinkHref === 'https://accounts.spotify.com/authorize?mock=1' && spotifyLinkTarget === '_blank'
-      console.log(`${spotifyLinkOk ? 'ok        ' : 'FAIL      '} Spotify's "Continue to sign in" is a real new-tab link (href="${spotifyLinkHref}" target="${spotifyLinkTarget}")`)
-      if (!spotifyLinkOk) results.push({ label: 'spotify redirect link', overflow: true })
-      await checkOverflow(page, `ConnectWizard Spotify redirect @ ${width}`, results)
-      await shot(page, `connect-wizard-spotify-redirect-${width}`)
-      await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click()
+      const spotifyCopy = await spotifyDialog.innerText()
+      const spotifyLinkOk = spotifyLinkHref === 'https://open.spotify.com' && spotifyLinkTarget === '_blank'
+      const keylessCopyOk = spotifyCopy.includes('No developer app, API key, or Premium account is required')
+      await spotifyDialog.getByLabel('sp_dc cookie').fill('mock-sensitive-cookie')
+      await spotifyDialog.getByRole('button', { name: 'Connect', exact: true }).click()
+      const directConnected = await spotifyDialog.getByRole('status')
+        .filter({ hasText: 'Spotify is connected.' })
+        .waitFor({ timeout: 5000 })
+        .then(() => true)
+        .catch(() => false)
+      const spotifyConnectOk = spotifyLinkOk && keylessCopyOk && directConnected
+      console.log(`${spotifyConnectOk ? 'ok        ' : 'FAIL      '} Spotify connects from sp_dc with no developer-app step (link=${spotifyLinkHref}, success=${directConnected})`)
+      if (!spotifyConnectOk) results.push({ label: 'spotify keyless web-session connect', overflow: true })
+      await checkOverflow(page, `ConnectWizard Spotify web session @ ${width}`, results)
+      await shot(page, `connect-wizard-spotify-web-session-${width}`)
+      await spotifyDialog.getByRole('button', { name: 'Close', exact: true }).click()
 
       // Browse: a followed (not owned) Spotify playlist ("Discover Weekly")
       // is a normal row like any other now - the web-player fallback reads
@@ -2441,10 +2477,8 @@ async function main() {
     }
 
     // -----------------------------------------------------------------
-    // ConnectWizardModal oauth_redirect: RedirectStep polls the account
-    // list until this account flips to connected (the OAuth callback lands
-    // in the new tab, not this one), then shows success and auto-closes -
-    // it no longer just sits open after the user authorizes elsewhere.
+    // ConnectWizardModal token_paste: Spotify's web-session response shows a
+    // success confirmation and auto-closes without any OAuth redirect step.
     // -----------------------------------------------------------------
     {
       const context = await browser.newContext()
@@ -2452,17 +2486,13 @@ async function main() {
       const page = await context.newPage()
       await installMocks(page)
       // Spotify starts unconfigured here (overriding the shared fixture's
-      // already-connected default) so the redirect flow is reachable via
-      // "Connect", then flips to connected ~3s after the route installs -
-      // simulating the OAuth callback completing in the other tab.
-      const spotifyConnectAt = Date.now() + 3000
+      // already-connected default) so the primary Connect flow is reachable.
       await page.route('**/api/accounts', async (route) => {
         if (route.request().method() !== 'GET') return route.fallback()
-        const spotifyState = Date.now() >= spotifyConnectAt ? 'connected' : 'unconfigured'
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify(ACCOUNTS.map((a) => (a.id === 'spotify' ? { ...a, state: spotifyState, detail: null } : a))),
+          body: JSON.stringify(ACCOUNTS.map((a) => (a.id === 'spotify' ? { ...a, state: 'unconfigured', detail: null } : a))),
         })
       })
       await page.setViewportSize({ width: 1280, height: 900 })
@@ -2472,26 +2502,27 @@ async function main() {
       const spotifyCard = page.locator('h3', { hasText: 'Spotify' }).locator('xpath=ancestor::div[contains(@class,"rounded-card")][1]')
       await spotifyCard.getByRole('button', { name: 'Connect', exact: true }).click()
       await page.waitForSelector('text=Connect Spotify')
-      await page.getByRole('dialog').getByRole('button', { name: 'Save and continue', exact: true }).click()
-      await page.getByRole('link', { name: 'Continue to sign in', exact: true }).waitFor()
+      const dialog = page.getByRole('dialog')
+      await dialog.getByLabel('sp_dc cookie').fill('mock-sensitive-cookie')
+      await dialog.getByRole('button', { name: 'Connect', exact: true }).click()
 
       const connectedNow = await page
         .getByRole('status')
         .filter({ hasText: 'Spotify is connected.' })
-        .waitFor({ timeout: 15000 })
+        .waitFor({ timeout: 5000 })
         .then(() => true)
         .catch(() => false)
       console.log(
-        `${connectedNow ? 'ok        ' : 'FAIL      '} RedirectStep detects the account turning connected without a manual close (polled GET /api/accounts)`,
+        `${connectedNow ? 'ok        ' : 'FAIL      '} Spotify web-session submit confirms the connection directly`,
       )
-      if (!connectedNow) results.push({ label: 'redirect poll detects connected', overflow: true })
+      if (!connectedNow) results.push({ label: 'spotify direct web-session success', overflow: true })
 
       const closedItself = await page
         .waitForSelector('[role="dialog"]', { state: 'detached', timeout: 5000 })
         .then(() => true)
         .catch(() => false)
       console.log(`${closedItself ? 'ok        ' : 'FAIL      '} Wizard auto-closes after the success confirmation, no manual "Close" needed`)
-      if (!closedItself) results.push({ label: 'redirect poll auto-close', overflow: true })
+      if (!closedItself) results.push({ label: 'spotify direct success auto-close', overflow: true })
 
       await context.close()
     }
@@ -2765,6 +2796,9 @@ async function main() {
           { ts: 1700000002, kind: 'remove', tag: 'spotify', message: 'Removed "Old Track"' },
           { ts: 1700000003, kind: 'warn', tag: 'sync', message: 'Provider temporarily unavailable' },
           { ts: 1700000004, kind: 'note', tag: 'local', message: 'Wrote playlist file' },
+          { ts: 1700000005, kind: 'hold', tag: 'qobuz', message: 'Protected 4 changes pending deletion confirmation', data: { count: 4, classification: 'unconfirmed_absence', playlist: 'Road Trip 2025', provider: 'qobuz' } },
+          { ts: 1700000006, kind: 'repair', tag: 'spotify', message: 'Repaired 2 stable Spotify track identities', data: { count: 2, classification: 'identity_migration', playlist: 'Road Trip 2025', provider: 'spotify' } },
+          { ts: 1700000007, kind: 'miss', tag: 'qobuz', message: 'not on Qobuz: Catalog Ghost - Signal' },
         ]
         await route.fulfill({
           status: 200,
@@ -2775,7 +2809,7 @@ async function main() {
       await page.setViewportSize({ width: 1280, height: 900 })
       await page.goto(BASE_URL + '/', { waitUntil: 'networkidle' })
       await page.waitForSelector('h2:has-text("Your services")')
-      await page.waitForSelector('text=Wrote playlist file') // last live-feed line has landed
+      await page.waitForSelector('text=not on Qobuz: Catalog Ghost - Signal') // last live-feed line has landed
 
       // "Your services": every row (all known ids) shows a real brand
       // mark, not the old plain dot. Scoped to the <li> rows specifically
@@ -2814,6 +2848,7 @@ async function main() {
       for (const [message, label] of [
         ['Added "Test Track"', 'Addition'],
         ['Removed "Old Track"', 'Removal'],
+        ['Repaired 2 stable Spotify track identities', 'Identity repaired'],
         ['Provider temporarily unavailable', 'Warning'],
       ]) {
         const row = page.locator('li', { hasText: message })
@@ -2825,8 +2860,56 @@ async function main() {
 
       const addedCounterOk = (await page.getByLabel('1 added this pass', { exact: true }).count()) === 1
       const removedCounterOk = (await page.getByLabel('1 removed this pass', { exact: true }).count()) === 1
-      console.log(`${addedCounterOk && removedCounterOk ? 'ok        ' : 'FAIL      '} pass counters name additions and removals`)
-      if (!addedCounterOk || !removedCounterOk) results.push({ label: 'live feed named counters', overflow: true })
+      const heldCounter = page.getByLabel('4 held this pass', { exact: true })
+      const repairedCounterOk = (await page.getByLabel('2 repaired this pass', { exact: true }).count()) === 1
+      const countersOk = addedCounterOk && removedCounterOk && (await heldCounter.count()) === 1 && repairedCounterOk
+      console.log(`${countersOk ? 'ok        ' : 'FAIL      '} pass counters include aggregate additions, removals, holds, and identity repairs`)
+      if (!countersOk) results.push({ label: 'live feed named aggregate counters', overflow: true })
+
+      await heldCounter.hover()
+      const heldTooltip = await page.getByRole('tooltip').innerText()
+      const heldTooltipFolded = heldTooltip.toLowerCase()
+      const tooltipOk = heldTooltipFolded.includes('protected this pass')
+        && heldTooltipFolded.includes('by service') && heldTooltipFolded.includes('qobuz')
+        && heldTooltipFolded.includes('why held') && heldTooltipFolded.includes('awaiting a second trusted read')
+      console.log(`${tooltipOk ? 'ok        ' : 'FAIL      '} held counter tooltip explains per-service totals and evidence reason`)
+      if (!tooltipOk) results.push({ label: 'live feed counter evidence tooltip', overflow: true })
+
+      const feed = page.getByRole('log', { name: 'Live sync activity' })
+      async function waitForFeedRows(count, firstText = null) {
+        await page.waitForFunction(
+          ({ count, firstText }) => {
+            const rows = document.querySelectorAll('[role="log"][aria-label="Live sync activity"] li')
+            return rows.length === count && (!firstText || (rows[0]?.textContent ?? '').includes(firstText))
+          },
+          { count, firstText },
+        )
+      }
+      await page.getByLabel('Filter by service').selectOption('qobuz')
+      await waitForFeedRows(2)
+      const qobuzOnly = (await feed.locator('li').count()) === 2
+        && (await feed.innerText()).includes('Protected 4 changes')
+        && (await feed.innerText()).includes('Catalog Ghost')
+      await page.getByLabel('Filter by activity type').selectOption('miss')
+      await waitForFeedRows(1, 'Catalog Ghost')
+      const typeFiltered = (await feed.locator('li').count()) === 1 && (await feed.innerText()).includes('Catalog Ghost')
+      await page.getByRole('searchbox', { name: 'Search activity' }).fill('old track')
+      await page.getByText('No matching activity', { exact: true }).waitFor()
+      const combinedEmpty = (await page.getByText('No matching activity', { exact: true }).count()) === 1
+      await page.getByRole('button', { name: 'Reset', exact: true }).click()
+      await page.getByRole('searchbox', { name: 'Search activity' }).fill('old track')
+      await waitForFeedRows(1, 'Old Track')
+      const searchFiltered = (await feed.locator('li').count()) === 1 && (await feed.innerText()).includes('Old Track')
+      await page.getByRole('button', { name: 'Clear activity search', exact: true }).click()
+      await page.getByLabel('Sort activity').selectOption('newest')
+      await waitForFeedRows(8, 'Catalog Ghost')
+      const newestFirst = (await feed.locator('li').first().innerText()).includes('Catalog Ghost')
+      await page.getByLabel('Sort activity').selectOption('oldest')
+      await waitForFeedRows(8, 'Pass started')
+      const oldestFirst = (await feed.locator('li').first().innerText()).toLowerCase().includes('pass started')
+      const controlsOk = qobuzOnly && typeFiltered && combinedEmpty && searchFiltered && newestFirst && oldestFirst
+      console.log(`${controlsOk ? 'ok        ' : 'FAIL      '} live feed filters by service/type/search and sorts both directions`)
+      if (!controlsOk) results.push({ label: 'live feed filter and sort controls', overflow: true })
 
       // The committed README/promo capture is a showcase state, not the
       // deliberately broken fixture used by the assertions above. Re-route
@@ -3076,8 +3159,11 @@ async function main() {
       await context.close()
     }
 
-    await browser.close()
   } finally {
+    // A failed locator can throw while a page still has a reconnecting
+    // EventSource. Always close Chromium here; otherwise that child keeps Node
+    // alive forever and hides the actual assertion error from CI.
+    if (browser) await browser.close()
     // `shell: true` spawns the shell -> pnpm -> vite preview as a process
     // tree; a plain server.kill() only signals the shell (or on Windows,
     // cmd.exe), leaving vite - and the port - behind for the next run.

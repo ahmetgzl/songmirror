@@ -26,7 +26,7 @@ from pathlib import Path
 import requests
 import spotipy
 
-from . import spotify, spotify_web
+from . import spotify, spotify_cookie, spotify_web
 from .logs import fmt_secs, log_download, log_miss, log_note, log_section, log_summary, log_warn
 from .matching import normalize_text as _norm
 
@@ -62,6 +62,8 @@ def read_tracks(sp, playlist_id):
     """Ordered per-track info from the live playlist: added-at, ISRC, match keys,
     and display name/artist/duration. Falls back to the web-player read on a 403
     (a followed playlist the official API forbids) so the mirror covers those too."""
+    if sp is None:
+        return _read_tracks_cookie(playlist_id)
     try:
         return _read_tracks_api(sp, playlist_id)
     except spotipy.SpotifyException as e:
@@ -80,8 +82,17 @@ def _read_tracks_web(playlist_id):
     web payload carries no album art, so per-track `image` is None (spotDL still
     embeds whatever cover it finds); tracks with no added-at are skipped, same as
     the official read."""
+    return _read_tracks_from_web_rows(spotify_web.playlist_tracks(playlist_id))
+
+
+def _read_tracks_cookie(playlist_id):
+    """Cookie-only local mirror input; the same shape as the public fallback."""
+    return _read_tracks_from_web_rows(spotify_cookie.playlist_tracks(playlist_id))
+
+
+def _read_tracks_from_web_rows(rows):
     out = []
-    for t in spotify_web.playlist_tracks(playlist_id):
+    for t in rows:
         try:
             when = datetime.fromisoformat((t.get("added_at") or "").replace("Z", "+00:00"))
         except (ValueError, AttributeError):

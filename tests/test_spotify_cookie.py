@@ -43,16 +43,17 @@ def test_writes_route_to_cookie_when_enabled(monkeypatch):
     assert calls[3] == ("remove_positions", ("pl1", [0, 2]), {})
 
 
-def test_sync_read_requires_isrc(monkeypatch):
-    # An N-way peer (sync_peer=True) reads with require_isrc=True so cross-provider
-    # matching stays reliable; a transfer (sync_peer=False) doesn't need it.
+def test_cookie_sync_read_never_requires_the_developer_catalog_api(monkeypatch):
+    # N-way matching learns hard identities from the other ISRC-bearing peers and
+    # reuses already-cached Spotify ISRCs. A cookie-only account must therefore
+    # never turn a playlist read into one developer-API call per uncached track.
     monkeypatch.setenv("SPOTIFY_WRITE_BACKEND", "cookie")
     seen = {}
     monkeypatch.setattr(st.spotify_cookie, "playlist_tracks",
                         lambda pid, require_isrc=False, known_isrc=None: (seen.__setitem__(pid, require_isrc), [])[1])
     SpotifyTarget(_BoomSp(), "c.json", sync_peer=True).playlist_tracks({"id": "sync"})
     SpotifyTarget(_BoomSp(), "c.json").playlist_tracks({"id": "xfer"})
-    assert seen == {"sync": True, "xfer": False}
+    assert seen == {"sync": False, "xfer": False}
 
 
 def test_sync_peer_passes_db_isrc_callback(monkeypatch):
@@ -69,13 +70,103 @@ def test_sync_peer_passes_db_isrc_callback(monkeypatch):
 
     monkeypatch.setattr(st.spotify_cookie, "playlist_tracks", fake_pt)
     SpotifyTarget(_BoomSp(), "c.json", sync_peer=True, songs=object()).playlist_tracks({"id": "p"})
-    assert captured["require_isrc"] is True
+    assert captured["require_isrc"] is False
     assert captured["known"] == {"t1": "US0000000001"}  # DB-supplied, never fetched
 
 
-def test_sync_read_fails_closed_without_isrc(monkeypatch):
-    # If the ISRC backfill can't reach /tracks, a sync read raises so the reconcile
-    # aborts instead of matching on name/artist alone and churning. The incident guard.
+def test_cookie_library_playlists_are_read_in_one_filtered_request(monkeypatch):
+    from songmirror.engine import spotify_cookie as sc
+
+    seen = []
+
+    def fake_pf(op, variables):
+        seen.append((op, variables))
+        return {"me": {"libraryV3": {
+            "totalCount": 2,
+            "pagingInfo": {"offset": 0, "limit": 100},
+            "items": [
+                {"item": {"data": {
+                    "__typename": "Playlist", "uri": "spotify:playlist:p1", "name": "Mix",
+                    "description": "Owned", "revisionId": "r1",
+                    "currentUserCapabilities": {"canEditItems": True},
+                    "ownerV2": {"data": {"username": "me"}},
+                    "images": {"items": []},
+                }}},
+                {"item": {"data": {
+                    "__typename": "Playlist", "uri": "spotify:playlist:p2", "name": "Discover Weekly",
+                    "description": "Followed", "revisionId": "r2",
+                    "currentUserCapabilities": {"canEditItems": False},
+                    "ownerV2": {"data": {"username": "spotify"}},
+                    "images": {"items": []},
+                }}},
+            ],
+        }}}
+
+    monkeypatch.setattr(sc, "_pf", fake_pf)
+    rows = sc.library_playlists()
+
+    assert [p["id"] for p in rows] == ["p1", "p2"]
+    assert [p["_owned"] for p in rows] == [True, False]
+    assert rows[0]["snapshot_id"] == "r1"
+    assert seen == [("libraryV3", {
+        "filters": ["Playlists"], "order": "Alphabetical", "textFilter": None,
+        "features": [], "limit": 100, "offset": 0, "flatten": True,
+        "expandedFolders": None, "folderUri": None, "includeFoldersWhenFlattening": True,
+    })]
+
+
+def test_cookie_target_lists_and_searches_without_spotipy(monkeypatch):
+    monkeypatch.setenv("SPOTIFY_WRITE_BACKEND", "cookie")
+    monkeypatch.setattr(st.spotify_cookie, "library_playlists", lambda: [
+        {"id": "p1", "name": "Mix", "_owned": True},
+        {"id": "p2", "name": "Mix", "_owned": False},
+    ])
+    monkeypatch.setattr(st.spotify_cookie, "search_tracks", lambda query, limit=8: [
+        {"id": "hit", "name": "Song", "artists": [{"name": "Artist"}], "duration_ms": 180000},
+    ])
+
+    target = SpotifyTarget(None, "cache.json", sync_peer=True)
+    assert target.list_playlists()["mix"]["id"] == "p1"  # editable copy wins
+    assert target.browse_playlists()[1]["_owned"] is False
+    assert target._query("Song Artist")[0]["id"] == "hit"
+
+
+def test_reset_session_discards_every_cookie_derived_client():
+    from songmirror.engine import spotify_cookie as sc
+
+    class _Catalog:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    catalog = _Catalog()
+    sc._provider = object()
+    sc._catalog = catalog
+    sc._uid = "old-account"
+    sc._isrc_cache["old-track"] = "OLD"
+
+    sc.reset_session()
+
+    assert sc._provider is None and sc._catalog is None and sc._uid is None
+    assert sc._isrc_cache == {}
+    assert catalog.closed is True
+
+
+def test_private_cookie_file_overrides_stale_bootstrap_environment(tmp_path, monkeypatch):
+    from songmirror.engine import spotify_cookie as sc
+
+    cookie_file = tmp_path / "spotify.private"
+    cookie_file.write_text("fresh-from-wizard", encoding="utf-8")
+    monkeypatch.setenv("SPOTIFY_SP_DC_FILE", str(cookie_file))
+    monkeypatch.setenv("SPOTIFY_SP_DC", "stale-from-compose")
+
+    assert sc._sp_dc() == "fresh-from-wizard"
+
+
+def test_cookie_sync_read_does_not_fail_when_developer_isrc_is_unavailable(monkeypatch):
+    # The all-peer identity phase supplies uncached ISRCs now, so the Spotify read
+    # must not invoke (or fail on) the legacy developer-catalog path.
     monkeypatch.setenv("SPOTIFY_WRITE_BACKEND", "cookie")
 
     def read(pid, require_isrc=False, known_isrc=None):
@@ -84,8 +175,7 @@ def test_sync_read_fails_closed_without_isrc(monkeypatch):
         return []
 
     monkeypatch.setattr(st.spotify_cookie, "playlist_tracks", read)
-    with pytest.raises(TargetAuthError):
-        SpotifyTarget(_BoomSp(), "c.json", sync_peer=True).playlist_tracks({"id": "p"})
+    assert SpotifyTarget(_BoomSp(), "c.json", sync_peer=True).playlist_tracks({"id": "p"}) == []
     assert SpotifyTarget(_BoomSp(), "c.json").playlist_tracks({"id": "p"}) == []  # transfer read is fine
 
 

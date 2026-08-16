@@ -101,6 +101,7 @@ export const KIND_STYLES: Record<EventKind, KindStyle> = {
   add: { label: 'Addition', tileBg: 'bg-success-soft', tileText: 'text-success', text: 'text-text' },
   remove: { label: 'Removal', tileBg: 'bg-danger-soft', tileText: 'text-danger', text: 'text-text' },
   hold: { label: 'Held', tileBg: 'bg-warning-soft', tileText: 'text-warning', text: 'text-text' },
+  repair: { label: 'Identity repaired', tileBg: 'bg-info-soft', tileText: 'text-info', text: 'text-text' },
   miss: { label: 'Missing match', tileBg: 'bg-neutral-soft', tileText: 'text-neutral', text: 'text-text-2' },
   download: { label: 'Download', tileBg: 'bg-info-soft', tileText: 'text-info', text: 'text-text' },
   note: { label: 'Note', tileBg: 'bg-neutral-soft', tileText: 'text-neutral', text: 'text-text-2' },

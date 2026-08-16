@@ -13,8 +13,8 @@ import time
 
 from .. import archive
 from ..logs import (
-    fmt_counts, fmt_secs, log_add, log_hold, log_miss, log_note, log_remove,
-    log_section, log_summary, log_warn, paint,
+    fmt_counts, fmt_secs, log_add, log_hold, log_miss, log_note, log_protected,
+    log_remove, log_repair, log_section, log_summary, log_warn, paint,
 )
 from ..matching import (
     catalog_name, compute_diff, fuzzy_in, protect_removals, romanized,
@@ -130,15 +130,27 @@ class MirrorTarget:
             self.remove(playlist, raw)
 
 
-def held_removals(target_name, playlist, tracks, max_removals, reason=None):
+def held_removals(target_name, playlist, tracks, max_removals, reason=None, *,
+                  category=None, source=None, evidence=None):
     """What a cap kept, so a held-back count can be explained instead of merely
     reported. The reason travels with each record because the fix differs: a cap
     of zero means removal mirroring is off, anything else means the batch was
     larger than the sync allows."""
     reason = reason or ("removal mirroring is off for this sync" if max_removals == 0
                         else f"the batch was larger than this sync's cap of {max_removals}")
-    return [{"target": target_name, "playlist": playlist, "track": t.get("name", ""),
-             "artist": t.get("artist", ""), "reason": reason} for t in tracks]
+    out = []
+    for track in tracks:
+        row = {"target": target_name, "playlist": playlist,
+               "track": track.get("name", ""), "artist": track.get("artist", ""),
+               "reason": reason}
+        if category:
+            row["category"] = category
+        if source:
+            row["source"] = source
+        if evidence:
+            row["evidence"] = evidence
+        out.append(row)
+    return out
 
 
 def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, execute, max_removals,
@@ -289,14 +301,14 @@ def _entry_cids(target, tracks, songs, cache, key2isrc, rebindings=None, remembe
     playlist order (so a duplicate copy yields a repeated canonical id).
 
     Canonical precedence: direct/provider-native ISRC -> explicit reverse link
-    to Spotify (and its ISRC) -> same-playlist Spotify track_key inference -> the
+    to Spotify (and its ISRC) -> same-playlist cross-peer track_key inference -> the
     identity this same entry earned on an earlier pass -> track_key.
     Getting the same song onto ONE canonical id across providers is the crux, so
-    ISRC is pulled from wherever each provider exposes it: Spotify carries it
-    inline; Apple's ISRC resolve cache maps catalog_id -> ISRC; and key2isrc
-    (built from this playlist's Spotify tracks) rescues any remaining track whose
-    fuzzy key already exists on Spotify. Without it, an ISRC-less YT copy of a
-    Spotify song splits into a duplicate.
+    ISRC is pulled from wherever each provider exposes it. The cookie-only
+    Spotify read has no ISRC, while Apple and the other catalog peers often do;
+    ``key2isrc`` is therefore built from every peer before this function runs.
+    It rescues any remaining entry whose normalized keys agree, and the later
+    alias fold handles conservative fuzzy metadata differences.
 
     The remembered identity is what makes a physical entry's id STICKY. Every
     softer step above reads provider metadata, and that metadata is mutable:
@@ -482,6 +494,10 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
     tripped (only then is the canonical snapshot advanced)."""
     key = link_key or name.casefold()
     started = time.monotonic()
+    peer_names = {p.source: p.name for p in peers}
+    diagnostics = []
+    identity_changes = 0
+    read_anomalies = 0
     initialized = {p.source for p in peers if archive.has_playlist_state(songs, key, p.source)}
     # Missing keys deliberately mean "bootstrap peer" to _merge. Keeping an
     # initialized empty set in the mapping is why playlist_state_meta exists.
@@ -494,14 +510,33 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
     rebindings = {}    # source -> old hard id -> new hard ids for stable physical entries
     learned_identities = {}  # source -> physical id -> newly proven hard canonical id
     present = {}       # source -> set of ALL current target ids (not canonical-deduped)
-    key2isrc = {}      # track_key -> ISRC, seeded by any ISRC-bearing provider (peers are ISRC-rich first)
+    key2isrc = {}      # track_key -> ISRC, seeded by every ISRC-bearing provider before canonicalization
+    raw_by_source = {}
     for p in peers:
         raw = p.playlist_tracks(playlists[p.source])
+        raw_by_source[p.source] = raw
         archive.upsert_many(songs, p.source, raw)
         archive.record_order(songs, key, p.source,
                              [[p.track_id(t), t.get("name", ""),
                                t.get("artist") or ", ".join(t.get("artists") or [])] for t in raw])
         present[p.source] = {p.track_id(t) for t in raw if p.track_id(t)}
+
+    # Read every peer before assigning any identities. Spotify's signed-in web
+    # payload intentionally has no ISRC, so its tracks learn hard identities
+    # from the exact title/artist keys exposed by ISRC-rich peers in this same
+    # snapshot. This removes the developer-catalog lookup without making peer
+    # ordering part of correctness.
+    for p in peers:
+        native = p.native_isrc_map(caches[p.source])
+        for track in raw_by_source[p.source]:
+            norm = _normalize(track, p.source)
+            isrc = normalize_isrc(norm.get("isrc") or native.get(p.track_id(track)))
+            if isrc:
+                for key_ in spotify_track_keys(norm):
+                    key2isrc.setdefault(key_, isrc)
+
+    for p in peers:
+        raw = raw_by_source[p.source]
         changes, learned = {}, {}
         per_entry[p.source] = _entry_cids(
             p, raw, songs, caches[p.source], key2isrc,
@@ -514,13 +549,6 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
         for cid, norm in per_entry[p.source]:
             fold.setdefault(cid, norm)  # first occurrence wins (dedupe within a provider)
         canon[p.source] = fold
-        for cid, norm in per_entry[p.source]:
-            if cid.startswith("i:"):  # any provider that resolved an ISRC anchors the rest
-                # Every key the song answers to, not just the joined credit: a peer
-                # that lists one artist of several, or spells a transliterated name
-                # differently, still lands on the ISRC instead of splitting off.
-                for k in spotify_track_keys(norm):
-                    key2isrc.setdefault(k, cid[2:])
 
     # One identity per song: fold provider-flavored aliases together BEFORE any
     # membership math, and map the stored baseline through the same table so a
@@ -565,6 +593,12 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
         base = prev.get(p.source, set())
         if base and (not cur[p.source] or len(cur[p.source]) < COLLAPSE_FRACTION * len(base)):
             collapsed.add(p.source)
+            read_anomalies += 1
+            diagnostics.append({
+                "category": "incomplete_read", "playlist": name, "provider": p.name,
+                "count": max(0, len(base) - len(cur[p.source])),
+                "evidence": f"read {len(cur[p.source])} of {len(base)} baseline identities; changes ignored",
+            })
             log_warn(f"{name}: {p.name} read {len(cur[p.source])} vs baseline {len(base)} — "
                      "ignoring its removals this pass", tag=p.tag)
 
@@ -588,6 +622,12 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
             # proof that the user deleted OLD. Treat this source as untrusted for
             # the pass: otherwise +A/+B/-OLD would propagate destructively.
             collapsed.add(src)
+            read_anomalies += len(ambiguous)
+            diagnostics.append({
+                "category": "ambiguous_identity", "playlist": name,
+                "provider": peer_names.get(src, src), "count": len(ambiguous),
+                "evidence": "one retired identity split into multiple provider-proven identities; changes ignored",
+            })
             choices = sum(len(news) for news in ambiguous.values())
             log_warn(
                 f"{name}: {src} exposed {len(ambiguous)} ambiguous stable identity split(s) "
@@ -600,7 +640,19 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
         if remap:
             prev[src] = {remap.get(cid, cid) for cid in prev[src]}
             baseline_repairs[src] = prev[src]
-            log_note(f"{name}: preserved {len(remap)} stable {src} identity correction(s)", tag="sync")
+            count = len(remap)
+            identity_changes += count
+            diagnostics.append({
+                "category": "identity_migration", "playlist": name,
+                "provider": peer_names.get(src, src), "count": count,
+                "evidence": "the provider track ID stayed the same while its canonical metadata changed",
+            })
+            log_repair(
+                f"{name}: repaired {count} stable {peer_names.get(src, src)} track identit{'y' if count == 1 else 'ies'}",
+                tag=next((p.tag for p in peers if p.source == src), "sync"),
+                data={"classification": "identity_migration", "count": count,
+                      "playlist": name, "provider": src},
+            )
     if execute:
         trusted_learning = {src: mapping for src, mapping in learned_identities.items()
                             if src not in collapsed}
@@ -614,7 +666,7 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
     # observation, retain the id in effective_cur so it neither propagates a
     # removal nor gets re-added to the apparently missing source. Only the same
     # source-local absence retained from a prior executing pass is confirmed.
-    missing_by_source, first_seen_removals = {}, {}
+    missing_by_source, first_seen_removals, confirmed_removals = {}, {}, {}
     effective_cur = {src: set(ids) for src, ids in cur.items()}
     for src in initialized:
         if src in collapsed or src not in cur:
@@ -625,9 +677,23 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
         }
         missing = prev.get(src, set()) - cur[src]
         first_seen = missing - pending
+        confirmed = missing & pending
         missing_by_source[src] = missing
         first_seen_removals[src] = first_seen
+        confirmed_removals[src] = confirmed
         effective_cur[src] |= first_seen
+        if first_seen:
+            diagnostics.append({
+                "category": "unconfirmed_absence", "playlist": name,
+                "provider": peer_names.get(src, src), "count": len(first_seen),
+                "evidence": "missing from one trusted snapshot; a second trusted snapshot is required",
+            })
+        if confirmed:
+            diagnostics.append({
+                "category": "confirmed_absence", "playlist": name,
+                "provider": peer_names.get(src, src), "count": len(confirmed),
+                "evidence": "missing from two consecutive trusted snapshots on this provider",
+            })
 
     _, unconfirmed_plan = _merge(prev, cur, collapsed)
     desired, plan = _merge(prev, effective_cur, collapsed)
@@ -639,9 +705,15 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
     log_section(name, " / ".join(f"{p.name} {len(cur[p.source])}" for p in peers), tag="sync")
 
     awaiting_confirmation = sum(len(ids) for ids in first_seen_removals.values())
+    confirmed_absence_count = sum(len(ids) for ids in confirmed_removals.values())
     stats = {"clean": execute and not collapsed and not awaiting_confirmation,
              "added": 0, "removed": 0, "missing": 0,
-             "held": 0, "deferred": 0, "removals_skipped": 0, "held_removals": []}
+             "held": 0, "deferred": 0, "removals_skipped": 0, "held_removals": [],
+             "identity_changes": identity_changes,
+             "unconfirmed_absences": awaiting_confirmation,
+             "confirmed_absences": confirmed_absence_count,
+             "read_anomalies": read_anomalies,
+             "change_diagnostics": diagnostics}
     baseline_blocked = bool(awaiting_confirmation)
     if awaiting_confirmation:
         # Report actual destination removals held, deduplicated when several
@@ -649,6 +721,10 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
         # explain that this is confirmation—not a cap or fuzzy-match problem.
         held_ops = {}
         first_seen_ids = set().union(*first_seen_removals.values())
+        sources_by_cid = {}
+        for src, ids in first_seen_removals.items():
+            for cid in ids:
+                sources_by_cid.setdefault(cid, []).append(peer_names.get(src, src))
         for peer in peers:
             for cid in unconfirmed_plan[peer.source][1] & first_seen_ids:
                 norm = canon[peer.source].get(cid) or repr_.get(cid)
@@ -658,10 +734,23 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
             "the source-side deletion was seen on only one complete pass; "
             "SongMirror requires the same absence on a second complete pass"
         )
-        for peer, norm in held_ops.values():
+        for (_, cid), (peer, norm) in held_ops.items():
+            source = ", ".join(sorted(sources_by_cid.get(cid, [])))
             stats["held_removals"] += held_removals(
-                peer.name, name, [norm], max_removals, reason=reason)
+                peer.name, name, [norm], max_removals, reason=reason,
+                category="unconfirmed_absence", source=source,
+                evidence="one trusted snapshot; two are required")
         stats["removals_skipped"] += len(held_ops)
+        held_by_target = {}
+        for (source, _), (peer, _) in held_ops.items():
+            held_by_target.setdefault(source, [peer, 0])[1] += 1
+        for peer, count in held_by_target.values():
+            log_protected(
+                f"{peer.name}/{name}: protected {count} change{'s' if count != 1 else ''} pending deletion confirmation",
+                tag=peer.tag,
+                data={"classification": "unconfirmed_absence", "count": count,
+                      "playlist": name, "provider": peer.source},
+            )
         log_warn(
             f"{name}: held {len(held_ops)} removal(s) while {awaiting_confirmation} "
             "source absence(s) await a second complete pass",
@@ -793,30 +882,66 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
             safe = []
             if held:
                 reason = "; ".join(sorted(add_blockers))
+                diagnostics.append({
+                    "category": "replacement_blocked", "playlist": name,
+                    "provider": p.name, "count": len(held),
+                    "evidence": reason,
+                })
                 log_warn(f"{p.name}/{name}: held {len(held)} removals because {reason}", tag=p.tag)
                 stats["removals_skipped"] += len(held)
                 stats["held_removals"] += held_removals(
                     p.name, name, held, max_removals,
-                    reason=f"replacement additions were incomplete: {reason}")
+                    reason=f"replacement additions were incomplete: {reason}",
+                    category="replacement_blocked",
+                    evidence="the replacement was not fully resolved and applied")
         elif len(safe) > max_removals:
             # Cap hit: freezing the baseline is what keeps a
             # held-back / mid-drain removal from being resurrected via union_prev.
             baseline_blocked, stats["clean"] = True, False
             if max_removals == 0:
+                count = len(safe)
+                diagnostics.append({
+                    "category": "confirmed_removal_disabled", "playlist": name,
+                    "provider": p.name, "count": count,
+                    "evidence": "the absence was confirmed, but removal mirroring is disabled",
+                })
                 log_warn(f"{p.name}/{name}: {len(safe)} removals detected; removal mirroring is off "
                          "(max removals = 0) — kept everywhere, raise the cap on this sync to apply", tag=p.tag)
                 stats["removals_skipped"] += len(safe)
-                stats["held_removals"] += held_removals(p.name, name, safe, max_removals)
+                stats["held_removals"] += held_removals(
+                    p.name, name, safe, max_removals,
+                    category="confirmed_removal_disabled",
+                    evidence="two trusted source snapshots confirmed the absence")
+                log_protected(
+                    f"{p.name}/{name}: kept {count} confirmed removal candidate{'s' if count != 1 else ''}; mirroring is off",
+                    tag=p.tag,
+                    data={"classification": "confirmed_removal_disabled", "count": count,
+                          "playlist": name, "provider": p.source},
+                )
                 safe = []
             elif drain_removals:
                 log_warn(f"{p.name}/{name}: draining removals — applying {max_removals} now, "
                          f"{len(safe) - max_removals} next pass", tag=p.tag)
                 safe = safe[:max_removals]
             else:
+                count = len(safe)
+                diagnostics.append({
+                    "category": "removal_cap", "playlist": name,
+                    "provider": p.name, "count": count,
+                    "evidence": f"the confirmed batch exceeded the configured cap of {max_removals}",
+                })
                 log_warn(f"{p.name}/{name}: {len(safe)} removals exceed --max-removals={max_removals}; "
                          "held back (enable 'apply large removals' on this sync to drain them)", tag=p.tag)
                 stats["removals_skipped"] += len(safe)
-                stats["held_removals"] += held_removals(p.name, name, safe, max_removals)
+                stats["held_removals"] += held_removals(
+                    p.name, name, safe, max_removals, category="removal_cap",
+                    evidence="two trusted source snapshots confirmed the absence")
+                log_protected(
+                    f"{p.name}/{name}: protected {count} confirmed removal candidate{'s' if count != 1 else ''} over the cap",
+                    tag=p.tag,
+                    data={"classification": "removal_cap", "count": count,
+                          "playlist": name, "provider": p.source},
+                )
                 safe = []
         safe_ids = {id(n) for n in safe}
         removed_cids = {cid for cid, n in remove_pairs if id(n) in safe_ids}
@@ -828,8 +953,19 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
             log_remove(f"{p.name}: {norm['name']} - {norm['artist']}", dry=not execute, tag=p.tag)
         hold_reason = ("replacement additions incomplete" if provider_add_incomplete
                        else "no re-add match")
+        if held and not provider_add_incomplete:
+            diagnostics.append({
+                "category": "uncertain_match", "playlist": name,
+                "provider": p.name, "count": len(held),
+                "evidence": "a similar destination track had no safe source-side replacement match",
+            })
         for norm in held:
-            log_hold(f"{p.name}: kept ({hold_reason}): {norm['name']} - {norm['artist']}", tag=p.tag)
+            log_protected(
+                f"{p.name}: kept ({hold_reason}): {norm['name']} - {norm['artist']}", tag=p.tag,
+                data={"classification": ("replacement_blocked" if provider_add_incomplete
+                                         else "uncertain_match"),
+                      "count": 1, "playlist": name, "provider": p.source},
+            )
         for norm in not_found:
             log_miss(f"not on {p.name}: {norm['name']} - {', '.join(norm['artists'])}", tag=p.tag)
 

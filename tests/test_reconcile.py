@@ -99,6 +99,9 @@ def test_subcollapse_removal_requires_two_trusted_reads(tmp_path):
     assert first["clean"] is False
     assert first["added"] == 0 and first["removed"] == 0
     assert first["removals_skipped"] == 2
+    assert first["unconfirmed_absences"] == 2
+    assert first["confirmed_absences"] == 0
+    assert {d["category"] for d in first["change_diagnostics"]} == {"unconfirmed_absence"}
     assert spotify.removed == [] and apple.added == []
     assert archive.get_pending_removals(conn, "mix", "apple") == {"i:I", "i:J"}
     assert archive.get_playlist_state(conn, "mix", "apple") == {
@@ -109,6 +112,9 @@ def test_subcollapse_removal_requires_two_trusted_reads(tmp_path):
     assert second["clean"] is True
     assert second["added"] == 0 and second["removed"] == 2
     assert set(spotify.removed) == {"I", "J"}
+    assert second["unconfirmed_absences"] == 0
+    assert second["confirmed_absences"] == 2
+    assert "confirmed_absence" in {d["category"] for d in second["change_diagnostics"]}
     assert archive.get_pending_removals(conn, "mix", "apple") == set()
     assert archive.get_playlist_state(conn, "mix", "spotify") == {
         f"i:{cid}" for cid in remaining}
@@ -932,6 +938,8 @@ def test_stable_physical_hard_rebinding_does_not_emit_a_removal(tmp_path):
                       execute=True, max_removals=25, max_adds=200)
 
     assert stats["added"] == 2 and stats["removed"] == 0
+    assert stats["identity_changes"] == 1
+    assert "identity_migration" in {d["category"] for d in stats["change_diagnostics"]}
     assert sp.removed == [] and tidal.removed == []
     assert archive.get_identities(conn, "tidal", ["tidal-stable"]) == {
         "tidal-stable": "i:PIANO"}
@@ -1281,6 +1289,30 @@ def test_a_fresh_hard_id_overrides_a_remembered_one(tmp_path):
     assert [cid for cid, _ in _entry_cids(
         ap, ap.playlist_tracks(None), conn, {}, {}, remember=True)] == ["i:RIGHT"]
     assert archive.get_identities(conn, "apple", ["ap-lib"]) == {"ap-lib": "i:RIGHT"}
+    conn.close()
+
+
+def test_isrc_peer_seeds_cookie_spotify_before_canonicalization(tmp_path):
+    # Spotify's signed-in web payload has no ISRC. Even when Spotify is first in
+    # the peer list, the all-peer read phase must let an ISRC-rich provider seed
+    # its stable track identity without a developer-catalog request.
+    conn = archive.connect(str(tmp_path / "cookie-peer-isrc.db"))
+    sp = _VariantPeer("spotify", {
+        "id": "sp-lib", "name": "Show Me How", "artists": ["Men I Trust"],
+        "artist": "Men I Trust", "duration_ms": 215000, "isrc": None, "added_at": "2020",
+    }, "sp-cat")
+    tidal = _VariantPeer("tidal", {
+        "id": "tidal-lib", "name": "Show Me How", "artists": ["Men I Trust"],
+        "artist": "Men I Trust", "duration_ms": 215000, "isrc": "CAAAA1700123", "added_at": "2020",
+    }, "tidal-cat")
+
+    stats = reconcile([sp, tidal], "Mix", {"spotify": {"id": "sp"}, "tidal": {"id": "ti"}},
+                      _caches("spotify", "tidal"), conn,
+                      execute=True, max_removals=0, max_adds=200)
+
+    assert stats["added"] == 0 and stats["removed"] == 0
+    assert archive.get_identities(conn, "spotify", ["sp-lib"]) == {
+        "sp-lib": "i:CAAAA1700123"}
     conn.close()
 
 

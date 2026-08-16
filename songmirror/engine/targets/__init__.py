@@ -45,12 +45,24 @@ def _rest_provider(target_cls, label):
         return None
 
 
+def _spotify(opts, sp, *, sync_peer=False, songs=None):
+    """Build Spotify from OAuth or from a standalone signed-in web session."""
+    if sp is None:
+        from .. import spotify_cookie
+        from ..config import spotify_write_backend
+
+        if spotify_write_backend() != "cookie" or not spotify_cookie.configured():
+            return None
+    return SpotifyTarget(sp, opts.spotify_cache_file, sync_peer=sync_peer, songs=songs)
+
+
 # source -> builder(opts, sp) -> a ready MirrorTarget, or None when unconfigured.
-# Order matters: ISRC-rich providers first so they seed cross-provider identity.
-# `sp` (the Spotify client) is only needed by peers that read/write Spotify.
+# Registry order is presentation order only: reconciliation reads every peer and
+# seeds all native ISRCs before it canonicalizes any provider.
+# `sp` (the Spotify client) is only needed by legacy OAuth Spotify mode.
 _REGISTRY = {
-    "spotify": lambda opts, sp, sync_peer=False, songs=None: (
-        SpotifyTarget(sp, opts.spotify_cache_file, sync_peer=sync_peer, songs=songs) if sp is not None else None),
+    "spotify": lambda opts, sp, sync_peer=False, songs=None: _spotify(
+        opts, sp, sync_peer=sync_peer, songs=songs),
     "tidal": lambda opts, sp, sync_peer=False, songs=None: _rest_provider(TidalTarget, "TIDAL"),
     "qobuz": lambda opts, sp, sync_peer=False, songs=None: _rest_provider(QobuzTarget, "Qobuz"),
     "deezer": lambda opts, sp, sync_peer=False, songs=None: _rest_provider(DeezerTarget, "Deezer"),

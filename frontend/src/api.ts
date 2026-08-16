@@ -79,14 +79,13 @@ export const api = {
    * raw "copy request headers" block from a music.youtube.com XHR. */
   enableYtmusicBrowserMode: (headers: string) => request<PollResponse>('/api/accounts/ytmusic/browser', json({ headers })),
   disableYtmusicBrowserMode: () => request<PollResponse>('/api/accounts/ytmusic/browser', { method: 'DELETE' }),
-  /** Spotify-only cookie write mode: routes playlist writes through a pasted
-   * sp_dc cookie (first-party web client), bypassing the Development-Mode 403s a
-   * self-hosted dev app hits on playlist create / track edits. */
+  /** Spotify signed-in web session: routes library reads, playlist reads/writes,
+   * and catalog search through the first-party web client without a developer app. */
   enableSpotifyCookieMode: (spDc: string) => request<PollResponse>('/api/accounts/spotify/cookie', json({ sp_dc: spDc })),
   disableSpotifyCookieMode: () => request<PollResponse>('/api/accounts/spotify/cookie', { method: 'DELETE' }),
 
-  /** A second Spotify app (Extended Quota Mode) used only for ISRC /tracks lookups —
-   * a rate bucket separate from the OAuth user token, needed for reliable N-way matching. */
+  /** Legacy OAuth-only compatibility endpoints. Cookie-only N-way matching learns
+   * Spotify identities from the other ISRC-bearing peers and does not use these. */
   setSpotifyIsrcApp: (clientId: string, clientSecret: string) =>
     request<PollResponse>('/api/accounts/spotify/isrc-app', json({ client_id: clientId, client_secret: clientSecret })),
   clearSpotifyIsrcApp: () => request<PollResponse>('/api/accounts/spotify/isrc-app', { method: 'DELETE' }),

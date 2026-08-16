@@ -31,7 +31,7 @@ _lock = threading.Lock()
 @dataclass(frozen=True)
 class Event:
     """One structured progress event for the live view. `kind` is the semantic
-    category (add/remove/hold/miss/note/warn/summary/section); the web layer
+    category (add/remove/hold/repair/miss/note/warn/summary/section); the web layer
     styles by kind instead of parsing the message. Lives here — a leaf module —
     so the engine never imports the web/services tier to emit one."""
 
@@ -103,6 +103,24 @@ def log_remove(msg, *, dry=False, tag=None, indent="   "):
 def log_hold(msg, *, tag=None, indent="   "):
     log_event("~", paint(msg, "yellow"), "yellow", tag=tag, indent=indent)
     _emit("hold", msg, tag)
+
+
+def log_protected(msg, *, tag=None, data=None, indent="   "):
+    """Emit an aggregated safety hold with machine-readable evidence.
+
+    ``log_hold`` remains the one-track shorthand used by the one-way matcher.
+    Reconciliation uses this form when one line represents many protected
+    changes, so the dashboard counter advances by ``data['count']`` and can
+    explain the evidence class without parsing prose.
+    """
+    log_event("~", paint(msg, "yellow"), "yellow", tag=tag, indent=indent)
+    _emit("hold", msg, tag, data)
+
+
+def log_repair(msg, *, tag=None, data=None, indent="   "):
+    """A stable identity changed while the physical playlist item did not."""
+    log_event("~", paint(msg, "blue"), "blue", tag=tag, indent=indent)
+    _emit("repair", msg, tag, data)
 
 
 def log_miss(msg, *, tag=None, indent="   "):

@@ -10,8 +10,8 @@ import asyncio
 import time
 import uuid
 
-from ..engine import logs, spotify
-from ..engine.config import parse_args
+from ..engine import logs, spotify, spotify_cookie
+from ..engine.config import parse_args, spotify_write_backend
 from ..engine.logs import log_add, log_miss
 from ..engine.matching import spotify_track_keys, track_key
 from ..engine.runner import load_cache, save_cache
@@ -245,7 +245,9 @@ class TransferService:
 
     def _build(self, provider_id, opts):
         sp = None
-        if provider_id == "spotify":
+        cookie = (provider_id == "spotify" and spotify_write_backend() == "cookie"
+                  and spotify_cookie.configured())
+        if provider_id == "spotify" and not cookie:
             try:
                 sp = spotify.client()
             except Exception:

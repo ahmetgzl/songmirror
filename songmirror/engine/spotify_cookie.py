@@ -1,4 +1,4 @@
-"""Cookie (sp_dc) write backend for Spotify.
+"""Cookie (sp_dc) web-session backend for Spotify.
 
 A self-hosted Spotify developer app in Development Mode is refused (403) by the
 official API on the *content* surface — creating playlists and adding/removing
@@ -8,15 +8,16 @@ web-player fallback (`spotify_web.py`); this is the matching path for writes.
 It authenticates as Spotify's own first-party web client via the `sp_dc` cookie
 (spotify_scraper mints the bearer, TOTP and all), which is not subject to the
 dev-app gate. Item add/remove go through the web-player GraphQL API
-("pathfinder"); playlist creation goes through the official REST endpoint with
-the same first-party token. Only writes route here, and only when
-SPOTIFY_WRITE_BACKEND=cookie — reads stay on the official API + scraper fallback.
+("pathfinder"); playlist creation goes through Spotify's first-party playlist
+service. When ``SPOTIFY_WRITE_BACKEND=cookie`` this module is a complete peer:
+library listing, playlist reads, catalog search and writes all use the signed-in
+web session. No Spotify developer Client ID, secret or Premium account is needed.
 
 Fragility (why the self-heal exists): pathfinder persisted-query hashes rotate
 on each web-player release and a stale one is rejected as PersistedQueryNotFound.
 `_refresh_hashes` re-scrapes the current hashes from the live web-player bundle
 on that error, so a rotation self-heals instead of hard-failing. The `sp_dc`
-cookie itself lasts about a year; the connector surfaces when it needs renewing.
+session can be revoked or rotated; the connector surfaces when it needs renewing.
 """
 
 import json
@@ -47,14 +48,17 @@ _HASHES = {
     "playlist_mut": "47b2a1234b17748d332dd0431534f22450e9ecbb3d5ddcdacbd83368636a0990",
     "playlist_read": "a65e12194ed5fc443a1cdebed5fabe33ca5b07b987185d63c72483867ad13cb4",
     "profile": "b197b5adb4b761690f76ad9d9fb278c14c14e7331f357c04a56e7001af7106e0",
+    "library": "390c78e5b951029bad359785e69b07b536a509c581cbcd0aded5e5067f187455",
 }
 # Which operation name maps to which hashed document — also drives the re-scrape.
 _OP_DOC = {
     "addToPlaylist": "playlist_mut", "removeFromPlaylist": "playlist_mut",
-    "fetchPlaylistContents": "playlist_read", "profileAttributes": "profile",
+    "fetchPlaylistContents": "playlist_read", "fetchPlaylist": "playlist_read",
+    "profileAttributes": "profile", "libraryV3": "library",
 }
 
 _provider = None   # cached spotify_scraper CookieTokenProvider (lazy)
+_catalog = None    # cached spotify_scraper SpotifyClient (lazy)
 _uid = None        # cached cookie-account user id (for rootlist filing)
 _isrc_cache = {}   # track_id -> isrc|None, backfilled from /tracks (see _track_isrcs)
 
@@ -62,6 +66,26 @@ _isrc_cache = {}   # track_id -> isrc|None, backfilled from /tracks (see _track_
 def configured():
     """True when an sp_dc cookie is available (env or the stored file)."""
     return bool(_sp_dc(soft=True))
+
+
+def reset_session():
+    """Drop every object derived from the current ``sp_dc`` value.
+
+    The account wizard can replace a cookie while the server stays running. A
+    reset makes the very next read/search/token request use that new account
+    instead of a cached provider or catalog client from the old session.
+    """
+    global _provider, _catalog, _uid
+    old_catalog = _catalog
+    _provider = None
+    _catalog = None
+    _uid = None
+    _isrc_cache.clear()
+    if old_catalog is not None:
+        try:
+            old_catalog.close()
+        except Exception:
+            pass
 
 
 def sp_dc_path():
@@ -72,19 +96,26 @@ def sp_dc_path():
 
 
 def _sp_dc(soft=False):
-    v = os.getenv("SPOTIFY_SP_DC")
-    if v:
-        return v.strip()
+    # The Accounts wizard writes the private file. Prefer it over a bootstrap
+    # environment value so replacing a cookie in the running UI remains fixed
+    # after a container restart even when its original .env still has an older
+    # value. Headless installs fall back to SPOTIFY_SP_DC when no file exists.
     path = sp_dc_path()
     try:
         with open(path, encoding="utf-8") as f:
-            return f.read().strip()
+            value = f.read().strip()
+            if value:
+                return value
     except OSError:
-        if soft:
-            return None
-        raise TargetAuthError(
-            "Spotify cookie mode is on but no sp_dc cookie is set — paste it on the "
-            "Accounts page (or set SPOTIFY_SP_DC).")
+        pass
+    value = (os.getenv("SPOTIFY_SP_DC") or "").strip()
+    if value:
+        return value
+    if soft:
+        return None
+    raise TargetAuthError(
+        "Spotify cookie mode is on but no sp_dc cookie is set — paste it on the "
+        "Accounts page (or set SPOTIFY_SP_DC).")
 
 
 def _prov():
@@ -235,6 +266,94 @@ def contents(playlist):
             for it in _content_items(playlist)]
 
 
+def _library_image_sources(images):
+    """Flatten libraryV3's ``images.items[].sources[]`` to Web-API shape."""
+    out = []
+    for image in (images or {}).get("items") or []:
+        sources = image.get("sources") or []
+        if isinstance(sources, dict):
+            sources = sources.get("items") or []
+        for source in sources:
+            if source.get("url"):
+                out.append({"url": source["url"], "width": source.get("width"),
+                            "height": source.get("height")})
+    return out
+
+
+def library_playlists():
+    """Every playlist in the signed-in account's library.
+
+    ``libraryV3`` is the web player's own filtered library query. It avoids the
+    old rootlist plus one metadata request per playlist, and its capability data
+    identifies followed playlists that are readable but not editable.
+    """
+    out, offset, limit = [], 0, 100
+    while True:
+        variables = {
+            "filters": ["Playlists"], "order": "Alphabetical", "textFilter": None,
+            "features": [], "limit": limit, "offset": offset, "flatten": True,
+            "expandedFolders": None, "folderUri": None,
+            "includeFoldersWhenFlattening": True,
+        }
+        library = ((_pf("libraryV3", variables).get("me") or {}).get("libraryV3") or {})
+        rows = library.get("items") or []
+        total = library.get("totalCount")
+        if total is None:
+            raise RuntimeError("Spotify library read incomplete: page did not include totalCount")
+        if not rows and offset < int(total):
+            raise RuntimeError(
+                f"Spotify library read incomplete: stopped at {offset} of {total} items")
+        for row in rows:
+            item = row.get("item") or {}
+            data = item.get("data") or {}
+            if data.get("__typename") != "Playlist":
+                continue
+            uri = data.get("uri") or item.get("_uri") or ""
+            if not str(uri).startswith("spotify:playlist:") or not data.get("name"):
+                raise RuntimeError("Spotify library read incomplete: playlist metadata was missing")
+            owner = (data.get("ownerV2") or {}).get("data") or {}
+            editable = bool((data.get("currentUserCapabilities") or {}).get("canEditItems"))
+            out.append({
+                "id": str(uri).rsplit(":", 1)[-1],
+                "uri": uri,
+                "name": data.get("name") or "",
+                "description": data.get("description") or "",
+                "snapshot_id": data.get("revisionId"),
+                "owner": {"id": owner.get("username") or owner.get("id")},
+                "images": _library_image_sources(data.get("images")),
+                "_owned": editable,
+                "_editable": editable,
+            })
+        offset += len(rows)
+        if offset >= int(total):
+            return out
+
+
+def _catalog_client():
+    """The public web-player catalog client used for destination search."""
+    global _catalog
+    if _catalog is None:
+        from spotify_scraper import SpotifyClient
+
+        _catalog = SpotifyClient(cookies={"sp_dc": _sp_dc()}, timeout=REQUEST_TIMEOUT)
+    return _catalog
+
+
+def search_tracks(query, limit=8):
+    """Spotipy-shaped catalog hits without the developer Web API."""
+    result = _catalog_client().search(query, types=("track",), limit=limit)
+    out = []
+    for track in result.tracks[:limit]:
+        out.append({
+            "id": track.id,
+            "name": track.name,
+            "artists": [{"name": artist.name} for artist in track.artists],
+            "album": {"name": track.album.name if track.album else ""},
+            "duration_ms": track.duration_ms,
+        })
+    return out
+
+
 def _track_isrcs(ids):
     """{track_id: isrc|None} from the official catalog via a CLIENT-CREDENTIALS APP token on
     the BATCH /tracks?ids endpoint (50 ids/call). Cached in-process; only unknown ids fetch.
@@ -330,9 +449,10 @@ def playlist_tracks(playlist, require_isrc=False, known_isrc=None):
     """Full track dicts (the shape spotify.playlist_tracks yields) via pathfinder —
     works for private owned playlists the dev-mode official API 403s, and returns []
     for a just-created empty playlist. The pathfinder payload carries no ISRC (confirmed
-    absent from the entire web-player surface); with require_isrc (set for N-way sync
-    reads) it is backfilled so cross-provider matching stays reliable, and a hard lookup
-    failure raises so the sync fails closed instead of matching on name/artist alone.
+    absent from the entire web-player surface). N-way reconciliation now seeds
+    missing Spotify identities from every ISRC-bearing peer in the same complete
+    read. ``require_isrc`` remains only for legacy callers that explicitly opt
+    into the developer catalog lookup.
 
     known_isrc(ids) -> {id: isrc}, when given, supplies already-known ISRCs (the
     persisted songs-DB cache) so only genuinely-new tracks hit the rate-limited /tracks
@@ -355,12 +475,20 @@ def playlist_tracks(playlist, require_isrc=False, known_isrc=None):
             "duration_ms": (t.get("trackDuration") or {}).get("totalMilliseconds"),
             "added_at": (it.get("addedAt") or {}).get("isoString") or "",
         })
-    if require_isrc and out:
+    # Persisted ISRCs remain valuable in cookie-only mode, but a cache miss is
+    # deliberately left blank for reconcile to infer from its ISRC-bearing peers.
+    # Only legacy callers that explicitly request a complete ISRC read touch the
+    # developer catalog lookup.
+    if out and known_isrc:
         ids = [t["id"] for t in out]
-        cached = known_isrc(ids) if known_isrc else {}
-        fetched = _track_isrcs([i for i in ids if not cached.get(i)])
+        cached = known_isrc(ids) or {}
         for t in out:
-            t["isrc"] = cached.get(t["id"]) or fetched.get(t["id"])
+            t["isrc"] = cached.get(t["id"])
+    if require_isrc and out:
+        missing = [t["id"] for t in out if not t.get("isrc")]
+        fetched = _track_isrcs(missing)
+        for t in out:
+            t["isrc"] = t.get("isrc") or fetched.get(t["id"])
     return out
 
 

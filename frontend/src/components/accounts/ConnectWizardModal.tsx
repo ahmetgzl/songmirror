@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { LuCheck, LuChevronDown, LuCircleAlert, LuCircleHelp, LuClipboardPaste, LuExternalLink, LuInfinity, LuKeyRound } from 'react-icons/lu'
+import { LuCheck, LuChevronDown, LuCircleAlert, LuCircleHelp, LuClipboardPaste, LuExternalLink, LuInfinity } from 'react-icons/lu'
 
 import { api, errorMessage } from '@/api'
 import type { Account, AccountField, AccountState, ConnectDeviceResponse, ConnectRedirectResponse } from '@/types'
@@ -72,19 +72,20 @@ interface ConnectGuideContent {
 // concise per-field `help` hints defined on each connector (services/accounts).
 const CONNECT_GUIDES: Record<string, ConnectGuideContent> = {
   spotify: {
-    intro: 'Spotify needs a free developer app you create once. It gives you a Client ID and secret.',
+    intro: 'Use the signed-in session already in Spotify\'s web player. No developer app, API key, or Premium account is required.',
     steps: [
-      <>Open the Spotify Developer Dashboard and log in.</>,
+      <>Open <GuideLink href="https://open.spotify.com">open.spotify.com</GuideLink> and sign in.</>,
       <>
-        Click <strong>Create app</strong>; name it anything (e.g. “SongMirror”); website and description don’t matter.
+        Open browser dev tools (<Code>F12</Code>) → <strong>Application</strong> (Chrome/Edge) or{' '}
+        <strong>Storage</strong> (Firefox).
       </>,
       <>
-        Open the app → <strong>Settings</strong>, copy the <strong>Client ID</strong>, then click{' '}
-        <strong>View client secret</strong>.
+        Open <strong>Cookies</strong> → <Code>https://open.spotify.com</Code>, then find <Code>sp_dc</Code>.
       </>,
-      <>Paste both below. On the next step you’ll whitelist the exact redirect URI this wizard shows you.</>,
+      <>Copy only that cookie's value and paste it below.</>,
     ],
-    link: { href: 'https://developer.spotify.com/dashboard', label: 'Open Spotify dashboard' },
+    note: 'Treat sp_dc like a password. SongMirror stores it in its private data directory and never stores your Spotify password. Re-paste it if Spotify signs the web session out.',
+    link: { href: 'https://open.spotify.com', label: 'Open Spotify web player' },
   },
   tidal: {
     intro: 'Use the short-lived OpenAPI token already issued to your signed-in TIDAL web player.',
@@ -513,16 +514,6 @@ export function ConnectWizardModal({ account, open, onClose, onConnected, onChan
             )}
 
             {account.id === 'ytmusic' && <NoQuotaModeSection account={account} onChanged={onChanged} />}
-            {account.id === 'spotify' && (
-              <p className="rounded-control border border-border bg-inset px-3 py-2.5 text-xs leading-relaxed text-text-3">
-                <strong className="text-text-2">Bidirectional (N-way) sync uses all three:</strong> the OAuth login
-                above, <strong>Cookie write mode</strong> (Spotify reads + writes), and an{' '}
-                <strong>ISRC lookup app</strong> (cross-service track matching). One-way mirroring and one-off transfers
-                need only the OAuth login.
-              </p>
-            )}
-            {account.id === 'spotify' && <CookieWriteSection account={account} onChanged={onChanged} />}
-            {account.id === 'spotify' && <IsrcAppSection account={account} onChanged={onChanged} />}
           </>
         )}
       </div>
@@ -836,248 +827,6 @@ function NoQuotaModeSection({ account, onChanged }: { account: Account; onChange
             />
             <Button size="sm" onClick={() => void enable()} loading={saving} disabled={!headers.trim()} className="w-fit">
               Enable no-quota mode
-            </Button>
-          </>
-        )}
-      </div>
-    </details>
-  )
-}
-
-/** Spotify cookie write mode: paste an sp_dc cookie so playlist writes route
- * through the first-party web client, bypassing the Development-Mode 403s a
- * self-hosted dev app hits on playlist create / track edits. Reads still use the
- * OAuth connection above, so this is an add-on disclosure, collapsed by default
- * (mirrors NoQuotaModeSection). "cookie writes" in the account detail marks it on. */
-function CookieWriteSection({ account, onChanged }: { account: Account; onChanged: () => void }) {
-  const active = (account.detail || '').includes('cookie writes')
-  const [spDc, setSpDc] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    setSpDc('')
-    setError(null)
-  }, [active])
-
-  async function enable() {
-    setSaving(true)
-    setError(null)
-    try {
-      const res = await api.enableSpotifyCookieMode(spDc)
-      if (res.state === 'connected') onChanged()
-      else setError(res.detail || 'Could not enable cookie write mode with that cookie.')
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function disable() {
-    setSaving(true)
-    setError(null)
-    try {
-      await api.disableSpotifyCookieMode()
-      onChanged()
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <details className="group rounded-control border border-border bg-surface-2/40">
-      <summary className="flex cursor-pointer select-none items-center gap-2 px-3.5 py-2.5 text-sm font-medium text-text-2">
-        <LuClipboardPaste className="size-4 shrink-0 text-text-3" aria-hidden="true" />
-        Cookie write mode
-        {active && (
-          <span className="inline-flex h-5 shrink-0 items-center rounded-full bg-success-soft px-2 text-[10.5px] font-semibold text-success">
-            On
-          </span>
-        )}
-        <LuChevronDown
-          className="ml-auto size-4 shrink-0 text-text-3 transition-transform duration-fast group-open:rotate-180"
-          aria-hidden="true"
-        />
-      </summary>
-      <div className="flex flex-col gap-3 border-t border-border px-3.5 py-3">
-        <p className="text-xs leading-relaxed text-text-3">
-          Routes playlist <strong>writes</strong> (create, add, remove) through your Spotify web session instead of
-          the API app — the fix for the “403 · playlist-modify” errors a Development-Mode app hits. Reads still use the
-          OAuth connection above. The cookie lasts about a year.
-        </p>
-
-        {error && <p className="text-xs text-danger">{error}</p>}
-
-        {active ? (
-          <>
-            <p className="flex items-center gap-1.5 text-xs text-success">
-              <LuCheck className="size-3.5 shrink-0" aria-hidden="true" />
-              Cookie write mode is on.
-            </p>
-            <Button variant="secondary" size="sm" onClick={() => void disable()} loading={saving} className="w-fit">
-              Switch back to OAuth
-            </Button>
-          </>
-        ) : (
-          <>
-            <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-[13px] leading-relaxed text-text-2 marker:font-mono marker:text-xs marker:text-text-3">
-              <li className="pl-1">
-                Open <GuideLink href="https://open.spotify.com">open.spotify.com</GuideLink> and sign in.
-              </li>
-              <li className="pl-1">
-                Open dev tools (<Code>F12</Code>) → <strong>Application</strong> → <strong>Cookies</strong> →{' '}
-                <Code>https://open.spotify.com</Code>.
-              </li>
-              <li className="pl-1">
-                Copy the value of the <Code>sp_dc</Code> cookie and paste it below.
-              </li>
-            </ol>
-            <input
-              type="password"
-              value={spDc}
-              onChange={(e) => setSpDc(e.target.value)}
-              placeholder="sp_dc cookie value"
-              aria-label="sp_dc cookie"
-              className="w-full rounded-control border border-border-strong bg-field px-3 py-2 font-mono text-xs text-text placeholder:text-text-3 focus:border-accent focus:outline-none"
-            />
-            <Button size="sm" onClick={() => void enable()} loading={saving} disabled={!spDc.trim()} className="w-fit">
-              Enable cookie write mode
-            </Button>
-          </>
-        )}
-      </div>
-    </details>
-  )
-}
-
-/** Spotify ISRC lookup app: a SECOND Spotify app (Extended Quota Mode) whose
- * client-credentials token reads track ISRCs on a rate bucket separate from the OAuth
- * user token — required for reliable N-way matching (the dev app's user token 403s on
- * /tracks, and the cookie token there hits a per-account penalty box). Optional add-on
- * disclosure like CookieWriteSection; "ISRC app" in the account detail marks it on. */
-function IsrcAppSection({ account, onChanged }: { account: Account; onChanged: () => void }) {
-  const active = (account.detail || '').includes('ISRC app')
-  const [clientId, setClientId] = useState('')
-  const [clientSecret, setClientSecret] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    setClientId('')
-    setClientSecret('')
-    setError(null)
-  }, [active])
-
-  async function enable() {
-    setSaving(true)
-    setError(null)
-    try {
-      const res = await api.setSpotifyIsrcApp(clientId, clientSecret)
-      if (res.state === 'connected') onChanged()
-      else setError(res.detail || 'Could not configure the ISRC app with those credentials.')
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function clear() {
-    setSaving(true)
-    setError(null)
-    try {
-      await api.clearSpotifyIsrcApp()
-      onChanged()
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <details className="group rounded-control border border-border bg-surface-2/40">
-      <summary className="flex cursor-pointer select-none items-center gap-2 px-3.5 py-2.5 text-sm font-medium text-text-2">
-        <LuKeyRound className="size-4 shrink-0 text-text-3" aria-hidden="true" />
-        ISRC lookup app
-        {active && (
-          <span className="inline-flex h-5 shrink-0 items-center rounded-full bg-success-soft px-2 text-[10.5px] font-semibold text-success">
-            On
-          </span>
-        )}
-        <LuChevronDown
-          className="ml-auto size-4 shrink-0 text-text-3 transition-transform duration-fast group-open:rotate-180"
-          aria-hidden="true"
-        />
-      </summary>
-      <div className="flex flex-col gap-3 border-t border-border px-3.5 py-3">
-        <p className="text-xs leading-relaxed text-text-3">
-          A <strong>second</strong> Spotify app (in <strong>Extended Quota Mode</strong>) used only to read track
-          ISRCs for bidirectional (N-way) matching. Its token reads on a rate limit separate from your main app, so
-          ISRC lookups never stall the sync. Only N-way needs it — one-way mirroring and transfers don't.
-        </p>
-        <p className="text-xs leading-relaxed text-text-3">
-          Without one, N-way still runs: your main app looks ISRCs up one track at a time instead, which is slower
-          and capped at roughly 300 new tracks a day. Extended Quota Mode also requires the owning account to keep
-          an active Premium subscription — Spotify refuses the app outright if it lapses.
-        </p>
-
-        {error && <p className="text-xs text-danger">{error}</p>}
-
-        {active ? (
-          <>
-            <p className="flex items-center gap-1.5 text-xs text-success">
-              <LuCheck className="size-3.5 shrink-0" aria-hidden="true" />
-              ISRC app configured.
-            </p>
-            <Button variant="secondary" size="sm" onClick={() => void clear()} loading={saving} className="w-fit">
-              Remove ISRC app
-            </Button>
-          </>
-        ) : (
-          <>
-            <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-[13px] leading-relaxed text-text-2 marker:font-mono marker:text-xs marker:text-text-3">
-              <li className="pl-1">
-                At the <GuideLink href="https://developer.spotify.com/dashboard">Spotify dashboard</GuideLink>, create
-                a second app (any name).
-              </li>
-              <li className="pl-1">
-                On that app's page request <strong>Extended Quota Mode</strong> — a Development-Mode app 403s on the
-                batch lookup.
-              </li>
-              <li className="pl-1">
-                Copy its <strong>Client ID</strong> and <strong>Client secret</strong> and paste them below.
-              </li>
-            </ol>
-            <input
-              type="text"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              placeholder="ISRC app Client ID"
-              aria-label="ISRC app Client ID"
-              autoComplete="off"
-              className="w-full rounded-control border border-border-strong bg-field px-3 py-2 font-mono text-xs text-text placeholder:text-text-3 focus:border-accent focus:outline-none"
-            />
-            <input
-              type="password"
-              value={clientSecret}
-              onChange={(e) => setClientSecret(e.target.value)}
-              placeholder="ISRC app Client secret"
-              aria-label="ISRC app Client secret"
-              autoComplete="off"
-              className="w-full rounded-control border border-border-strong bg-field px-3 py-2 font-mono text-xs text-text placeholder:text-text-3 focus:border-accent focus:outline-none"
-            />
-            <Button
-              size="sm"
-              onClick={() => void enable()}
-              loading={saving}
-              disabled={!clientId.trim() || !clientSecret.trim()}
-              className="w-fit"
-            >
-              Save ISRC app
             </Button>
           </>
         )}

@@ -45,6 +45,30 @@ def test_spotify_begin_redirect_returns_url(tmp_path, monkeypatch):
     assert c._store.get("SPOTIFY_REDIRECT_URI") == "http://host/oauth/spotify/callback"
 
 
+def test_spotify_cookie_only_account_is_connected_without_developer_credentials(tmp_path, monkeypatch):
+    from songmirror.engine import spotify_cookie
+
+    c = _conn("spotify", tmp_path)
+    c._store.save({"SPOTIFY_WRITE_BACKEND": "cookie"})
+    monkeypatch.setattr(spotify_cookie, "configured", lambda: True)
+
+    status = c.status()
+    assert c.auth_kind == "token_paste"
+    assert status.state == "connected"
+    assert "no developer API" in status.detail
+
+
+def test_spotify_direct_connect_enables_web_session(tmp_path, monkeypatch):
+    c = _conn("spotify", tmp_path)
+    seen = []
+    monkeypatch.setattr(c, "enable_cookie", lambda value: (seen.append(value), type(
+        "Status", (), {"state": "connected", "detail": "web session"})())[1])
+
+    status = c.submit({"SPOTIFY_SP_DC": "cookie-value"})
+    assert status.state == "connected"
+    assert seen == ["cookie-value"]
+
+
 def test_ytmusic_begin_device_surfaces_code(tmp_path, monkeypatch):
     c = _conn("ytmusic", tmp_path)
     assert c.status().state == "unconfigured"
@@ -111,7 +135,8 @@ def test_spotify_status_reports_a_refused_isrc_app(tmp_path, monkeypatch):
     from songmirror.engine import spotify
 
     c = _conn("spotify", tmp_path)
-    c._store.save({"SPOTIFY_CLIENT_ID": "id", "SPOTIFY_CLIENT_SECRET": "sec"})
+    c._store.save({"SPOTIFY_CLIENT_ID": "id", "SPOTIFY_CLIENT_SECRET": "sec",
+                   "SPOTIFY_WRITE_BACKEND": "oauth"})
     token = tmp_path / "token"
     token.write_text("{}")
     monkeypatch.setenv("SPOTIFY_TOKEN_CACHE", str(token))

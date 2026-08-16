@@ -24,6 +24,27 @@ def test_sink_none_is_noop():
     logs.log_note("hi")  # must not raise
 
 
+def test_protection_and_identity_repair_events_keep_structured_evidence():
+    seen = []
+    logs.set_sink(seen.append)
+    try:
+        logs.log_protected(
+            "protected four changes", tag="qobuz",
+            data={"count": 4, "classification": "unconfirmed_absence", "provider": "qobuz"},
+        )
+        logs.log_repair(
+            "repaired two identities", tag="spotify",
+            data={"count": 2, "classification": "identity_migration", "provider": "spotify"},
+        )
+    finally:
+        logs.set_sink(None)
+
+    assert [(event.kind, event.tag, event.data) for event in seen] == [
+        ("hold", "qobuz", {"count": 4, "classification": "unconfirmed_absence", "provider": "qobuz"}),
+        ("repair", "spotify", {"count": 2, "classification": "identity_migration", "provider": "spotify"}),
+    ]
+
+
 def test_broken_sink_never_breaks_logging():
     def boom(_):
         raise RuntimeError("nope")

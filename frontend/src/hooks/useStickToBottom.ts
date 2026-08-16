@@ -5,8 +5,10 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 // out of stick-to-bottom.
 const BOTTOM_THRESHOLD_PX = 32
 
-function isNearBottom(el: HTMLElement): boolean {
-  return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD_PX
+function isNearEdge(el: HTMLElement, edge: 'top' | 'bottom'): boolean {
+  return edge === 'top'
+    ? el.scrollTop <= BOTTOM_THRESHOLD_PX
+    : el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD_PX
 }
 
 /** Standard chat-log "stick to bottom" behavior for an auto-growing list
@@ -20,7 +22,7 @@ function isNearBottom(el: HTMLElement): boolean {
  * correctly if the scrollable element itself is swapped out - e.g. a list
  * that renders an empty state instead of the `<ul>` until the first item
  * arrives. */
-export function useStickToBottom<T extends HTMLElement>(itemCount: number) {
+export function useStickToBottom<T extends HTMLElement>(itemCount: number, edge: 'top' | 'bottom' = 'bottom') {
   const [node, setNode] = useState<T | null>(null)
   const containerRef = useCallback((el: T | null) => setNode(el), [])
   const [isAtBottom, setIsAtBottom] = useState(true)
@@ -40,12 +42,12 @@ export function useStickToBottom<T extends HTMLElement>(itemCount: number) {
     // if the caller measured before the animation settled - until it finishes.
     (behavior: ScrollBehavior = 'auto') => {
       if (!node) return
-      node.scrollTo({ top: node.scrollHeight, behavior })
+      node.scrollTo({ top: edge === 'top' ? 0 : node.scrollHeight, behavior })
       lastScrollHeightRef.current = node.scrollHeight
       setIsAtBottom(true)
       setNewCount(0)
     },
-    [node],
+    [edge, node],
   )
 
   // (Re)initializes whenever the scrollable node itself mounts - first
@@ -55,19 +57,19 @@ export function useStickToBottom<T extends HTMLElement>(itemCount: number) {
   // know whether the user is still at the bottom after they scroll.
   useLayoutEffect(() => {
     if (!node) return
-    node.scrollTop = node.scrollHeight
+    node.scrollTop = edge === 'top' ? 0 : node.scrollHeight
     lastScrollHeightRef.current = node.scrollHeight
     setIsAtBottom(true)
     setNewCount(0)
     function onScroll() {
-      const atBottom = isNearBottom(node!)
+      const atBottom = isNearEdge(node!, edge)
       setIsAtBottom(atBottom)
       if (atBottom) setNewCount(0)
       lastScrollHeightRef.current = node!.scrollHeight
     }
     node.addEventListener('scroll', onScroll, { passive: true })
     return () => node.removeEventListener('scroll', onScroll)
-  }, [node])
+  }, [edge, node])
 
   // New items arrived: stick to the bottom if the user was already there;
   // otherwise leave their scroll position alone and count what they missed.
@@ -90,16 +92,18 @@ export function useStickToBottom<T extends HTMLElement>(itemCount: number) {
     lastCountRef.current = itemCount
     const delta = itemCount - prevCount
     if (delta <= 0 || !node) return
-    const wasAtBottom = lastScrollHeightRef.current - node.scrollTop - node.clientHeight <= BOTTOM_THRESHOLD_PX
+    const wasAtBottom = edge === 'top'
+      ? node.scrollTop <= BOTTOM_THRESHOLD_PX
+      : lastScrollHeightRef.current - node.scrollTop - node.clientHeight <= BOTTOM_THRESHOLD_PX
     if (wasAtBottom) {
-      node.scrollTop = node.scrollHeight
+      node.scrollTop = edge === 'top' ? 0 : node.scrollHeight
       setIsAtBottom(true)
     } else {
       setNewCount((n) => n + delta)
       setIsAtBottom(false)
     }
     lastScrollHeightRef.current = node.scrollHeight
-  }, [itemCount, node])
+  }, [edge, itemCount, node])
 
   return { containerRef, isAtBottom, newCount, scrollToBottom }
 }

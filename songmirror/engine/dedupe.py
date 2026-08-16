@@ -167,9 +167,10 @@ def _main(argv=None):
 
     from dotenv import load_dotenv
 
-    from . import spotify
+    from . import spotify, spotify_cookie
     from .config import (DEFAULT_CACHE_FILE, DEFAULT_PROVIDERS, DEFAULT_SONG_CACHE_FILE,
-                         DEFAULT_SPOTIFY_CACHE_FILE, DEFAULT_STOREFRONT)
+                         DEFAULT_SPOTIFY_CACHE_FILE, DEFAULT_STOREFRONT,
+                         spotify_write_backend)
     from .runner import load_cache
     from .targets import build_peers
 
@@ -192,9 +193,10 @@ def _main(argv=None):
         cache_file = os.getenv("APPLE_CACHE_FILE", DEFAULT_CACHE_FILE)
         spotify_cache_file = os.getenv("SPOTIFY_CACHE_FILE", DEFAULT_SPOTIFY_CACHE_FILE)
 
-    sp = spotify.client(writable=args.execute)
-    peers = build_peers(_Opts(), sp)
     songs = archive.connect(os.getenv("SONG_CACHE_FILE", DEFAULT_SONG_CACHE_FILE))
+    cookie = spotify_write_backend() == "cookie" and spotify_cookie.configured()
+    sp = None if cookie else spotify.client(writable=args.execute)
+    peers = build_peers(_Opts(), sp, songs=songs)
     caches = {p.source: load_cache(p.cache_file) for p in peers}
     dirs = {p.source: p.list_playlists() for p in peers}
 

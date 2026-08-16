@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { LuCircleAlert, LuTriangleAlert, LuX } from 'react-icons/lu'
 import type { IconType } from 'react-icons'
 
-import type { Account, SyncStatus } from '@/types'
+import type { Account, ChangeDiagnostic, ChangeDiagnosticCategory, SyncStatus } from '@/types'
 
 import { BUTTON_BASE_CLASSES, BUTTON_SIZE_CLASSES, BUTTON_VARIANT_CLASSES } from '../ui/buttonStyles'
 
@@ -32,6 +32,26 @@ interface NeedsLookItem {
   /** Specifics behind the headline count — rendered verbatim, one line each. */
   details?: string[]
   action?: { label: string; to: string }
+}
+
+function diagnosticDetails(rows: ChangeDiagnostic[]): string[] {
+  const lines = rows
+    .slice(0, HELD_REMOVAL_PREVIEW)
+    .map((row) => `${row.provider} · ${row.playlist}: ${formatCount(row.count)} — ${row.evidence}`)
+  if (rows.length > lines.length) lines.push(`+${rows.length - lines.length} more evidence records`)
+  return lines
+}
+
+function diagnosticsByCategory(
+  rows: ChangeDiagnostic[],
+  ...categories: ChangeDiagnosticCategory[]
+): ChangeDiagnostic[] {
+  const wanted = new Set(categories)
+  return rows.filter((row) => wanted.has(row.category))
+}
+
+function diagnosticCount(rows: ChangeDiagnostic[]): number {
+  return rows.reduce((sum, row) => sum + row.count, 0)
 }
 
 /** Every item here traces back to a real field — account state/detail, or the
@@ -95,33 +115,86 @@ function buildItems(accounts: Account[] | null, status: SyncStatus | null): Need
     })
   }
 
-  const isrcFallback = status?.last?.per_target.reduce((sum, t) => sum + (t.isrc_fallback ?? 0), 0) ?? 0
+  const targets = status?.last?.per_target ?? []
+  const diagnostics = targets.flatMap((target) => target.change_diagnostics ?? [])
+
+  const isrcFallback = targets.reduce((sum, t) => sum + (t.isrc_fallback ?? 0), 0)
   if (isrcFallback > 0) {
     items.push({
       key: 'isrc-fallback',
       icon: LuTriangleAlert,
-      title: `${isrcFallback} ISRC lookup${isrcFallback === 1 ? '' : 's'} ran on the slow path`,
+      title: `${isrcFallback} Spotify lookup${isrcFallback === 1 ? '' : 's'} used the legacy API path`,
       description:
-        'No extended-quota ISRC app could serve the batch endpoint, so cross-service matching looked these up ' +
-        'one call at a time. That path is capped at roughly 300 tracks a day, and the sync stops rather than ' +
-        'guess once it runs out. Connect one to restore 50-per-call batching.',
-      action: { label: 'Connect app', to: '/accounts' },
+        'This summary came from the older developer-app connection. Reconnect Spotify with its signed-in web ' +
+        'session to remove the API-key and Premium dependency.',
+      action: { label: 'Use web session', to: '/accounts' },
     })
   }
 
-  const targets = status?.last?.per_target ?? []
-  const heldTotal = targets.reduce((sum, target) => sum + target.held, 0)
-  if (heldTotal > 0) {
-    const details = targets
-      .filter((target) => target.held > 0)
-      .map((target) => `${target.name}: ${formatCount(target.held)} kept`)
+  const firstSeenRows = diagnosticsByCategory(diagnostics, 'unconfirmed_absence')
+  const firstSeenTotal = Math.max(
+    diagnosticCount(firstSeenRows),
+    targets.reduce((sum, target) => sum + (target.unconfirmed_absences ?? 0), 0),
+  )
+  if (firstSeenTotal > 0) {
     items.push({
-      key: 'held',
+      key: 'unconfirmed-absence',
       icon: LuTriangleAlert,
-      title: `${formatCount(heldTotal)} target track${heldTotal === 1 ? '' : 's'} kept because matching was uncertain`,
+      title: `${formatCount(firstSeenTotal)} playlist absence${firstSeenTotal === 1 ? '' : 's'} awaiting verification`,
       description:
-        "SongMirror found a similar source track that it couldn't confidently match on this target, " +
-        'so it kept the target copy instead of deleting it. Check the live feed for the missing match; nothing was lost.',
+        'Each track was missing from one complete provider read. That is not treated as a deletion: SongMirror ' +
+        'kept it everywhere, froze the baseline, and requires the same source-local absence on a second trusted pass.',
+      details: diagnosticDetails(firstSeenRows),
+    })
+  }
+
+  const readAnomalyRows = diagnosticsByCategory(diagnostics, 'incomplete_read', 'ambiguous_identity')
+  const readAnomalyTotal = Math.max(
+    diagnosticCount(readAnomalyRows),
+    targets.reduce((sum, target) => sum + (target.read_anomalies ?? 0), 0),
+  )
+  if (readAnomalyTotal > 0) {
+    items.push({
+      key: 'read-anomaly',
+      icon: LuCircleAlert,
+      title: `${formatCount(readAnomalyTotal)} provider read signal${readAnomalyTotal === 1 ? '' : 's'} rejected as unsafe`,
+      description:
+        'The read was incomplete or one old identity split ambiguously. Its apparent removals were excluded from ' +
+        'the merge, no baseline advanced, and the next pass will read the provider again.',
+      details: diagnosticDetails(readAnomalyRows),
+    })
+  }
+
+  const blockedReplacementRows = diagnosticsByCategory(diagnostics, 'replacement_blocked')
+  const blockedReplacementTotal = diagnosticCount(blockedReplacementRows)
+  if (blockedReplacementTotal > 0) {
+    items.push({
+      key: 'replacement-blocked',
+      icon: LuTriangleAlert,
+      title: `${formatCount(blockedReplacementTotal)} replacement${blockedReplacementTotal === 1 ? '' : 's'} could not be completed safely`,
+      description:
+        'SongMirror could not prove or apply every required addition first, so it performed no related removals ' +
+        'and kept the baseline unchanged for a safe retry.',
+      details: diagnosticDetails(blockedReplacementRows),
+    })
+  }
+
+  const uncertainRows = diagnosticsByCategory(diagnostics, 'uncertain_match')
+  const structuredHeldTotal = diagnosticCount(uncertainRows)
+  const heldTotal = targets.reduce((sum, target) => sum + target.held, 0)
+  if (structuredHeldTotal > 0 || (heldTotal > 0 && diagnostics.length === 0)) {
+    const total = structuredHeldTotal || heldTotal
+    const details = structuredHeldTotal > 0
+      ? diagnosticDetails(uncertainRows)
+      : targets.filter((target) => target.held > 0)
+        .map((target) => `${target.name}: ${formatCount(target.held)} kept`)
+    items.push({
+      key: 'uncertain-match',
+      icon: LuTriangleAlert,
+      title: `${formatCount(total)} destination match${total === 1 ? '' : 'es'} remained uncertain`,
+      description:
+        'The catalog evidence was not strong enough to call two releases the same recording. SongMirror kept the ' +
+        'existing copy and made no destructive change.',
       details,
     })
   }
@@ -143,12 +216,14 @@ function buildItems(accounts: Account[] | null, status: SyncStatus | null): Need
     })
   }
 
-  const removalsSkipped = status?.last?.per_target.reduce((sum, t) => sum + (t.removals_skipped ?? 0), 0) ?? 0
-  if (removalsSkipped > 0) {
-    const listed = status?.last?.per_target.flatMap((t) => t.held_removals ?? []) ?? []
-    // One "why" per distinct cause rather than repeated on every line — a pass
-    // usually hits a single cause, and naming it is what makes the count actionable.
-    const reasons = [...new Set(listed.map((h) => h.reason))]
+  const removalsSkipped = targets.reduce((sum, t) => sum + (t.removals_skipped ?? 0), 0)
+  const confirmedHeldRows = diagnosticsByCategory(
+    diagnostics, 'confirmed_removal_disabled', 'removal_cap',
+  )
+  const confirmedHeldTotal = diagnosticCount(confirmedHeldRows)
+  if (confirmedHeldTotal > 0) {
+    const listed = targets.flatMap((t) => t.held_removals ?? [])
+      .filter((held) => held.category === 'confirmed_removal_disabled' || held.category === 'removal_cap')
     const details = listed
       .slice(0, HELD_REMOVAL_PREVIEW)
       .map((h) => `${h.track}${h.artist ? ` — ${h.artist}` : ''} · ${h.playlist} on ${h.target}`)
@@ -158,10 +233,28 @@ function buildItems(accounts: Account[] | null, status: SyncStatus | null): Need
     items.push({
       key: 'removals-skipped',
       icon: LuTriangleAlert,
-      title: `${removalsSkipped} removal${removalsSkipped === 1 ? '' : 's'} held back for safety`,
+      title: `${formatCount(confirmedHeldTotal)} confirmed removal candidate${confirmedHeldTotal === 1 ? '' : 's'} kept`,
+      description:
+        'The same source-local absence appeared in two consecutive complete reads, so it is now a removal ' +
+        'candidate—not an identity repair. It still was not deleted because removal mirroring is off or the cap held it.',
+      details,
+      action: { label: 'Open sync', to: '/sync' },
+    })
+  } else if (removalsSkipped > 0 && diagnostics.length === 0) {
+    // Compatibility for summaries recorded before evidence categories existed.
+    const listed = targets.flatMap((t) => t.held_removals ?? [])
+    const reasons = [...new Set(listed.map((held) => held.reason))]
+    const details = listed
+      .slice(0, HELD_REMOVAL_PREVIEW)
+      .map((held) => `${held.track}${held.artist ? ` — ${held.artist}` : ''} · ${held.playlist} on ${held.target}`)
+    if (listed.length > details.length) details.push(`+${listed.length - details.length} more`)
+    items.push({
+      key: 'removals-skipped-legacy',
+      icon: LuTriangleAlert,
+      title: `${formatCount(removalsSkipped)} removal${removalsSkipped === 1 ? '' : 's'} held back for safety`,
       description: reasons.length
         ? `These are still on the services below. Held because ${reasons.join('; and ')}.`
-        : 'Tracks left a playlist on one service, and this sync isn\'t allowed to delete that many elsewhere. Turn on "Mirror removals" (and raise its cap) on the sync if you want them to follow.',
+        : 'The older pass summary did not record enough evidence to classify these holds more precisely.',
       details,
       action: { label: 'Open sync', to: '/sync' },
     })

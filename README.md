@@ -270,7 +270,7 @@ SongMirror refreshes credentials **just in time**, not with a separate token-ref
 
 | Service | Renewal behavior |
 | --- | --- |
-| **Spotify** | OAuth access tokens refresh automatically from the saved refresh token when a client is built. Cookie mode mints a web access token from the saved `sp_dc` cookie on demand and retries with a new token after a `401`; the underlying cookie can still be revoked. |
+| **Spotify** | The default connection mints a web-player access token from the saved `sp_dc` cookie on demand and retries with a new token after a `401`; the underlying signed-in session can still be revoked. Legacy developer-app OAuth remains supported for existing installs. |
 | **TIDAL** | A pasted web-player Bearer cannot be renewed and must be captured again after expiry. The optional developer OAuth fallback refreshes automatically when a refresh token is available. |
 | **Qobuz** | The pasted `X-User-Auth-Token` is used until Qobuz rejects it, then must be captured again. |
 | **Deezer** | The short-lived Pipe JWT renews automatically from the saved `refresh-token` before use and once after a `401/403`; rotated renewal state is persisted. |
@@ -281,10 +281,11 @@ SongMirror refreshes credentials **just in time**, not with a separate token-ref
 
 ### Spotify
 
-1. Create an app at <https://developer.spotify.com/dashboard> and copy its **Client ID** + **Client Secret**.
-2. Add a redirect URI — the connect wizard shows the exact one, e.g. `http://127.0.0.1:8888/oauth/spotify/callback` (Docker) or `http://127.0.0.1:8080/oauth/spotify/callback` (direct run). Spotify only allows an `http` redirect on the loopback IP, so authorize via `http://127.0.0.1:<port>`, not a LAN IP.
+1. Sign in at <https://open.spotify.com>.
+2. Open browser DevTools (`F12`) → **Application** (Chrome/Edge) or **Storage** (Firefox) → **Cookies** → `https://open.spotify.com`.
+3. Copy the value of the `sp_dc` cookie and paste it into Accounts → Spotify.
 
-The web UI requests read + write scopes up front (Spotify is a write target in N-way syncs and reverse transfers). The CLI reads Spotify read-only in one-way mode.
+That single signed-in web session handles library browsing, playlist reads and writes, and catalog search. It does not require a Spotify developer app, API key, or Premium account. Treat `sp_dc` like a password: SongMirror stores it in its private data directory, but the integration uses Spotify's internal web-player operations and can need maintenance if Spotify changes them. Existing developer-app OAuth credentials remain a compatible fallback.
 
 ### TIDAL
 
@@ -427,7 +428,7 @@ frontend/       # React + Vite SPA (built and served by the API in production)
 - **Deezer renewal fails** — capture a fresh `auth.deezer.com/login/renew` request (or its `refresh-token` cookie). A current Pipe Bearer alone is only a temporary bootstrap.
 - **Amazon Music renewal fails** — capture a fresh signed-in `config.json` request. The response JSON is optional; the request's allowlisted authentication cookies are the durable renewal material.
 - **YouTube Music browser mode expires** — export fresh browser request headers. For the most durable unattended setup, use Data API OAuth with an in-production consent screen.
-- **Spotify OAuth redirect mismatch** — the redirect URI in your Spotify app must exactly match the one the wizard shows (including the port).
+- **Spotify reports Expired** — sign in again at `open.spotify.com` and paste a fresh `sp_dc` cookie in Accounts.
 - **A playlist isn't syncing** — confirm it's in the sync's playlist scope and exists on the source (targets are auto-created on a real pass).
 
 <div align="right">

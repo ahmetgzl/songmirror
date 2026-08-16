@@ -90,10 +90,20 @@ export interface TargetSummary {
    * extended-quota app could serve the batch endpoint. Non-zero means the pass
    * ran on the slow, daily-capped path. */
   isrc_fallback?: number
+  /** Stable provider entries whose canonical metadata changed in place. These
+   * are repairs, not playlist removals or additions. */
+  identity_changes?: number
+  /** Source identities absent from one trusted snapshot and awaiting another. */
+  unconfirmed_absences?: number
+  /** Source identities absent from two consecutive trusted snapshots. */
+  confirmed_absences?: number
+  /** Provider reads ignored because their shape was incomplete or ambiguous. */
+  read_anomalies?: number
   /** Which tracks the cap kept, and why. Bounded by the backend, so it can be
    * shorter than `removals_skipped` — that count remains the total. Absent on
    * passes recorded before this was reported. */
   held_removals?: HeldRemoval[]
+  change_diagnostics?: ChangeDiagnostic[]
   /** Which playlists failed and why. Bounded by the backend, so it can be shorter
    * than `failed` — that count remains the total. */
   failures?: PassFailure[]
@@ -113,6 +123,28 @@ export interface HeldRemoval {
   track: string
   artist: string
   reason: string
+  category?: ChangeDiagnosticCategory
+  source?: string
+  evidence?: string
+}
+
+export type ChangeDiagnosticCategory =
+  | 'identity_migration'
+  | 'unconfirmed_absence'
+  | 'confirmed_absence'
+  | 'incomplete_read'
+  | 'ambiguous_identity'
+  | 'replacement_blocked'
+  | 'confirmed_removal_disabled'
+  | 'removal_cap'
+  | 'uncertain_match'
+
+export interface ChangeDiagnostic {
+  category: ChangeDiagnosticCategory
+  playlist: string
+  provider: string
+  count: number
+  evidence: string
 }
 
 export interface PassSummary {
@@ -209,7 +241,7 @@ export interface ScheduleRequest {
 /** One line of the live SSE feed. `data` carries kind-specific extras (e.g.
  * `{dry: boolean}` for add/remove, `{detail: string}` for section) that the
  * UI doesn't need to render today but may display opportunistically. */
-export type EventKind = 'add' | 'remove' | 'hold' | 'miss' | 'download' | 'note' | 'warn' | 'summary' | 'section'
+export type EventKind = 'add' | 'remove' | 'hold' | 'repair' | 'miss' | 'download' | 'note' | 'warn' | 'summary' | 'section'
 
 export interface SyncEvent {
   ts: number

@@ -90,32 +90,37 @@ def test_apple_ensure_storefront_backfills(monkeypatch, tmp_path):
     assert store.get("APPLE_STOREFRONT") == "gb"
 
 
-def test_spotify_redirect_uri_forces_loopback_ip(tmp_path):
-    # Spotify rejects `localhost` for http loopback redirects — the callback URI
-    # must be normalized to the explicit 127.0.0.1 IP no matter how the app is
-    # opened. begin_redirect() only builds a URL (no network), so this is offline.
-    store = SettingsStore(dir=tmp_path)
-    store.save({"SPOTIFY_CLIENT_ID": "cid", "SPOTIFY_CLIENT_SECRET": "sec"})
-    with TestClient(create_app(settings=store), base_url="http://localhost:8080") as client:
-        r = client.post("/api/accounts/spotify/connect")
-        assert r.status_code == 200
-        assert r.json()["redirect_uri"] == "http://127.0.0.1:8080/oauth/spotify/callback"
+def test_spotify_connect_accepts_web_session_without_oauth_redirect(tmp_path, monkeypatch):
+    from songmirror.services.accounts.base import ConnStatus
+    from songmirror.services.accounts.spotify import SpotifyConnector
+
+    seen = {}
+
+    def submit(_self, values):
+        seen.update(values)
+        return ConnStatus("connected", "signed-in web session · no developer API")
+
+    monkeypatch.setattr(SpotifyConnector, "submit", submit)
+    with TestClient(_app(tmp_path)) as client:
+        result = client.post(
+            "/api/accounts/spotify/connect", json={"SPOTIFY_SP_DC": "cookie-value"}
+        ).json()
+
+    assert seen == {"SPOTIFY_SP_DC": "cookie-value"}
+    assert result == {
+        "kind": "token_paste",
+        "state": "connected",
+        "detail": "signed-in web session · no developer API",
+    }
 
 
-def test_spotify_redirect_uri_reflects_access_port(tmp_path):
-    # Behind Docker the UI is published on a different host port (8888 -> 8080).
-    # The redirect URI is derived from the port the BROWSER used (the Host header,
-    # which the port-forward preserves), so it must reflect 8888 — that's the URI
-    # the connect wizard shows the user to whitelist, and it stays consistent
-    # between the authorize step and the token exchange.
-    store = SettingsStore(dir=tmp_path)
-    store.save({"SPOTIFY_CLIENT_ID": "cid", "SPOTIFY_CLIENT_SECRET": "sec"})
-    with TestClient(create_app(settings=store), base_url="http://localhost:8888") as client:
-        assert client.post("/api/accounts/spotify/connect").json()["redirect_uri"] == (
-            "http://127.0.0.1:8888/oauth/spotify/callback"
-        )
-        # begin_redirect persists the exact URI complete_redirect will reuse.
-        assert store.get("SPOTIFY_REDIRECT_URI") == "http://127.0.0.1:8888/oauth/spotify/callback"
+def test_spotify_connect_without_cookie_is_a_friendly_error(tmp_path):
+    with TestClient(_app(tmp_path)) as client:
+        result = client.post("/api/accounts/spotify/connect").json()
+
+    assert result["kind"] == "token_paste"
+    assert result["state"] == "error"
+    assert "sp_dc" in result["detail"]
 
 
 def test_oauth_callback_handles_provider_error(tmp_path):

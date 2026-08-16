@@ -1,8 +1,4 @@
-"""Spotify connector (oauth_redirect) — the browser handshake over spotipy.
-
-Self-hosting note: the user registers their own Spotify app and pastes its
-client id/secret once; the wizard shows the exact redirect URI to whitelist.
-"""
+"""Spotify connector — a signed-in web session, with legacy OAuth fallback."""
 
 import os
 
@@ -13,12 +9,10 @@ from .base import ConnStatus, Connector, Field
 class SpotifyConnector(Connector):
     id = "spotify"
     name = "Spotify"
-    auth_kind = "oauth_redirect"
+    auth_kind = "token_paste"
     config_fields = [
-        Field("SPOTIFY_CLIENT_ID", "Client ID",
-              help="From your app at developer.spotify.com/dashboard → Settings"),
-        Field("SPOTIFY_CLIENT_SECRET", "Client secret", secret=True,
-              help="Same page — click 'View client secret'"),
+        Field("SPOTIFY_SP_DC", "sp_dc cookie", secret=True,
+              help="From open.spotify.com → browser dev tools → Application/Storage → Cookies"),
     ]
 
     def _token_cache(self):
@@ -56,7 +50,10 @@ class SpotifyConnector(Connector):
         return bool(self._store.get("SPOTIFY_ISRC_CLIENTS") or os.getenv("SPOTIFY_ISRC_CLIENTS"))
 
     def status(self) -> ConnStatus:
-        from ...engine import spotify
+        from ...engine import spotify, spotify_cookie
+
+        if self._cookie_on() and spotify_cookie.configured():
+            return ConnStatus("connected", "signed-in web session · no developer API")
 
         if not self._configured("SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"):
             return ConnStatus("unconfigured")
@@ -73,6 +70,10 @@ class SpotifyConnector(Connector):
             return ConnStatus("error", f"the ISRC lookup app is refused because {problem}. Syncs continue "
                                        "on slower single-track lookups (about 300 tracks a day).")
         return ConnStatus("connected", "token present" + note)
+
+    def submit(self, values: dict) -> ConnStatus:
+        """Primary no-key connect flow used by the account wizard."""
+        return self.enable_cookie(values.get("SPOTIFY_SP_DC", ""))
 
     def set_isrc_app(self, client_id: str, client_secret: str) -> ConnStatus:
         """Store a batch-capable app's credentials for the ISRC /tracks lookup that
@@ -117,11 +118,8 @@ class SpotifyConnector(Connector):
         return self.status()
 
     def enable_cookie(self, sp_dc: str) -> ConnStatus:
-        """Turn on the cookie write backend (bypasses Development-Mode 403s on
-        playlist writes). Store the pasted sp_dc cookie, validate it by minting a
-        web-player token, then flip SPOTIFY_WRITE_BACKEND=cookie. Reads still use
-        the OAuth connection, so that must stay connected too."""
-        from ...engine.spotify_cookie import sp_dc_path
+        """Enable complete Spotify reads, search, and writes through its web session."""
+        from ...engine.spotify_cookie import reset_session, sp_dc_path
         from ..settings import _open_private
 
         sp_dc = (sp_dc or "").strip()
@@ -139,13 +137,29 @@ class SpotifyConnector(Connector):
         with _open_private(path) as f:  # 0600 — it's a ~1-year account credential
             f.write(sp_dc)
         self._store.save({"SPOTIFY_WRITE_BACKEND": "cookie"})
-        return ConnStatus("connected", "cookie write mode")
+        reset_session()
+        return ConnStatus("connected", "signed-in web session · no developer API")
 
     def disable_cookie(self) -> ConnStatus:
         """Revert writes to the OAuth dev app. The cookie file is left in place so
         re-enabling needs no re-paste."""
         self._store.save({"SPOTIFY_WRITE_BACKEND": "oauth"})
         return self.status()
+
+    def disconnect(self) -> None:
+        """Remove both the web session and any legacy developer-app grant."""
+        from ...engine.spotify_cookie import reset_session, sp_dc_path
+
+        reset_session()
+        self._store.save({
+            "SPOTIFY_WRITE_BACKEND": "oauth", "SPOTIFY_CLIENT_ID": "",
+            "SPOTIFY_CLIENT_SECRET": "", "SPOTIFY_ISRC_CLIENTS": "",
+        })
+        for path in (sp_dc_path(), self._token_cache()):
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
 
     def begin_redirect(self, redirect_uri: str) -> str:
         self._store.save({"SPOTIFY_REDIRECT_URI": redirect_uri})

@@ -250,8 +250,28 @@ def test_summary_detail_is_bounded_but_counts_are_not():
 
 def test_summary_entry_carries_detail_and_defaults_it_empty():
     assert runner._summary_entry("N-way", {})["held_removals"] == []
+    assert runner._summary_entry("N-way", {})["change_diagnostics"] == []
     entry = runner._summary_entry("N-way", {"held_removals": [{"track": "x"}]})
     assert entry["held_removals"] == [{"track": "x"}]
+
+
+def test_cookie_only_spotify_source_does_not_initialize_oauth(monkeypatch):
+    from songmirror.engine import spotify_cookie
+
+    monkeypatch.setenv("SPOTIFY_WRITE_BACKEND", "cookie")
+    monkeypatch.setattr(spotify_cookie, "configured", lambda: True)
+    monkeypatch.setattr(
+        runner.spotify,
+        "client",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("developer OAuth was initialized")),
+    )
+    monkeypatch.setattr(runner, "build_one", lambda *args, **kwargs: type("CookieSource", (), {
+        "source": "spotify", "name": "Spotify", "list_playlists": lambda self: {},
+    })())
+    monkeypatch.setattr(runner, "build_targets", lambda opts, sp=None: [])
+
+    summary = runner.run_pass(_opts(sync_source="spotify", providers="spotify"))
+    assert summary["ok"] is True
 
 
 class _Peer:

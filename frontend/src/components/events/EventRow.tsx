@@ -6,6 +6,7 @@ import {
   LuInfo,
   LuListMinus,
   LuListPlus,
+  LuRefreshCw,
   LuSearchX,
   LuTriangleAlert,
 } from 'react-icons/lu'
@@ -21,6 +22,7 @@ const EVENT_KIND_ICONS: Record<Exclude<EventKind, 'section'>, IconType> = {
   add: LuListPlus,
   remove: LuListMinus,
   hold: LuClockAlert,
+  repair: LuRefreshCw,
   miss: LuSearchX,
   download: LuDownload,
   note: LuInfo,
@@ -40,7 +42,7 @@ export function EventRow({ event }: { event: SyncEvent }) {
 
   if (event.kind === 'section') {
     return (
-      <li className="flex items-center gap-2.5 rounded-chip px-3 py-2">
+      <li className="event-row flex items-center gap-2.5 rounded-chip px-3 py-2">
         <span className="shrink-0 font-mono text-[10.5px] font-semibold uppercase tracking-wide text-text-3">
           {event.message}
         </span>
@@ -52,7 +54,7 @@ export function EventRow({ event }: { event: SyncEvent }) {
   const ActionIcon = EVENT_KIND_ICONS[event.kind]
 
   return (
-    <li className={cn('flex flex-wrap items-start gap-x-2.5 gap-y-1 rounded-chip px-3 py-[5px] text-[13.5px]', style.row)}>
+    <li className={cn('event-row flex flex-wrap items-start gap-x-2.5 gap-y-1 rounded-chip px-3 py-[5px] text-[13.5px]', style.row)}>
       <span
         role="img"
         aria-label={style.label}
