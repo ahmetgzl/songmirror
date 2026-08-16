@@ -97,13 +97,18 @@ class AppleMusicTarget(MirrorTarget):
         while True:
             r = self._request("GET", f"{AMP}/me/library/playlists", params={"limit": 100, "offset": offset})
             data = r.json()
-            for pl in data.get("data", []):
+            rows = data.get("data") or []
+            for pl in rows:
                 key = (pl.get("attributes", {}).get("name") or "").strip().casefold()
                 if key and key not in out:
                     out[key] = pl
-            if "next" not in data:
+            if not data.get("next"):
                 return out
-            offset += 100
+            if not rows:
+                raise RuntimeError(
+                    "Apple Music playlist listing incomplete: next page was advertised but no rows were returned"
+                )
+            offset += len(rows)
 
     def is_editable(self, playlist):
         return playlist.get("attributes", {}).get("canEdit") is not False
@@ -122,9 +127,14 @@ class AppleMusicTarget(MirrorTarget):
             r = self._request("GET", f"{AMP}/me/library/playlists/{playlist['id']}/tracks",
                               params={"limit": 100, "offset": offset}, ok404=True)
             if r is None:  # empty playlists 404 this endpoint
+                if offset:
+                    raise RuntimeError(
+                        "Apple Music playlist read incomplete: a later page returned 404"
+                    )
                 return tracks
             data = r.json()
-            for t in data.get("data", []):
+            rows = data.get("data") or []
+            for t in rows:
                 attrs = t.get("attributes", {})
                 pp = attrs.get("playParams", {})
                 tracks.append({
@@ -135,9 +145,13 @@ class AppleMusicTarget(MirrorTarget):
                     "album": attrs.get("albumName"),
                     "duration_ms": attrs.get("durationInMillis"),
                 })
-            if "next" not in data:
+            if not data.get("next"):
                 return tracks
-            offset += 100
+            if not rows:
+                raise RuntimeError(
+                    "Apple Music playlist read incomplete: next page was advertised but no rows were returned"
+                )
+            offset += len(rows)
 
     def track_id(self, track):
         return track.get("catalog_id")

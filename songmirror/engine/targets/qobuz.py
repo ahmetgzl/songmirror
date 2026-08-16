@@ -131,7 +131,15 @@ class QobuzTarget(MirrorTarget):
                     out[key] = playlist
             offset += len(items)
             total = container.get("total")
-            if not items or len(items) < 100 or (total is not None and offset >= int(total)):
+            if total is not None:
+                total = int(total)
+                if offset >= total:
+                    return out
+                if not items:
+                    raise RuntimeError(
+                        f"Qobuz playlist listing incomplete: stopped at {offset} of {total}"
+                    )
+            elif not items or len(items) < 100:
                 return out
 
     def create(self, source_playlist):
@@ -152,10 +160,22 @@ class QobuzTarget(MirrorTarget):
             )
             container = body.get("tracks") or {}
             items = container.get("items") or []
-            tracks.extend(_normalized_track(track) for track in items if track.get("id"))
+            if any(track.get("id") is None for track in items):
+                raise RuntimeError(
+                    "Qobuz playlist read incomplete: a playlist item is missing its track id"
+                )
+            tracks.extend(_normalized_track(track) for track in items)
             offset += len(items)
             total = container.get("total")
-            if not items or len(items) < 100 or (total is not None and offset >= int(total)):
+            if total is not None:
+                total = int(total)
+                if offset >= total:
+                    return tracks
+                if not items:
+                    raise RuntimeError(
+                        f"Qobuz playlist read incomplete: stopped at {offset} of {total} tracks"
+                    )
+            elif not items or len(items) < 100:
                 return tracks
 
     def track_id(self, track):

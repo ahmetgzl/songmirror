@@ -1,5 +1,7 @@
 """Provider playlist accessors (name/id) resolve each service's dict shape."""
 
+import pytest
+
 from songmirror.engine.targets.apple import AppleMusicTarget
 from songmirror.engine.targets.base import MirrorTarget
 from songmirror.engine.targets.ytmusic import YTMusicTarget
@@ -105,6 +107,37 @@ def test_apple_playlist_count_uses_meta_total_and_caches():
     assert target.playlist_count(pl) == 42 and len(calls) == 1  # cached, no 2nd call
     changed = {"id": "p1", "attributes": {"lastModifiedDate": "2026-02-01"}}
     assert target.playlist_count(changed) == 42 and len(calls) == 2  # re-fetched on change
+
+
+def test_apple_playlist_read_advances_by_rows_returned_and_fails_on_no_progress():
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    offsets = []
+
+    class Response:
+        def __init__(self, body):
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    def request(method, url, params=None, ok404=False):
+        offsets.append(params["offset"])
+        if len(offsets) == 1:
+            return Response({"data": [
+                {"id": "entry-1", "attributes": {"name": "One", "playParams": {"catalogId": "1"}}},
+                {"id": "entry-2", "attributes": {"name": "Two", "playParams": {"catalogId": "2"}}},
+            ], "next": "/next"})
+        return Response({"data": [
+            {"id": "entry-3", "attributes": {"name": "Three", "playParams": {"catalogId": "3"}}},
+        ]})
+
+    target._request = request
+    assert len(target.playlist_tracks({"id": "playlist"})) == 3
+    assert offsets == [0, 2]
+
+    target._request = lambda *args, **kwargs: Response({"data": [], "next": "/next"})
+    with pytest.raises(RuntimeError, match=r"Apple Music playlist read incomplete"):
+        target.playlist_tracks({"id": "playlist"})
 
 
 def test_jellyfin_list_playlists_fills_counts(monkeypatch):

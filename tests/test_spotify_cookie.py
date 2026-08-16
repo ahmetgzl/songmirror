@@ -234,6 +234,19 @@ def test_playlist_tracks_skips_fetch_for_db_cached_isrc(monkeypatch):
     assert {t["id"]: t["isrc"] for t in out} == {"t1": "US1", "t2": "NEW"}
 
 
+def test_playlist_content_read_fails_closed_on_early_empty_page(monkeypatch):
+    from songmirror.engine import spotify_cookie as sc
+
+    pages = iter([
+        {"playlistV2": {"content": {"items": [{"uid": "one"}], "totalCount": 2}}},
+        {"playlistV2": {"content": {"items": [], "totalCount": 2}}},
+    ])
+    monkeypatch.setattr(sc, "_pf", lambda *args, **kwargs: next(pages))
+
+    with pytest.raises(RuntimeError, match=r"Spotify playlist read incomplete"):
+        list(sc._content_items({"id": "playlist"}))
+
+
 def test_writes_use_oauth_by_default(monkeypatch):
     monkeypatch.delenv("SPOTIFY_WRITE_BACKEND", raising=False)
     # If routing leaks to the cookie path, these blow up the test.

@@ -53,7 +53,10 @@ def scan(peers, playlists, caches, songs, state_key):
         raw = p.playlist_tracks(playlists[p.source])
         raws[p.source] = raw
         archive.record_order(songs, state_key, p.source, _order_rows(p, raw))
-        ec = _entry_cids(p, raw, songs, caches[p.source], key2isrc)
+        # A scan is observational, even when followed by duplicate cleanup.
+        # Consuming an OLD -> NEW identity transition here would prevent the
+        # reconciler from repairing its matching OLD playlist baseline later.
+        ec = _entry_cids(p, raw, songs, caches[p.source], key2isrc, remember=False)
         per_entry[p.source] = ec
         fold = {}
         for cid, norm in ec:

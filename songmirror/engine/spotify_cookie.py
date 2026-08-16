@@ -210,9 +210,21 @@ def _content_items(playlist):
         data = _pf("fetchPlaylistContents", {"uri": puri, "offset": offset, "limit": 100})
         page = (data.get("playlistV2") or {}).get("content") or {}
         items = page.get("items") or []
+        raw_total = page.get("totalCount")
+        if raw_total is None:
+            raise RuntimeError(
+                "Spotify playlist read incomplete: page did not include totalCount"
+            )
+        total = int(raw_total)
+        if not items:
+            if offset < total:
+                raise RuntimeError(
+                    f"Spotify playlist read incomplete: stopped at {offset} of {total} items"
+                )
+            return
         yield from items
         offset += len(items)
-        if not items or offset >= (page.get("totalCount") or 0):
+        if offset >= total:
             return
 
 

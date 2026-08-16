@@ -112,6 +112,23 @@ mutation SongMirrorAmazonRemoveTracks($playlistId: String!, $entryIds: [String])
 """
 
 
+def _next_cursor(page, current, context):
+    """Return the next cursor, failing closed on contradictory page metadata."""
+    if not page.get("hasNextPage"):
+        return None
+    token = page.get("token")
+    if token is None or not str(token).strip():
+        raise RuntimeError(
+            f"Amazon Music {context} pagination incomplete: "
+            "hasNextPage was true but no continuation token was returned"
+        )
+    if token == current:
+        raise RuntimeError(
+            f"Amazon Music {context} pagination incomplete: continuation token did not advance"
+        )
+    return token
+
+
 def _normalized_track(track, entry_id=None):
     artists = [artist.get("name", "") for artist in track.get("artists") or [] if artist.get("name")]
     if not artists:
@@ -266,8 +283,8 @@ class AmazonMusicTarget(MirrorTarget):
                     if key and key not in out:
                         out[key] = playlist
                 page = connection.get("pageInfo") or {}
-                cursor = page.get("token")
-                if not page.get("hasNextPage") or not cursor:
+                cursor = _next_cursor(page, cursor, "playlist listing")
+                if cursor is None:
                     return out
 
         out, cursor = {}, None
@@ -283,8 +300,8 @@ class AmazonMusicTarget(MirrorTarget):
                 if key and key not in out:
                     out[key] = playlist
             page = connection.get("pageInfo") or {}
-            cursor = page.get("token")
-            if not page.get("hasNextPage") or not cursor:
+            cursor = _next_cursor(page, cursor, "playlist listing")
+            if cursor is None:
                 return out
 
     def create(self, source_playlist):
@@ -339,16 +356,18 @@ class AmazonMusicTarget(MirrorTarget):
                 connection = (((data.get("playlist") or {}).get("tracks")) or {})
                 for edge in connection.get("edges") or []:
                     node = edge.get("node") or {}
-                    if not node.get("id"):
-                        continue
+                    if node.get("id") is None:
+                        raise RuntimeError(
+                            "Amazon Music playlist read incomplete: a relationship entry has no track id"
+                        )
                     entry_id = edge.get("itemId")
                     if not entry_id:
                         cursor_value = str(edge.get("cursor") or "")
                         entry_id = cursor_value.split(":", 1)[1] if ":" in cursor_value else cursor_value or None
                     tracks.append(_normalized_track(node, entry_id))
                 page = connection.get("pageInfo") or {}
-                cursor = page.get("token")
-                if not page.get("hasNextPage") or not cursor:
+                cursor = _next_cursor(page, cursor, "playlist track")
+                if cursor is None:
                     return tracks
 
         edges, cursor = [], None
@@ -360,17 +379,19 @@ class AmazonMusicTarget(MirrorTarget):
             connection = self._connection(body, "data", "playlist", "tracks")
             edges.extend(connection.get("edges") or [])
             page = connection.get("pageInfo") or {}
-            cursor = page.get("token")
-            if not page.get("hasNextPage") or not cursor:
+            cursor = _next_cursor(page, cursor, "playlist track")
+            if cursor is None:
                 break
-        ids = [str((edge.get("node") or {}).get("id")) for edge in edges if (edge.get("node") or {}).get("id")]
+        if any((edge.get("node") or {}).get("id") is None for edge in edges):
+            raise RuntimeError(
+                "Amazon Music playlist read incomplete: a relationship entry has no track id"
+            )
+        ids = [str((edge.get("node") or {}).get("id")) for edge in edges]
         details = self._track_details(ids)
         tracks = []
         for edge in edges:
             node = edge.get("node") or {}
             tid = str(node.get("id")) if node.get("id") is not None else None
-            if not tid:
-                continue
             cursor_value = str(edge.get("cursor") or "")
             entry_id = cursor_value.split(":", 1)[1] if ":" in cursor_value else cursor_value or None
             tracks.append(_normalized_track({**node, **details.get(tid, {})}, entry_id))

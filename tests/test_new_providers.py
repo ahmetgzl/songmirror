@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from songmirror.services.settings import SettingsStore
 
 
@@ -36,6 +38,27 @@ def test_tidal_jsonapi_track_shape_carries_isrc_artist_and_entry_id():
         "isrc": "USAAA2600001",
         "added_at": "2026-01-01",
     }
+
+
+def test_tidal_playlist_read_fails_closed_when_catalog_detail_is_missing(monkeypatch):
+    from songmirror.engine.targets.tidal import TidalTarget
+
+    target = TidalTarget.__new__(TidalTarget)
+    target.country = "US"
+    page = {
+        "data": [
+            {"type": "tracks", "id": "t1", "meta": {"itemId": "entry-1"}},
+            {"type": "tracks", "id": "t2", "meta": {"itemId": "entry-2"}},
+        ]
+    }
+    monkeypatch.setattr(target, "_pages", lambda path, params: iter([page]))
+    monkeypatch.setattr(target, "_tracks_by_id", lambda ids: {
+        "t1": {"id": "t1", "name": "Available", "artist": "Artist",
+               "artists": ["Artist"], "duration_ms": 1000, "isrc": "ONE"}
+    })
+
+    with pytest.raises(RuntimeError, match=r"incomplete.*t2"):
+        target.playlist_tracks({"id": "playlist"})
 
 
 def test_tidal_connector_accepts_minimized_browser_headers(tmp_path, monkeypatch):
@@ -214,6 +237,45 @@ def test_qobuz_maps_playlist_tracks_and_entry_ids(monkeypatch):
     assert (track["id"], track["relationship_id"], track["artist"], track["duration_ms"], track["isrc"]) == (
         "9", 44, "Singer", 201000, "GBBBB2600002"
     )
+
+
+def test_qobuz_playlist_read_follows_total_across_short_pages(monkeypatch):
+    from songmirror.engine.targets.qobuz import QobuzTarget
+
+    target = QobuzTarget.__new__(QobuzTarget)
+    offsets = []
+
+    def request(method, endpoint, params=None):
+        offset = params["offset"]
+        offsets.append(offset)
+        return {"tracks": {"items": [
+            {"id": offset + index + 1, "title": f"Track {offset + index + 1}", "duration": 1}
+            for index in range(50)
+        ], "total": 200}}
+
+    target._request = request
+    tracks = target.playlist_tracks({"id": "playlist"})
+
+    assert len(tracks) == 200
+    assert offsets == [0, 50, 100, 150]
+
+
+def test_qobuz_playlist_read_fails_closed_on_early_empty_or_idless_page():
+    from songmirror.engine.targets.qobuz import QobuzTarget
+
+    target = QobuzTarget.__new__(QobuzTarget)
+    responses = iter([
+        {"tracks": {"items": [{"id": 1, "title": "One"}], "total": 2}},
+        {"tracks": {"items": [], "total": 2}},
+    ])
+    target._request = lambda *args, **kwargs: next(responses)
+    with pytest.raises(RuntimeError, match=r"Qobuz playlist read incomplete"):
+        target.playlist_tracks({"id": "playlist"})
+
+    target._request = lambda *args, **kwargs: {
+        "tracks": {"items": [{"title": "Missing id"}], "total": 1}}
+    with pytest.raises(RuntimeError, match=r"missing.*id"):
+        target.playlist_tracks({"id": "playlist"})
 
 
 def test_qobuz_connector_extracts_signed_in_playlist_request(tmp_path, monkeypatch):
@@ -523,6 +585,33 @@ def test_amazon_playlist_read_hydrates_metadata_and_keeps_entry_id(monkeypatch):
     assert (track["id"], track["relationship_id"], track["name"], track["artist"], track["isrc"]) == (
         "ASIN9", "entry-9", "Full title", "Artist", "USDDD2600004"
     )
+
+
+def test_amazon_playlist_pagination_fails_closed_without_a_next_token():
+    from songmirror.engine.targets.amazon_music import AmazonMusicTarget, _next_cursor
+
+    target = AmazonMusicTarget.__new__(AmazonMusicTarget)
+    target._web = object()
+    target._graphql = lambda *args, **kwargs: {
+        "playlist": {"tracks": {
+            "edges": [{"itemId": "entry", "node": {"id": "track", "title": "Track"}}],
+            "pageInfo": {"hasNextPage": True, "token": None},
+        }}}
+
+    with pytest.raises(RuntimeError, match=r"Amazon Music.*pagination"):
+        target.playlist_tracks({"id": "playlist"})
+
+    with pytest.raises(RuntimeError, match=r"did not advance"):
+        _next_cursor({"hasNextPage": True, "token": "same"}, "same", "playlist track")
+
+    target._web = None
+    target._request = lambda *args, **kwargs: {"data": {"playlist": {"tracks": {
+        "edges": [{"cursor": "0:entry", "node": {"id": "track", "title": "Track"}}],
+        "pageInfo": {"hasNextPage": True, "token": None},
+    }}}}
+    target._track_details = lambda ids: {"track": {"id": "track", "title": "Track"}}
+    with pytest.raises(RuntimeError, match=r"Amazon Music.*pagination"):
+        target.playlist_tracks({"id": "playlist"})
 
 
 def test_amazon_web_header_parser_keeps_auth_and_discards_cookies():

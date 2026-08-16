@@ -80,6 +80,17 @@ def test_unidentifiable_entries_never_flagged(tmp_path):
     conn.close()
 
 
+def test_scan_does_not_consume_identity_rebinding_history(tmp_path):
+    conn = archive.connect(str(tmp_path / "identity.db"))
+    archive.set_identities(conn, "tidal", {"stable": "i:OLD"})
+    tidal = _Peer("tidal", [_t("stable", "Corrected", "Artist", isrc="NEW")])
+
+    dedupe.scan([tidal], {"tidal": {"id": "t"}}, _caches("tidal"), conn, "mix")
+
+    assert archive.get_identities(conn, "tidal", ["stable"]) == {"stable": "i:OLD"}
+    conn.close()
+
+
 def test_version_boundary_folds_are_held_not_removed(tmp_path):
     # A live video (fuzzy key, no ISRC) folds into the studio identity so the
     # sync stays quiet — but the studio copy must NEVER be deleted as its

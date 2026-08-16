@@ -6,8 +6,8 @@ import tempfile
 from songmirror.engine import archive
 from songmirror.engine.config import parse_interval
 from songmirror.engine.matching import (
-    compute_diff, loose_name, normalize_text, protect_removals, romanized,
-    score_candidate, track_key,
+    compute_diff, loose_name, normalize_canonical_id, normalize_isrc,
+    normalize_text, protect_removals, romanized, score_candidate, track_key,
 )
 from songmirror.engine.spotify import playlist_item_track
 
@@ -103,6 +103,8 @@ def run():
     assert romanized("Камин") == "kamin" and romanized("ত্রি") == "tri"
     assert track_key("Камин (feat. JONY)", "EMIN & JONY") == track_key("Камин", "EMIN, JONY")
     assert normalize_text("嘘") == "嘘" and normalize_text("炎") != normalize_text("嘘")
+    assert normalize_isrc("gb-smu-26-29433") == "GBSMU2629433"
+    assert normalize_canonical_id("i:ushm91463917") == "i:USHM91463917"
 
     # --- playlist item shapes ---
     assert playlist_item_track({"track": {"type": "track", "name": "L"}})["name"] == "L"

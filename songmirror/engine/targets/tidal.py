@@ -242,11 +242,18 @@ class TidalTarget(MirrorTarget):
         tracks = []
         for body in self._pages(f"playlists/{playlist['id']}/relationships/items", params):
             identifiers = [item for item in body.get("data") or [] if item.get("type") == "tracks"]
-            details = self._tracks_by_id([str(item["id"]) for item in identifiers])
+            requested_ids = [str(item["id"]) for item in identifiers]
+            details = self._tracks_by_id(requested_ids)
+            missing = [track_id for track_id in requested_ids if track_id not in details]
+            if missing:
+                preview = ", ".join(missing[:5])
+                suffix = "..." if len(missing) > 5 else ""
+                raise RuntimeError(
+                    "TIDAL playlist read incomplete: missing catalog details for "
+                    f"{len(missing)} track relationship(s): {preview}{suffix}"
+                )
             for item in identifiers:
-                track = details.get(str(item["id"]))
-                if not track:
-                    continue
+                track = details[str(item["id"])]
                 meta = item.get("meta") or {}
                 tracks.append({**track, "relationship_id": meta.get("itemId"),
                                "added_at": meta.get("addedAt") or ""})

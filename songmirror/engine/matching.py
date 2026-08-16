@@ -18,9 +18,17 @@ from rapidfuzz.distance import JaroWinkler
 
 FUZZY_THRESHOLD = 0.92
 DURATION_TOLERANCE_MS = 2500
+CATALOG_DURATION_TOLERANCE_MS = 5000
 
 PAREN_FEAT_RE = re.compile(r"[\(\[]\s*(feat|featuring|ft|with)\b.*?[\)\]]", re.IGNORECASE)
 TRAILING_FEAT_RE = re.compile(r"\s+(feat|featuring|ft)\s+.*$")
+CATALOG_TAG = r"(?:(?:\d{4}\s+)?re-?master(?:ed)?(?:\s+\d{4})?|clean|explicit)"
+BRACKETED_CATALOG_TAG_RE = re.compile(rf"[\(\[]\s*(?:{CATALOG_TAG})\s*[\)\]]", re.IGNORECASE)
+TRAILING_CATALOG_TAG_RE = re.compile(rf"\s*[-–—]\s*(?:{CATALOG_TAG})\s*$", re.IGNORECASE)
+FROM_RELEASE_RE = re.compile(
+    r'\s*(?:[-–—]\s*from|[\(\[]\s*from)\s+["“][^"”]+["”]\s*[\)\]]?\s*$',
+    re.IGNORECASE,
+)
 
 
 def normalize_text(value):
@@ -34,6 +42,25 @@ def normalize_text(value):
     return " ".join(normalized.split())
 
 
+def normalize_isrc(value):
+    """Canonical ISRC spelling across provider APIs and old cache entries.
+
+    ISRC is case-insensitive and commonly rendered with optional punctuation
+    (``GB-SMU-26-29433`` vs ``GBSMU2629433``). Canonical membership must not
+    treat those presentation differences as different recordings.
+    """
+    return re.sub(r"[^A-Za-z0-9]+", "", str(value or "")).upper()
+
+
+def normalize_canonical_id(value):
+    """Normalize the ISRC portion of an ``i:`` identity; preserve other kinds."""
+    canonical = str(value or "")
+    if not canonical.startswith("i:"):
+        return canonical
+    isrc = normalize_isrc(canonical[2:])
+    return f"i:{isrc}" if isrc else canonical
+
+
 def loose_name(name):
     """Title with feat-clauses stripped — '(feat. X)' is the classic drift for
     the SAME song. Version qualifiers like (Live)/(Acoustic) are kept: those
@@ -42,6 +69,26 @@ def loose_name(name):
     cleaned = TRAILING_FEAT_RE.sub("", normalize_text(PAREN_FEAT_RE.sub(" ", name or ""))).strip()
     cleaned = re.sub(r"\bver\b", "version", cleaned)
     return cleaned or normalize_text(name)
+
+
+def catalog_name(name):
+    """A conservative title identity for destination-side duplicate guards.
+
+    Providers often expose the same audio under a second catalog id with a
+    remaster year, clean/explicit label, or soundtrack-release suffix. Those
+    decorations are safe to ignore when artist and duration also agree. Creative
+    qualifiers (remix, acoustic, live, piano, radio edit, etc.) deliberately
+    remain, so genuinely different recordings never collapse merely by title.
+    """
+    cleaned = str(name or "")
+    while True:
+        previous = cleaned
+        cleaned = BRACKETED_CATALOG_TAG_RE.sub(" ", cleaned)
+        cleaned = TRAILING_CATALOG_TAG_RE.sub(" ", cleaned)
+        cleaned = FROM_RELEASE_RE.sub(" ", cleaned)
+        if cleaned == previous:
+            break
+    return loose_name(cleaned)
 
 
 def romanized(text):
@@ -119,6 +166,37 @@ def spotify_track_keys(track):
     keys = {track_key(track["name"], artist) for artist in track["artists"]}
     keys.add(track_key(track["name"], " ".join(track["artists"])))
     return keys
+
+
+def same_catalog_recording(track, candidate):
+    """Whether two provider entries are safely interchangeable recordings.
+
+    This is intentionally narrower than search matching: exact catalog-normalized
+    title, strongly overlapping artist credits, and (when both providers expose
+    it) near-identical duration. It catches alternate catalog releases without
+    treating an acoustic/live/remix/version as the ordinary track.
+    """
+    wanted = catalog_name(track.get("name"))
+    existing = catalog_name(candidate.get("name"))
+    if not wanted or wanted != existing:
+        return False
+
+    def artist_variants(value):
+        artists = value.get("artists") or ([value["artist"]] if value.get("artist") else [])
+        joined = " ".join(str(a) for a in artists if a)
+        display = value.get("artist") or joined
+        return {v for v in (normalize_text(joined), romanized(joined),
+                            normalize_text(display), romanized(display)) if v}
+
+    artist_sim = _best(_sim_loose, artist_variants(track), artist_variants(candidate))
+    if artist_sim < FUZZY_THRESHOLD:
+        return False
+
+    duration = track.get("duration_ms")
+    candidate_duration = candidate.get("duration_ms")
+    if duration is not None and candidate_duration is not None:
+        return abs(duration - candidate_duration) <= CATALOG_DURATION_TOLERANCE_MS
+    return True
 
 
 def compute_diff(sp_tracks, target_tracks, expected_by_sp, target_id_of, threshold=FUZZY_THRESHOLD):
