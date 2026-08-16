@@ -140,6 +140,89 @@ def test_apple_playlist_read_advances_by_rows_returned_and_fails_on_no_progress(
         target.playlist_tracks({"id": "playlist"})
 
 
+def test_apple_get_rebuilds_session_after_repeated_5xx(monkeypatch):
+    """A poisoned keep-alive route should not consume every idempotent retry."""
+    import requests
+
+    from songmirror.engine.targets import apple
+
+    class Response:
+        headers = {}
+
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 500:
+                raise requests.HTTPError(
+                    "500 Server Error: Server Error for url: https://amp-api.music.apple.com/tracks",
+                    response=self,
+                )
+
+    class Session:
+        def __init__(self, status_code):
+            self.status_code = status_code
+            self.headers = {"Authorization": "Bearer redacted"}
+            self.calls = 0
+            self.closed = False
+
+        def request(self, *args, **kwargs):
+            self.calls += 1
+            return Response(self.status_code)
+
+        def close(self):
+            self.closed = True
+
+    failed = Session(500)
+    recovered = Session(200)
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    target._session = failed
+
+    monkeypatch.setattr(apple.requests, "Session", lambda: recovered)
+    monkeypatch.setattr(apple.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(apple.random, "uniform", lambda *_args: 0)
+
+    response = target._request("GET", "https://amp-api.music.apple.com/tracks")
+
+    assert response.status_code == 200
+    assert failed.closed is True
+    assert failed.calls == 3
+    assert recovered.calls == 1
+    assert recovered.headers["Authorization"] == "Bearer redacted"
+
+
+def test_apple_get_exhausted_5xx_explains_safe_next_pass_retry(monkeypatch):
+    import requests
+
+    from songmirror.engine.targets import apple
+
+    class Response:
+        status_code = 500
+        headers = {}
+
+        def raise_for_status(self):
+            raise requests.HTTPError("500 Server Error", response=self)
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+
+        def request(self, *args, **kwargs):
+            return Response()
+
+        def close(self):
+            pass
+
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    target._session = Session()
+    monkeypatch.setattr(apple.requests, "Session", Session)
+    monkeypatch.setattr(apple.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(apple.random, "uniform", lambda *_args: 0)
+
+    with pytest.raises(RuntimeError, match=r"after 5 attempts;.*next pass will retry"):
+        target._request("GET", "https://amp-api.music.apple.com/v1/me/library/playlists/p1/tracks")
+
+
 def test_jellyfin_list_playlists_fills_counts(monkeypatch):
     # ChildCount isn't populated for playlists in the list query, so counts are
     # a concurrent per-playlist TotalRecordCount lookup.

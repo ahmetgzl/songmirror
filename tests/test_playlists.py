@@ -60,7 +60,9 @@ def test_browse_normalizes_rows(monkeypatch, tmp_path):
 
     class FakeTarget:
         def list_playlists(self):
-            return {"chill": {"id": "1", "name": "Chill", "tracks": {"total": 5}}}
+            # Qobuz emits numeric playlist ids. The web contract is string-id
+            # based because ids become select values and link-store keys.
+            return {"chill": {"id": 1, "name": "Chill", "tracks": {"total": 5}}}
 
         def browse_playlists(self):
             return list(self.list_playlists().values())

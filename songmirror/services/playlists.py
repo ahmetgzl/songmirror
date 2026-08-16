@@ -24,7 +24,14 @@ def _pl_name(pl):
 
 
 def _pl_id(pl):
-    return pl.get("id") or pl.get("playlistId") or _pl_name(pl)
+    # The frontend/link-store contract uses string ids, but some providers
+    # (notably Qobuz) return JSON numbers. Normalize at this shared boundary so
+    # every consumer sees the same stable type.
+    for key in ("id", "playlistId"):
+        value = pl.get(key)
+        if value is not None and value != "":
+            return str(value)
+    return _pl_name(pl)
 
 
 def _pl_image(pl):

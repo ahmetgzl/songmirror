@@ -54,6 +54,21 @@ class AppleMusicTarget(MirrorTarget):
         self._search_throttled = False  # set once catalog search rate-limits; defer the rest of the pass
 
     # -- HTTP ------------------------------------------------------------------
+    def _rebuild_session(self):
+        """Replace a possibly-poisoned keep-alive connection without losing auth.
+
+        Apple occasionally keeps returning 5xx on one pooled route while a new
+        connection succeeds immediately. GETs are idempotent, so reopening the
+        session midway through their existing retry budget is safe.
+        """
+        headers = dict(self._session.headers)
+        try:
+            self._session.close()
+        except Exception:
+            pass
+        self._session = requests.Session()
+        self._session.headers.update(headers)
+
     def _request(self, method, url, *, params=None, json_body=None, ok404=False):
         """One amp-api call over the pooled session. GETs retry with exponential
         backoff on network resets / 5xx; 429s back off on every method (a
@@ -85,8 +100,17 @@ class AppleMusicTarget(MirrorTarget):
                 time.sleep(wait)
                 continue
             if r.status_code >= 500 and method == "GET" and attempt < attempts - 1:
+                if attempt == 2:
+                    self._rebuild_session()
+                    log("  reopening the Apple connection after repeated server errors", tag=self.tag)
                 time.sleep(min(2 ** attempt, 20) + random.uniform(0, 2))
                 continue
+            if r.status_code >= 500 and method == "GET":
+                path = url.split("/v1/")[-1]
+                raise RuntimeError(
+                    f"Apple Music kept returning HTTP {r.status_code} while reading {path} "
+                    f"after {attempts} attempts; this read was abandoned and the next pass will retry it"
+                )
             r.raise_for_status()
             return r
         return None
