@@ -41,7 +41,8 @@ returns your own playlists (Apple, YouTube Music). `find_playlist()` scans
 
 **Optional performance/quality hooks:** `prefetch()` (batch work before resolving —
 Apple bulk-fetches ISRCs), `native_isrc_map()` (expose `{track_id: ISRC}` your resolve
-cache already knows), `expected_ids()`, `is_editable()`.
+cache already knows), `expected_ids()`, `is_editable()`, and
+`hydrate_playlist_counts()` (browse-only enrichment when the listing response omits totals).
 
 ### 2. Targets registry — `songmirror/engine/targets/__init__.py`
 

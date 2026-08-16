@@ -13,7 +13,7 @@ import uuid
 from ..engine import logs, spotify, spotify_cookie
 from ..engine.config import parse_args, spotify_write_backend
 from ..engine.logs import log_add, log_miss
-from ..engine.matching import spotify_track_keys, track_key
+from ..engine.matching import spotify_track_keys, track_key, tracks_oldest_first
 from ..engine.runner import load_cache, save_cache
 from ..engine.targets import build_one, is_peer
 from ..engine.targets.base import TargetAuthError, _normalize
@@ -45,7 +45,7 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, on_prog
     same_provider = source.source == dest.source
     additions, not_found = [], []
     completed = True
-    for i, norm in enumerate(sorted(src, key=lambda n: n["added_at"]), 1):
+    for i, norm in enumerate(tracks_oldest_first(src), 1):
         if should_continue and should_continue() != "run":
             completed = False  # paused or stopped — leave the rest for a re-run
             break

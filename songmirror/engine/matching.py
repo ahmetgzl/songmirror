@@ -9,8 +9,10 @@ duration anchor gates the looser matching so a different version or a
 wrong-artist cover is rejected when its length disagrees.
 """
 
+import math
 import re
 import unicodedata
+from datetime import datetime, timezone
 
 from anyascii import anyascii
 from rapidfuzz import fuzz
@@ -29,6 +31,63 @@ FROM_RELEASE_RE = re.compile(
     r'\s*(?:[-–—]\s*from|[\(\[]\s*from)\s+["“][^"”]+["”]\s*[\)\]]?\s*$',
     re.IGNORECASE,
 )
+
+
+def _added_at_epoch(value):
+    """Normalize provider date-added values to Unix seconds when possible.
+
+    Providers currently expose a mix of ISO-8601 strings and Unix timestamps
+    (seconds or milliseconds). Comparing their raw strings puts, for example,
+    every numeric timestamp before every ISO date regardless of chronology.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d{4}", text):
+        year = int(text)
+        if 1 <= year <= 9999:
+            return datetime(year, 1, 1, tzinfo=timezone.utc).timestamp()
+    if re.fullmatch(r"[+-]?\d+(?:\.\d+)?", text):
+        timestamp = float(text)
+        if not math.isfinite(timestamp):
+            return None
+        # Bring millisecond/microsecond/nanosecond values down to seconds. The
+        # threshold is safely beyond any date a playlist API can return.
+        while abs(timestamp) > 32_503_680_000:
+            timestamp /= 1000
+        return timestamp
+    if text[-1:] in {"Z", "z"}:
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def track_addition_order_key(track, *, source_rank=0, playlist_position=0):
+    """Oldest-first key with deterministic source-position fallback.
+
+    A trustworthy date-added value is the best cross-provider chronology. If a
+    provider does not expose one (Apple, Amazon, and YouTube currently do not),
+    its playlist position is the only truthful order evidence available.
+    """
+    timestamp = _added_at_epoch(track.get("added_at"))
+    if timestamp is None:
+        return 1, source_rank, playlist_position, 0
+    return 0, timestamp, source_rank, playlist_position
+
+
+def tracks_oldest_first(tracks):
+    """Return tracks in date-added order, preserving playlist order as fallback."""
+    positioned = list(enumerate(tracks))
+    positioned.sort(key=lambda item: track_addition_order_key(
+        item[1], playlist_position=item[0]))
+    return [track for _, track in positioned]
 
 
 def normalize_text(value):
@@ -228,7 +287,7 @@ def compute_diff(sp_tracks, target_tracks, expected_by_sp, target_id_of, thresho
         if keys & target_keys:
             continue
         to_add.append(tr)
-    to_add.sort(key=lambda t: t["added_at"])  # ISO-8601 Z strings sort lexicographically
+    to_add = tracks_oldest_first(to_add)
 
     to_remove = []
     for t in target_tracks:

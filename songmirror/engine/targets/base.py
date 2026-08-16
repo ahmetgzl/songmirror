@@ -19,7 +19,7 @@ from ..logs import (
 from ..matching import (
     catalog_name, compute_diff, fuzzy_in, protect_removals, romanized,
     normalize_canonical_id, normalize_isrc, same_catalog_recording,
-    spotify_track_keys, track_key,
+    spotify_track_keys, track_addition_order_key, track_key,
 )
 
 # A provider reading fewer than this fraction of the known baseline is treated
@@ -64,6 +64,10 @@ class MirrorTarget:
         """Current track count from list metadata (no API call), or None. Used
         to catch target-side edits when deciding a snapshot skip."""
         return None
+
+    def hydrate_playlist_counts(self, playlists):
+        """Optionally enrich browse rows whose list API omits cheap counts."""
+        return playlists
 
     def playlist_id(self, playlist):
         """Stable id of a library playlist, for explicit pairing lookups."""
@@ -336,8 +340,9 @@ def _entry_cids(target, tracks, songs, cache, key2isrc, rebindings=None, remembe
     for tid, cid in known.items():
         history.setdefault(tid, set()).add(cid)
     out, learned = [], {}
-    for t in tracks:
+    for playlist_position, t in enumerate(tracks):
         norm = _normalize(t, target.source)
+        norm["_playlist_position"] = playlist_position
         tid = target.track_id(t)
         # The joined credit is the most specific key, so it decides first; the
         # per-artist variants are only a fallback for a peer that credits a
@@ -480,6 +485,38 @@ def _merge(prev, cur, collapsed):
     desired = (union_prev | adds | bootstrap) - removes
     plan = {src: (desired - ids, ids - desired) for src, ids in cur.items()}
     return desired, plan
+
+
+def _addition_order_by_cid(peers, per_entry, prev, cur, collapsed, alias):
+    """Choose deterministic ordering evidence from each track's origin peer.
+
+    Reconcile membership is intentionally set-based, so plan iteration cannot
+    carry playlist order. Prefer entries newly seen on an initialized peer (or
+    every entry on a bootstrap peer); for backlog repair, fall back to any
+    trusted current peer. Date-added wins when present, otherwise peer rank and
+    the entry's source-playlist position preserve a stable order.
+    """
+    source_rank = {peer.source: rank for rank, peer in enumerate(peers)}
+    all_evidence, origin_evidence = {}, {}
+    for peer in peers:
+        source = peer.source
+        if source in collapsed:
+            continue
+        introduced = cur[source] - prev.get(source, set())
+        for raw_cid, norm in per_entry[source]:
+            cid = alias.get(raw_cid, raw_cid)
+            order = track_addition_order_key(
+                norm,
+                source_rank=source_rank[source],
+                playlist_position=norm.get("_playlist_position", 0),
+            )
+            all_evidence.setdefault(cid, []).append(order)
+            if cid in introduced:
+                origin_evidence.setdefault(cid, []).append(order)
+    return {
+        cid: min(origin_evidence.get(cid) or evidence)
+        for cid, evidence in all_evidence.items()
+    }
 
 
 def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, max_adds,
@@ -697,6 +734,8 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
 
     _, unconfirmed_plan = _merge(prev, cur, collapsed)
     desired, plan = _merge(prev, effective_cur, collapsed)
+    addition_order = _addition_order_by_cid(
+        peers, per_entry, prev, cur, collapsed, alias)
     desired_recordings = {}
     for cid in desired:
         norm = repr_.get(cid)
@@ -775,7 +814,20 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
         add_blockers = set()
 
         # ADD: resolve each missing canonical id to this provider's track id.
-        add_items = [(cid, repr_[cid]) for cid in add_ids if cid in repr_]
+        add_items = sorted(
+            ((cid, repr_[cid]) for cid in add_ids if cid in repr_),
+            key=lambda item: (
+                addition_order.get(
+                    item[0],
+                    track_addition_order_key(
+                        item[1],
+                        source_rank=len(peers),
+                        playlist_position=item[1].get("_playlist_position", 0),
+                    ),
+                ),
+                item[0],
+            ),
+        )
         unrepresented = len(add_ids) - len(add_items)
         if unrepresented:
             add_blockers.add("missing source metadata")
@@ -786,7 +838,7 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
         except Exception as e:
             log_warn(f"{p.name} prefetch failed: {e!r}", tag=p.tag)
         additions, not_found = [], []
-        for cid, norm in sorted(add_items, key=lambda item: item[1]["added_at"]):
+        for cid, norm in add_items:
             if should_continue and should_continue() != "run":
                 interrupted = True  # Pause/Stop — defer this provider's remaining adds
                 add_blockers.add("the sync was interrupted")

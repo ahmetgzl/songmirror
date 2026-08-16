@@ -117,7 +117,10 @@ class PlaylistService:
         if target is None:
             return []
         try:
-            playlists = target.browse_playlists()
+            playlists = list(target.browse_playlists())
+            hydrate_counts = getattr(target, "hydrate_playlist_counts", None)
+            if hydrate_counts:
+                playlists = hydrate_counts(playlists) or playlists
         except Exception:
             return []
         rows = [{"id": _pl_id(pl), "name": _pl_name(pl), "count": target.playlist_count(pl),

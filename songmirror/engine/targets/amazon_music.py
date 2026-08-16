@@ -493,11 +493,11 @@ class AmazonMusicTarget(MirrorTarget):
 
     def add(self, playlist, target_ids):
         if getattr(self, "_web", None) is not None:
-            for group in chunks([str(target_id) for target_id in target_ids], 100):
+            for target_id in target_ids:
                 self._graphql(
                     "SongMirrorAmazonAppendTracks",
                     WEB_APPEND_MUTATION,
-                    {"playlistId": str(playlist["id"]), "trackIds": group},
+                    {"playlistId": str(playlist["id"]), "trackIds": [str(target_id)]},
                     mutation=True,
                 )
                 polite_sleep(0.3)

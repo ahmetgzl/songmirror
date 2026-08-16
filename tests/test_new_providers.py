@@ -931,9 +931,31 @@ def test_amazon_web_backend_maps_playlists_tracks_and_mutations():
         "entry-1", "Artist", "Album", "USWEB2600001"
     )
     target.add(playlist, ["asin-1", "asin-2"])
+    append_calls = [variables for operation, variables, _ in target._web.calls
+                    if operation == "SongMirrorAmazonAppendTracks"]
+    assert [call["trackIds"] for call in append_calls] == [["asin-1"], ["asin-2"]]
     target.remove(playlist, track)
-    assert target._web.calls[-2][2] is True
     assert target._web.calls[-1][2] is True
+
+
+def test_deezer_web_adds_tracks_one_at_a_time_in_order(monkeypatch):
+    from songmirror.engine.targets import deezer
+    from songmirror.engine.targets.deezer import DeezerTarget
+
+    calls = []
+    target = DeezerTarget.__new__(DeezerTarget)
+    target._web = type("Web", (), {
+        "add": lambda self, playlist_id, track_ids: calls.append((playlist_id, track_ids)),
+    })()
+    monkeypatch.setattr(deezer, "polite_sleep", lambda _: None)
+
+    target.add({"id": "playlist-1"}, ["12", "34", "56"])
+
+    assert calls == [
+        ("playlist-1", ["12"]),
+        ("playlist-1", ["34"]),
+        ("playlist-1", ["56"]),
+    ]
 
 
 def test_new_provider_create_helpers_accept_non_spotify_shapes():

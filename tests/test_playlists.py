@@ -75,6 +75,28 @@ def test_browse_normalizes_rows(monkeypatch, tmp_path):
     assert rows == [{"id": "1", "name": "Chill", "count": 5, "image": "", "owned": True}]
 
 
+def test_browse_hydrates_counts_before_normalizing_rows(monkeypatch, tmp_path):
+    from songmirror.services.playlists import PlaylistService
+    from songmirror.services.settings import SettingsStore
+
+    class FakeTarget:
+        def browse_playlists(self):
+            return [{"id": "p1", "name": "Mix"}]
+
+        def hydrate_playlist_counts(self, playlists):
+            playlists[0]["items"] = {"total": 42}
+            return playlists
+
+        def playlist_count(self, playlist):
+            return (playlist.get("items") or {}).get("total")
+
+    monkeypatch.setattr("songmirror.services.playlists.build_one", lambda pid, opts, sp=None: FakeTarget())
+
+    rows = PlaylistService(SettingsStore(dir=tmp_path)).browse("apple")
+
+    assert rows[0]["count"] == 42
+
+
 def test_browse_lists_followed_spotify_playlists(monkeypatch, tmp_path):
     # Spotify browse lists followed (non-owned) playlists alongside owned ones, via
     # the un-deduped all_playlists(), and labels each with `owned` so the UI can

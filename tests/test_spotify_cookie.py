@@ -115,6 +115,36 @@ def test_cookie_library_playlists_are_read_in_one_filtered_request(monkeypatch):
     })]
 
 
+def test_cookie_browse_hydrates_track_counts_and_caches_by_revision(monkeypatch):
+    from songmirror.engine import spotify_cookie as sc
+
+    sc._playlist_count_cache.clear()
+    calls = []
+
+    def fake_pf(op, variables):
+        calls.append((op, variables))
+        assert op == "fetchPlaylistContents"
+        return {"playlistV2": {"content": {"items": [{}], "totalCount": 42}}}
+
+    monkeypatch.setattr(sc, "_pf", fake_pf)
+    playlists = [
+        {"id": "p1", "uri": "spotify:playlist:p1", "snapshot_id": "revision-1"},
+    ]
+
+    sc.hydrate_playlist_counts(playlists)
+    assert playlists[0]["items"]["total"] == 42
+    assert calls == [("fetchPlaylistContents", {
+        "uri": "spotify:playlist:p1", "offset": 0, "limit": 1,
+    })]
+
+    sc.hydrate_playlist_counts(playlists)
+    assert len(calls) == 1
+
+    changed = [{"id": "p1", "uri": "spotify:playlist:p1", "snapshot_id": "revision-2"}]
+    sc.hydrate_playlist_counts(changed)
+    assert len(calls) == 2
+
+
 def test_cookie_target_lists_and_searches_without_spotipy(monkeypatch):
     monkeypatch.setenv("SPOTIFY_WRITE_BACKEND", "cookie")
     monkeypatch.setattr(st.spotify_cookie, "library_playlists", lambda: [

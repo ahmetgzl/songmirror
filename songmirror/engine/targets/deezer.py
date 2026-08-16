@@ -16,7 +16,7 @@ from ...oauth import read_token, token_path
 from ..config import REQUEST_TIMEOUT, polite_sleep
 from ..matching import normalize_text, romanized, track_key
 from .base import MirrorTarget, TargetAuthError
-from .provider_utils import best_candidate, chunks, source_playlist_details
+from .provider_utils import best_candidate, source_playlist_details
 
 API = "https://api.deezer.com"
 DEFAULT_TOKEN_FILE = "data/deezer_oauth.json"
@@ -275,8 +275,8 @@ class DeezerTarget(MirrorTarget):
     def add(self, playlist, target_ids):
         if self._web is not None:
             try:
-                for group in chunks([str(target_id) for target_id in target_ids], 100):
-                    self._web.add(str(playlist["id"]), group)
+                for target_id in target_ids:
+                    self._web.add(str(playlist["id"]), [str(target_id)])
                     polite_sleep(0.25)
                 return
             except DeezerWebAuthError as exc:

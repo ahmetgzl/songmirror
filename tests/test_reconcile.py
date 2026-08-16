@@ -437,6 +437,49 @@ def test_reconcile_saves_baseline_when_only_adds_deferred(tmp_path):
     conn.close()
 
 
+def test_reconcile_adds_in_origin_playlist_order_even_if_plan_set_is_scrambled(tmp_path, monkeypatch):
+    """N-way membership is set-based, but writes must follow source position.
+
+    The custom set makes the otherwise hash-seed-dependent failure deterministic:
+    reconcile must not inherit whatever order a plan set happens to expose.
+    """
+    from songmirror.engine.targets import base as base_module
+
+    class ReverseIterationSet(set):
+        def __iter__(self):
+            return iter(sorted(list(set.__iter__(self)), reverse=True))
+
+    real_merge = base_module._merge
+
+    def scrambled_merge(*args, **kwargs):
+        desired, plan = real_merge(*args, **kwargs)
+        return desired, {
+            source: (ReverseIterationSet(add_ids), remove_ids)
+            for source, (add_ids, remove_ids) in plan.items()
+        }
+
+    monkeypatch.setattr(base_module, "_merge", scrambled_merge)
+    conn = archive.connect(str(tmp_path / "ordered.db"))
+    for source in ("spotify", "apple"):
+        archive.set_playlist_state(conn, "mix", source, set())
+    spotify = _P("spotify", ["A", "B", "C"])
+    apple = _P("apple", [])
+
+    reconcile(
+        [spotify, apple],
+        "Mix",
+        {"spotify": {"id": "s"}, "apple": {"id": "a"}},
+        _caches("spotify", "apple"),
+        conn,
+        execute=True,
+        max_removals=0,
+        max_adds=200,
+    )
+
+    assert apple.added == ["A", "B", "C"]
+    conn.close()
+
+
 def test_nonempty_pagination_collapse_never_plans_mass_removal(tmp_path):
     # A truncated provider read is often non-empty (for example 55 -> 5), so the
     # collapse guard must not only protect the zero-track case.

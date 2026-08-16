@@ -81,6 +81,48 @@ def test_transfer_same_provider_copies_by_id_without_resolving():
     assert resolved == []          # resolver never invoked
 
 
+def test_transfer_orders_mixed_timestamp_formats_chronologically():
+    added = []
+
+    class _MixedTimestampSource:
+        source = "spotify"
+
+        def playlist_tracks(self, pl):
+            return [
+                {"id": "new", "name": "Unix Newer", "artists": ["A"],
+                 "duration_ms": 1, "added_at": "1704067200"},
+                {"id": "old", "name": "ISO Older", "artists": ["A"],
+                 "duration_ms": 1, "added_at": "2023-01-01T00:00:00Z"},
+            ]
+
+        def track_id(self, raw):
+            return raw["id"]
+
+    class _Destination:
+        source = "apple"
+
+        def playlist_tracks(self, pl):
+            return []
+
+        def resolve(self, norm, cache):
+            return f"dest-{norm['_raw']['id']}", "search"
+
+        def add(self, pl, ids):
+            added.extend(ids)
+
+    transfer(
+        _MixedTimestampSource(),
+        _Destination(),
+        {"id": "s"},
+        {"id": "d"},
+        {"search": {}, "isrc": {}, "dirty": False},
+        execute=True,
+        max_adds=100,
+    )
+
+    assert added == ["dest-old", "dest-new"]
+
+
 def test_transfer_dry_run_adds_nothing():
     added = []
     res = transfer(_Src(), _dst_factory(added), {"id": "s"}, {"id": "d"},

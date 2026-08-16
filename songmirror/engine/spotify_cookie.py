@@ -23,6 +23,7 @@ session can be revoked or rotated; the connector surfaces when it needs renewing
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
@@ -61,6 +62,7 @@ _provider = None   # cached spotify_scraper CookieTokenProvider (lazy)
 _catalog = None    # cached spotify_scraper SpotifyClient (lazy)
 _uid = None        # cached cookie-account user id (for rootlist filing)
 _isrc_cache = {}   # track_id -> isrc|None, backfilled from /tracks (see _track_isrcs)
+_playlist_count_cache = {}  # playlist_id -> (revision_id, total); libraryV3 omits totals
 
 
 def configured():
@@ -81,6 +83,7 @@ def reset_session():
     _catalog = None
     _uid = None
     _isrc_cache.clear()
+    _playlist_count_cache.clear()
     if old_catalog is not None:
         try:
             old_catalog.close()
@@ -327,6 +330,55 @@ def library_playlists():
         offset += len(rows)
         if offset >= int(total):
             return out
+
+
+def _playlist_track_total(playlist):
+    """One playlist's item total through the signed-in web-player API.
+
+    The libraryV3 projection does not include a count. Its revisionId does
+    change with playlist contents, so it is a safe cache validator for this
+    lightweight limit=1 lookup.
+    """
+    pid = str(playlist.get("id") or "")
+    revision = playlist.get("snapshot_id") or playlist.get("revisionId")
+    hit = _playlist_count_cache.get(pid)
+    if pid and revision is not None and hit and hit[0] == revision:
+        return hit[1]
+    try:
+        data = _pf("fetchPlaylistContents", {
+            "uri": playlist.get("uri") or _puri(pid),
+            "offset": 0,
+            "limit": 1,
+        })
+        raw_total = ((data.get("playlistV2") or {}).get("content") or {}).get("totalCount")
+        if raw_total is None:
+            raise RuntimeError("Spotify playlist count response did not include totalCount")
+        count = int(raw_total)
+    except Exception:
+        return hit[1] if hit else None
+    if pid and revision is not None:
+        _playlist_count_cache[pid] = (revision, count)
+    return count
+
+
+def hydrate_playlist_counts(playlists):
+    """Attach Web-API-shaped ``items.total`` values to libraryV3 rows.
+
+    Counts are browse metadata, not required for sync correctness. Fetch cache
+    misses concurrently so a large library does not turn into a long serial
+    request train; individual failures leave that card's count unknown while
+    preserving the playlist list itself.
+    """
+    rows = list(playlists)
+    if not rows:
+        return rows
+    workers = min(6, len(rows))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        counts = list(pool.map(_playlist_track_total, rows))
+    for playlist, count in zip(rows, counts):
+        if count is not None:
+            playlist["items"] = {"total": count}
+    return rows
 
 
 def _catalog_client():

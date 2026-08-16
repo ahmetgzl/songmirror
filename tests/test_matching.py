@@ -47,6 +47,29 @@ def accepts(*a):
     return score_candidate(*a)[1]
 
 
+def test_compute_diff_orders_mixed_timestamp_formats_chronologically():
+    tracks = [
+        sp("Unix Newer", "Artist", "ISRC2", "1704067200"),
+        sp("ISO Older", "Artist", "ISRC1", "2023-01-01T00:00:00Z"),
+    ]
+
+    to_add, _ = compute_diff(tracks, [], {}, cid_of)
+
+    assert [track["name"] for track in to_add] == ["ISO Older", "Unix Newer"]
+
+
+def test_compute_diff_preserves_playlist_position_without_timestamps():
+    tracks = [
+        sp("First", "Artist", "ISRC1", ""),
+        sp("Second", "Artist", "ISRC2", ""),
+        sp("Third", "Artist", "ISRC3", ""),
+    ]
+
+    to_add, _ = compute_diff(tracks, [], {}, cid_of)
+
+    assert [track["name"] for track in to_add] == ["First", "Second", "Third"]
+
+
 def run():
     assert parse_interval("900") == 900 and parse_interval("15m") == 900 and parse_interval("1h") == 3600
 

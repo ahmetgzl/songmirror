@@ -421,10 +421,11 @@ class YTMusicBrowserTarget(YTMusicTarget):
         return tracks
 
     def add(self, playlist, target_ids):
-        # One youtubei call per batch (the Data API needed one call PER track); ids
-        # stay in order, so append order == date-added order as before.
-        for i in range(0, len(target_ids), 100):
-            self._api.add_playlist_items(playlist["playlistId"], target_ids[i:i + 100], duplicates=True)
+        # YouTube may stamp a whole batch alike and reorder it. Singleton writes
+        # make its append chronology match every other provider's contract.
+        for target_id in target_ids:
+            self._api.add_playlist_items(
+                playlist["playlistId"], [target_id], duplicates=True)
             polite_sleep(1.0)
 
     def remove(self, playlist, track):

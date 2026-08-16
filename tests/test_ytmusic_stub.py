@@ -104,3 +104,22 @@ def test_topic_channel_reads_as_the_plain_artist():
     a, b = t.playlist_tracks({"playlistId": "p1"})
     assert a["artist"] == b["artist"] == "The Cranberries"
     assert a["artists"] == b["artists"] == ["The Cranberries"]
+
+
+def test_browser_adds_tracks_one_at_a_time_in_order(monkeypatch):
+    calls = []
+    target = YTMusicBrowserTarget.__new__(YTMusicBrowserTarget)
+    target._api = type("Api", (), {
+        "add_playlist_items": lambda self, playlist_id, track_ids, duplicates: calls.append(
+            (playlist_id, track_ids, duplicates)
+        ),
+    })()
+    monkeypatch.setattr(ytmusic, "polite_sleep", lambda _: None)
+
+    target.add({"playlistId": "playlist-1"}, ["video-1", "video-2", "video-3"])
+
+    assert calls == [
+        ("playlist-1", ["video-1"], True),
+        ("playlist-1", ["video-2"], True),
+        ("playlist-1", ["video-3"], True),
+    ]
