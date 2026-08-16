@@ -146,8 +146,9 @@ def _now():
 
 
 def connect(path):
-    # check_same_thread=False: the Apple and YT mirrors run on separate threads,
-    # each with its own use of a connection; the timeout rides out any lock.
+    # Connections are opened on the coordinator thread and then assigned
+    # exclusively to one provider worker. check_same_thread=False permits that
+    # handoff; separate connections plus the timeout safely serialize file writes.
     conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
     # Migrate a pre-per-provider playlist_state (no `source` column). It's
     # regenerable snapshot state, so drop it and let the schema recreate it.

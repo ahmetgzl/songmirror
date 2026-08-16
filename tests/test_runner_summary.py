@@ -1,5 +1,7 @@
 """run_pass returns a per-pass summary dict (consumed by the web layer)."""
 
+import threading
+
 import songmirror.engine.runner as runner
 from songmirror.engine.config import Options
 
@@ -80,6 +82,96 @@ def test_non_spotify_oneway_skips_unconfigured_spotify_when_providers_are_auto(m
 
     assert summary["ok"] is True
     assert summary["per_target"] == []
+
+
+def test_oneway_target_workers_have_independent_archive_connections(monkeypatch, tmp_path):
+    """Parallel providers must not operate on one sqlite3.Connection.
+
+    CPython's connection object permits cross-thread use when check_same_thread
+    is disabled, but concurrent commits race its internal transaction state
+    and raise ``InterfaceError: bad parameter or other API misuse``.
+    """
+    from songmirror.engine import archive
+
+    class Source:
+        source, name = "tidal", "TIDAL"
+
+        @staticmethod
+        def list_playlists():
+            return {"drive": {"id": "source-drive", "name": "Drive"}}
+
+        @staticmethod
+        def playlist_name(playlist):
+            return playlist["name"]
+
+        @staticmethod
+        def playlist_id(playlist):
+            return playlist["id"]
+
+        @staticmethod
+        def playlist_tracks(_playlist):
+            return [{"id": "source-track", "name": "Track", "artist": "Artist"}]
+
+        @staticmethod
+        def track_id(track):
+            return track["id"]
+
+    class Target:
+        def __init__(self, source):
+            self.source = self.tag = source
+            self.name = source.title()
+            self.cache_file = str(tmp_path / f"{source}.json")
+
+        @staticmethod
+        def list_playlists():
+            return {"drive": {"id": "target-drive", "name": "Drive"}}
+
+        @staticmethod
+        def playlist_id(playlist):
+            return playlist["id"]
+
+        @staticmethod
+        def playlist_count(_playlist):
+            return 0
+
+        @staticmethod
+        def is_editable(_playlist):
+            return True
+
+    targets = [Target("apple"), Target("qobuz")]
+    start = threading.Barrier(len(targets))
+    connection_ids = set()
+    connection_ids_lock = threading.Lock()
+
+    def archive_race(target, _source_tracks, _source_playlist, _target_playlist,
+                     _cache, songs, **_kwargs):
+        with connection_ids_lock:
+            connection_ids.add(id(songs))
+        tracks = [{"id": f"{target.source}-{i}", "name": f"Track {i}"}
+                  for i in range(10)]
+        start.wait(timeout=5)
+        for _ in range(10):
+            archive.upsert_many(songs, target.source, tracks)
+        return {"clean": True, "added": 0, "removed": 0, "missing": 0,
+                "held": 0, "deferred": 0, "removals_skipped": 0,
+                "held_removals": [], "target_count": 10}
+
+    monkeypatch.setattr(runner, "build_one", lambda *args, **kwargs: Source())
+    monkeypatch.setattr(runner, "build_targets", lambda *args, **kwargs: targets)
+    monkeypatch.setattr(runner, "mirror_pair", archive_race)
+    monkeypatch.setattr(runner, "_load_links", lambda: [])
+    monkeypatch.setattr(runner, "_post_sync", lambda *args, **kwargs: None)
+
+    summary = runner.run_pass(_opts(
+        execute=True,
+        sync_source="tidal",
+        providers="tidal,apple,qobuz",
+        playlists="Drive",
+        song_cache_file=str(tmp_path / "songs.db"),
+    ))
+
+    assert len(connection_ids) == len(targets)
+    assert all(result["failed"] == 0 for result in summary["per_target"])
 
 
 def test_nway_wraps_accumulated_summary(monkeypatch):

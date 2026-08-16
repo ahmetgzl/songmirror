@@ -279,7 +279,6 @@ def run_pass(opts, should_continue=None):
     log(f"  targets: {paint(', '.join(t.name for t in targets), 'cyan')}"
         + (paint(f"   local downloads -> {opts.download_dir}", "grey") if opts.download_dir and opts.execute else ""))
 
-    songs = archive.connect(opts.song_cache_file)
     sp_memo, sp_lock = {}, threading.Lock()
     src_is_spotify = source.source == "spotify"
     # Disk cache of playlist tracks keyed by Spotify's snapshot_id: while a
@@ -322,16 +321,32 @@ def run_pass(opts, should_continue=None):
     links = _load_links()  # explicit pairings override same-name matching (one-way)
     results, errors = {}, []
 
-    def worker(target):
+    def worker(target, songs):
         try:
             results[target.tag] = run_target(target, selected, get_source_tracks, songs, opts, links, source, ctrl)
         except BaseException as e:  # surface after siblings finish
             errors.append((target, e))
 
     started = time.monotonic()
+    # sqlite3.Connection permits cross-thread use when check_same_thread=False,
+    # but it does not permit simultaneous operations from several threads. Give
+    # each provider worker one exclusive connection; SQLite serializes the short
+    # file-level writes while provider network work remains parallel. Open them
+    # here, sequentially, so schema migration also cannot race at startup.
+    target_songs = []
+    try:
+        for target in targets:
+            target_songs.append((target, archive.connect(opts.song_cache_file)))
+    except BaseException:
+        for _, songs in target_songs:
+            songs.close()
+        raise
     # daemon so a Ctrl+C on the main thread can exit the process even while a
     # worker is mid-request; join in short slices so the interrupt is prompt.
-    threads = [threading.Thread(target=worker, args=(t,), name=f"{t.tag}-mirror", daemon=True) for t in targets]
+    threads = [
+        threading.Thread(target=worker, args=(target, songs), name=f"{target.tag}-mirror", daemon=True)
+        for target, songs in target_songs
+    ]
     for t in threads:
         t.start()
     try:
@@ -339,7 +354,8 @@ def run_pass(opts, should_continue=None):
             while t.is_alive():
                 t.join(0.5)
     finally:
-        songs.close()
+        for _, songs in target_songs:
+            songs.close()
         if tracks_state["dirty"]:
             _save_json(tracks_cache_file, tracks_cache)
 
