@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { api, errorMessage } from '../api'
+import { readPersistedResource, writePersistedResource } from '../lib/persistedResource'
 import type { ProviderPlaylist } from '../types'
 
 export interface ProviderPlaylistsEntry {
@@ -9,39 +10,122 @@ export interface ProviderPlaylistsEntry {
   error: string | null
 }
 
-/** Fetches GET /api/playlists?provider=<id> for each given provider id, in
- * parallel, tracking per-provider loading/error state independently — one
- * provider being slow or erroring shouldn't blank out the others.
- *
- * `providerIds` is expected to already be the "browse-worthy" set (callers
- * typically pass connected account ids); pass a stable/memoized array to
- * avoid re-fetching every render — this hook itself only re-runs when the
- * *set* of ids actually changes (compared as a sorted, joined key), not on
- * every new array reference. */
+const playlistMemory = new Map<string, ProviderPlaylist[]>()
+const playlistRequests = new Map<string, Promise<ProviderPlaylist[]>>()
+
+function playlistResource(providerId: string): string {
+  return `playlists:${providerId}`
+}
+
+function isProviderPlaylistArray(value: unknown): value is ProviderPlaylist[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (playlist) =>
+        playlist !== null &&
+        typeof playlist === 'object' &&
+        'id' in playlist &&
+        typeof playlist.id === 'string' &&
+        'name' in playlist &&
+        typeof playlist.name === 'string' &&
+        'count' in playlist &&
+        (playlist.count === null || typeof playlist.count === 'number') &&
+        'image' in playlist &&
+        typeof playlist.image === 'string',
+    )
+  )
+}
+
+function cachedPlaylists(providerId: string): ProviderPlaylist[] | undefined {
+  const inMemory = playlistMemory.get(providerId)
+  if (inMemory) return inMemory
+
+  const persisted = readPersistedResource(playlistResource(providerId), isProviderPlaylistArray)
+  if (persisted) playlistMemory.set(providerId, persisted)
+  return persisted
+}
+
+/** One provider request is shared by every mounted consumer. This matters when
+ * the Playlists page and a picker remount close together, and in React's
+ * development StrictMode where effects intentionally run twice. */
+function fetchProviderPlaylists(providerId: string): Promise<ProviderPlaylist[]> {
+  const existing = playlistRequests.get(providerId)
+  if (existing) return existing
+
+  const request = api
+    .getPlaylists(providerId)
+    .then((playlists) => {
+      if (!isProviderPlaylistArray(playlists)) {
+        throw new Error(`The server returned invalid ${providerId} playlist data.`)
+      }
+      playlistMemory.set(providerId, playlists)
+      writePersistedResource(playlistResource(providerId), playlists)
+      return playlists
+    })
+    .finally(() => playlistRequests.delete(providerId))
+
+  playlistRequests.set(providerId, request)
+  return request
+}
+
+function entriesFromCache(providerIds: string[]): Record<string, ProviderPlaylistsEntry> {
+  return Object.fromEntries(
+    providerIds.map((providerId) => {
+      const cached = cachedPlaylists(providerId)
+      return [
+        providerId,
+        {
+          playlists: cached ?? [],
+          loading: true,
+          error: null,
+        },
+      ]
+    }),
+  )
+}
+
+/** Fetches GET /api/playlists?provider=<id> for each given provider id in
+ * parallel. A versioned per-provider snapshot paints immediately; every
+ * provider then refreshes independently so one slow service cannot blank or
+ * delay the others. */
 export function useProviderPlaylists(providerIds: string[]) {
   const idsKey = providerIds.slice().sort().join(',')
-  const [entries, setEntries] = useState<Record<string, ProviderPlaylistsEntry>>({})
+  const [entries, setEntries] = useState<Record<string, ProviderPlaylistsEntry>>(() =>
+    entriesFromCache(idsKey ? idsKey.split(',') : []),
+  )
+  const generation = useRef(0)
 
   const refresh = useCallback(async () => {
     const ids = idsKey ? idsKey.split(',') : []
+    const thisGeneration = ++generation.current
 
-    setEntries((prev) => {
-      const next: Record<string, ProviderPlaylistsEntry> = {}
-      for (const id of ids) {
-        next[id] = { playlists: prev[id]?.playlists ?? [], loading: true, error: null }
-      }
-      return next
-    })
+    setEntries((previous) =>
+      Object.fromEntries(
+        ids.map((providerId) => {
+          const cached = cachedPlaylists(providerId) ?? previous[providerId]?.playlists ?? []
+          return [providerId, { playlists: cached, loading: true, error: null }]
+        }),
+      ),
+    )
 
     await Promise.all(
-      ids.map(async (id) => {
+      ids.map(async (providerId) => {
         try {
-          const playlists = await api.getPlaylists(id)
-          setEntries((prev) => ({ ...prev, [id]: { playlists, loading: false, error: null } }))
+          const playlists = await fetchProviderPlaylists(providerId)
+          if (generation.current !== thisGeneration) return
+          setEntries((previous) => ({
+            ...previous,
+            [providerId]: { playlists, loading: false, error: null },
+          }))
         } catch (err) {
-          setEntries((prev) => ({
-            ...prev,
-            [id]: { playlists: prev[id]?.playlists ?? [], loading: false, error: errorMessage(err) },
+          if (generation.current !== thisGeneration) return
+          setEntries((previous) => ({
+            ...previous,
+            [providerId]: {
+              playlists: previous[providerId]?.playlists ?? cachedPlaylists(providerId) ?? [],
+              loading: false,
+              error: errorMessage(err),
+            },
           }))
         }
       }),
@@ -50,6 +134,9 @@ export function useProviderPlaylists(providerIds: string[]) {
 
   useEffect(() => {
     void refresh()
+    return () => {
+      generation.current += 1
+    }
   }, [refresh])
 
   return { entries, refresh }

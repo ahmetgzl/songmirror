@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { LuArrowRight } from 'react-icons/lu'
 
@@ -26,15 +26,37 @@ const DEFAULTS: SettingsMap = {
   LOCAL_MIRROR_FORMAT: '',
 }
 
+function sameSettings(left: SettingsMap, right: SettingsMap): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)])
+  return [...keys].every((key) => left[key] === right[key])
+}
+
+function settingsForm(settings: SettingsMap): SettingsMap {
+  return { ...DEFAULTS, ...settings }
+}
+
 export default function Settings() {
   const { settings, loading, error, refresh } = useSettings()
-  const [form, setForm] = useState<SettingsMap | null>(null)
+  const initialServerForm = settings ? settingsForm(settings) : null
+  const [form, setForm] = useState<SettingsMap | null>(() => initialServerForm)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [justSaved, setJustSaved] = useState(false)
+  const previousServerForm = useRef<SettingsMap | null>(initialServerForm)
 
   useEffect(() => {
-    if (settings) setForm({ ...DEFAULTS, ...settings })
+    if (!settings) return
+    const nextServerForm = settingsForm(settings)
+    const previous = previousServerForm.current
+    previousServerForm.current = nextServerForm
+
+    setForm((currentForm) => {
+      // Hydrate an empty form, and keep an untouched form in step with a
+      // background refresh. Once the user has edited anything, their local
+      // draft wins until they explicitly save or discard it.
+      if (!currentForm || !previous || sameSettings(currentForm, previous)) return nextServerForm
+      return currentForm
+    })
   }, [settings])
 
   function setField(key: string, value: string) {
@@ -47,7 +69,7 @@ export default function Settings() {
     setSaveError(null)
   }
 
-  const dirty = Boolean(form && settings && JSON.stringify({ ...DEFAULTS, ...settings }) !== JSON.stringify(form))
+  const dirty = Boolean(form && settings && !sameSettings(settingsForm(settings), form))
 
   async function save() {
     if (!form) return

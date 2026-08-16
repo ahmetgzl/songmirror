@@ -1,31 +1,31 @@
-import { useCallback, useEffect, useState } from 'react'
-
-import { api, errorMessage } from '../api'
+import { api } from '../api'
+import { usePersistedResource } from '../lib/persistedResource'
 import type { SyncJob } from '../types'
 
+function isSyncJobArray(value: unknown): value is SyncJob[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (job) =>
+        job !== null &&
+        typeof job === 'object' &&
+        typeof job.id === 'string' &&
+        typeof job.name === 'string' &&
+        typeof job.enabled === 'boolean' &&
+        (job.mode === 'oneway' || job.mode === 'nway'),
+    )
+  )
+}
+
 /** The list of named sync jobs (GET /api/syncs) — the Sync page's primary
- * data source. Mirrors useAccounts/useSettings' own shape for consistency. */
+ * data source. A persisted snapshot keeps route changes instant while the
+ * local backend copy is revalidated in the background. */
 export function useSyncs() {
-  const [syncs, setSyncs] = useState<SyncJob[] | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { data: syncs, loading, refreshing, error, refresh } = usePersistedResource(
+    'syncs',
+    api.getSyncs,
+    isSyncJobArray,
+  )
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
-    try {
-      const data = await api.getSyncs()
-      setSyncs(data)
-      setError(null)
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void refresh()
-  }, [refresh])
-
-  return { syncs, loading, error, refresh }
+  return { syncs, loading, refreshing, error, refresh }
 }

@@ -1,39 +1,29 @@
-import { useCallback, useEffect, useState } from 'react'
-
-import { api, errorMessage } from '../api'
+import { api } from '../api'
+import { usePersistedResource } from '../lib/persistedResource'
 import type { Account } from '../types'
 
+function isAccountArray(value: unknown): value is Account[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (account) =>
+        account !== null &&
+        typeof account === 'object' &&
+        typeof account.id === 'string' &&
+        typeof account.name === 'string' &&
+        typeof account.state === 'string' &&
+        Array.isArray(account.fields) &&
+        typeof account.transferable === 'boolean',
+    )
+  )
+}
+
 export function useAccounts() {
-  const [accounts, setAccounts] = useState<Account[] | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { data: accounts, loading, refreshing, error, refresh } = usePersistedResource(
+    'accounts',
+    api.getAccounts,
+    isAccountArray,
+  )
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
-    try {
-      const data = await api.getAccounts()
-      setAccounts(data)
-      setError(null)
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void refresh()
-  }, [refresh])
-
-  // Re-check state when the tab regains focus — covers a user returning from
-  // a full-page OAuth redirect (Spotify) that navigated away and back.
-  useEffect(() => {
-    function onVisible() {
-      if (document.visibilityState === 'visible') void refresh()
-    }
-    document.addEventListener('visibilitychange', onVisible)
-    return () => document.removeEventListener('visibilitychange', onVisible)
-  }, [refresh])
-
-  return { accounts, loading, error, refresh }
+  return { accounts, loading, refreshing, error, refresh }
 }

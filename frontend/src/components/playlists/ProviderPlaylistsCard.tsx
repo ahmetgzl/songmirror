@@ -40,6 +40,12 @@ export function ProviderPlaylistsCard({ account, entry }: { account: Account; en
         <StatusPill state={account.state} />
       </div>
 
+      {entry?.error && entry.playlists.length > 0 && (
+        <p className="rounded-control bg-warning-soft px-3 py-2 text-xs text-text-2">
+          Showing the saved list. Refresh failed: {entry.error}
+        </p>
+      )}
+
       {!connected ? (
         <EmptyState
           className="py-6"
@@ -59,7 +65,7 @@ export function ProviderPlaylistsCard({ account, entry }: { account: Account; en
             <Skeleton className="h-9 w-full" />
           </div>
         </LoadingStatus>
-      ) : entry.error ? (
+      ) : entry.error && entry.playlists.length === 0 ? (
         <p className="text-sm text-danger">Could not load playlists: {entry.error}</p>
       ) : entry.playlists.length > 0 ? (
         <ul className="thin-scrollbar flex max-h-80 flex-col divide-y divide-border overflow-y-auto">

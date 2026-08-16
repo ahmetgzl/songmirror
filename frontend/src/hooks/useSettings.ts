@@ -1,29 +1,22 @@
-import { useCallback, useEffect, useState } from 'react'
-
-import { api, errorMessage } from '../api'
+import { api } from '../api'
+import { usePersistedResource } from '../lib/persistedResource'
 import type { Settings } from '../types'
 
+function isSettings(value: unknown): value is Settings {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.values(value).every((setting) => typeof setting === 'string')
+  )
+}
+
 export function useSettings() {
-  const [settings, setSettings] = useState<Settings | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { data: settings, loading, refreshing, error, refresh } = usePersistedResource(
+    'settings',
+    api.getSettings,
+    isSettings,
+  )
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
-    try {
-      const data = await api.getSettings()
-      setSettings(data)
-      setError(null)
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void refresh()
-  }, [refresh])
-
-  return { settings, loading, error, refresh }
+  return { settings, loading, refreshing, error, refresh }
 }

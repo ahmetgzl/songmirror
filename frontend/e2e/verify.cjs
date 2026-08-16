@@ -320,7 +320,16 @@ const SHOWCASE_TRANSFER_JOB = {
 async function installMocks(page, opts = {}) {
   // Fresh per installation (one per test context/page) so CRUD mutations in
   // one test never leak into another.
-  let syncsData = initialSyncs()
+  let syncsData = opts.syncs ?? initialSyncs()
+  const accountsData = opts.accounts ?? ACCOUNTS
+  const settingsData = opts.settings ?? SETTINGS
+  const playlistsData = opts.playlists ?? PLAYLISTS
+  const delays = opts.delays ?? {}
+
+  async function delay(resource) {
+    const ms = delays[resource] ?? 0
+    if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms))
+  }
   // Active-only (queued/running/paused), matching the real /api/transfers
   // list contract - empty by default so the dashboard's "Ongoing transfers"
   // card stays hidden for every test that doesn't explicitly seed one.
@@ -341,7 +350,10 @@ async function installMocks(page, opts = {}) {
     const method = req.method()
     const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
 
-    if (p === '/api/accounts' && method === 'GET') return json(ACCOUNTS)
+    if (p === '/api/accounts' && method === 'GET') {
+      await delay('accounts')
+      return json(accountsData)
+    }
     if (/^\/api\/accounts\/[^/]+\/config$/.test(p) && method === 'POST') return json({ ok: true })
     if (/^\/api\/accounts\/[^/]+\/connect$/.test(p) && method === 'POST') {
       const id = p.split('/')[3]
@@ -353,7 +365,10 @@ async function installMocks(page, opts = {}) {
     if (/^\/api\/accounts\/[^/]+\/poll$/.test(p) && method === 'POST') return json({ state: 'expired', detail: null })
     if (/^\/api\/accounts\/[^/]+$/.test(p) && method === 'DELETE') return json({ ok: true })
 
-    if (p === '/api/settings' && method === 'GET') return json(SETTINGS)
+    if (p === '/api/settings' && method === 'GET') {
+      await delay('settings')
+      return json(settingsData)
+    }
     if (p === '/api/settings' && method === 'PUT') return json({ ok: true })
 
     if (p === '/api/sync/status' && method === 'GET') return json(syncStatusFixture(syncsData))
@@ -363,7 +378,10 @@ async function installMocks(page, opts = {}) {
     // Named sync jobs — a small in-memory CRUD store so create/edit/toggle/
     // delete round-trip through an actual list refresh, not just canned
     // responses.
-    if (p === '/api/syncs' && method === 'GET') return json(syncsData)
+    if (p === '/api/syncs' && method === 'GET') {
+      await delay('syncs')
+      return json(syncsData)
+    }
     if (p === '/api/syncs' && method === 'POST') {
       const body = req.postDataJSON() ?? {}
       const newJob = {
@@ -400,7 +418,8 @@ async function installMocks(page, opts = {}) {
 
     if (p === '/api/playlists' && method === 'GET') {
       const provider = url.searchParams.get('provider')
-      return json(PLAYLISTS[provider] ?? [])
+      await delay('playlists')
+      return json(playlistsData[provider] ?? [])
     }
 
     if (p === '/api/links' && method === 'GET') return json(LINKS)
@@ -3234,6 +3253,155 @@ async function main() {
       console.log(`${clearedOk ? 'ok        ' : 'FAIL      '} malformed persisted feed JSON is cleared after a failed parse (got ${JSON.stringify(clearedAfterLoad)})`)
       if (!clearedOk) results.push({ label: 'live feed malformed json cleanup', overflow: true })
       await checkOverflow(page, 'Dashboard with malformed persisted feed @ 1280', results)
+      await context.close()
+    }
+
+    // -----------------------------------------------------------------
+    // Persisted resource snapshots: accounts, provider playlists, named
+    // syncs, and settings render before their deliberately-slow fresh
+    // responses arrive. Every resource still revalidates in the background,
+    // and a settings refresh must not overwrite an edit made in the meantime.
+    // -----------------------------------------------------------------
+    {
+      const context = await browser.newContext()
+      const cachedAccounts = ACCOUNTS.map((account) =>
+        account.id === 'spotify' ? { ...account, name: 'Cached Spotify' } : account,
+      )
+      const cachedSyncs = initialSyncs().map((job, index) =>
+        index === 0 ? { ...job, name: 'Cached Sync' } : job,
+      )
+      const cachedSettings = { ...SETTINGS, DISPLAY_NAME: 'Cached Maya' }
+      const cachedSpotifyPlaylists = [
+        { id: 'cached_spotify_1', name: 'Cached Road Mix', count: 77, image: '' },
+      ]
+
+      await context.addInitScript(
+        ({ accounts, syncs, settings, playlists }) => {
+          const save = (key, data) => {
+            window.localStorage.setItem(
+              key,
+              JSON.stringify({ version: 1, savedAt: Date.now(), data }),
+            )
+          }
+          window.localStorage.setItem('songmirror-theme', 'light')
+          save('songmirror-cache-v1:accounts', accounts)
+          save('songmirror-cache-v1:syncs', syncs)
+          save('songmirror-cache-v1:settings', settings)
+          save('songmirror-cache-v1:playlists:spotify', playlists)
+        },
+        {
+          accounts: cachedAccounts,
+          syncs: cachedSyncs,
+          settings: cachedSettings,
+          playlists: cachedSpotifyPlaylists,
+        },
+      )
+
+      const page = await context.newPage()
+      await installMocks(page, {
+        delays: { accounts: 1500, playlists: 1500, syncs: 1500, settings: 1500 },
+      })
+      await page.setViewportSize({ width: 1280, height: 900 })
+
+      async function visibleBeforeRefresh(locator, label) {
+        const visible = await locator
+          .waitFor({ state: 'visible', timeout: 750 })
+          .then(() => true)
+          .catch(() => false)
+        console.log(`${visible ? 'ok        ' : 'FAIL      '} ${label}`)
+        if (!visible) results.push({ label, overflow: true })
+      }
+
+      await page.goto(BASE_URL + '/accounts', { waitUntil: 'domcontentloaded' })
+      await visibleBeforeRefresh(
+        page.getByRole('heading', { name: 'Cached Spotify', exact: true }),
+        'accounts render their persisted snapshot before revalidation',
+      )
+      const accountsRefreshed = await page
+        .getByRole('heading', { name: 'Spotify', exact: true })
+        .waitFor({ state: 'visible', timeout: 5000 })
+        .then(() => true)
+        .catch(() => false)
+      console.log(`${accountsRefreshed ? 'ok        ' : 'FAIL      '} accounts refresh after rendering their snapshot`)
+      if (!accountsRefreshed) results.push({ label: 'accounts background refresh', overflow: true })
+
+      await page.goto(BASE_URL + '/playlists', { waitUntil: 'domcontentloaded' })
+      await visibleBeforeRefresh(
+        page.getByText('Cached Road Mix', { exact: true }),
+        'provider playlists render their persisted snapshot before revalidation',
+      )
+      const playlistsRefreshed = await page
+        .getByText('Road Trip 2025', { exact: true })
+        .first()
+        .waitFor({ state: 'visible', timeout: 5000 })
+        .then(() => true)
+        .catch(() => false)
+      console.log(`${playlistsRefreshed ? 'ok        ' : 'FAIL      '} provider playlists refresh after rendering their snapshot`)
+      if (!playlistsRefreshed) results.push({ label: 'provider playlists background refresh', overflow: true })
+
+      await page.route('**/api/playlists**', async (route) => {
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'provider temporarily unavailable' }),
+        })
+      })
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      const stalePlaylistsSurvive = await page
+        .getByText('Road Trip 2025', { exact: true })
+        .first()
+        .waitFor({ state: 'visible', timeout: 750 })
+        .then(() => true)
+        .catch(() => false)
+      const staleWarning = await page
+        .getByText(/Showing the saved list\. Refresh failed:/)
+        .first()
+        .waitFor({ state: 'visible', timeout: 2000 })
+        .then(() => true)
+        .catch(() => false)
+      const failedRefreshKeepsSnapshot = stalePlaylistsSurvive && staleWarning
+      console.log(`${failedRefreshKeepsSnapshot ? 'ok        ' : 'FAIL      '} a failed playlist refresh keeps the saved list visible`)
+      if (!failedRefreshKeepsSnapshot) results.push({ label: 'failed playlist refresh keeps snapshot', overflow: true })
+      await page.unroute('**/api/playlists**')
+
+      await page.goto(BASE_URL + '/sync', { waitUntil: 'domcontentloaded' })
+      await visibleBeforeRefresh(
+        page.getByRole('heading', { name: 'Cached Sync', exact: true }),
+        'sync jobs render their persisted snapshot before revalidation',
+      )
+      const syncsRefreshed = await page
+        .getByRole('heading', { name: 'Default', exact: true })
+        .waitFor({ state: 'visible', timeout: 5000 })
+        .then(() => true)
+        .catch(() => false)
+      console.log(`${syncsRefreshed ? 'ok        ' : 'FAIL      '} sync jobs refresh after rendering their snapshot`)
+      if (!syncsRefreshed) results.push({ label: 'sync jobs background refresh', overflow: true })
+
+      await page.goto(BASE_URL + '/settings', { waitUntil: 'domcontentloaded' })
+      const displayName = page.getByLabel('Display name')
+      await visibleBeforeRefresh(displayName, 'settings render their persisted snapshot before revalidation')
+      const cachedValue = await displayName.inputValue().catch(() => '')
+      const settingsHydrated = cachedValue === 'Cached Maya'
+      console.log(`${settingsHydrated ? 'ok        ' : 'FAIL      '} settings form uses the persisted value immediately`)
+      if (!settingsHydrated) results.push({ label: 'settings persisted value', overflow: true })
+
+      if (await displayName.isVisible().catch(() => false)) await displayName.fill('Unsaved local edit')
+      await page.waitForTimeout(1800)
+      const editSurvived = (await displayName.inputValue().catch(() => '')) === 'Unsaved local edit'
+      console.log(`${editSurvived ? 'ok        ' : 'FAIL      '} settings revalidation preserves an in-progress local edit`)
+      if (!editSurvived) results.push({ label: 'settings background refresh preserves edits', overflow: true })
+
+      const settingsCacheRefreshed = await page.evaluate(() => {
+        try {
+          const raw = window.localStorage.getItem('songmirror-cache-v1:settings')
+          if (!raw) return false
+          return JSON.parse(raw).data?.DISPLAY_NAME === 'Maya'
+        } catch {
+          return false
+        }
+      })
+      console.log(`${settingsCacheRefreshed ? 'ok        ' : 'FAIL      '} fresh settings replace the persisted snapshot in the background`)
+      if (!settingsCacheRefreshed) results.push({ label: 'settings persisted snapshot refresh', overflow: true })
       await context.close()
     }
 
