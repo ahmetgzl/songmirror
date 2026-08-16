@@ -1,10 +1,12 @@
 """Account wizard endpoints — connect/inspect each service uniformly."""
 
 import html
+import os
 import re
 from dataclasses import asdict
+from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import APIRouter, Body, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from ...engine.targets import is_peer
@@ -19,10 +21,46 @@ def _conn(request: Request, cid: str):
 
 
 def _redirect_uri(request: Request, cid: str) -> str:
-    base = str(request.base_url).rstrip("/")
+    configured = (
+        request.app.state.settings.get("SONGMIRROR_PUBLIC_URL")
+        or os.getenv("SONGMIRROR_PUBLIC_URL")
+        or ""
+    )
+    base = str(configured).strip() or str(request.base_url)
+
+    if configured:
+        parts = urlsplit(base)
+        try:
+            parts.port  # validate malformed/non-numeric ports too
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"invalid SONGMIRROR_PUBLIC_URL ({exc})",
+            ) from exc
+        if (
+            parts.scheme.lower() not in {"http", "https"}
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+            or parts.query
+            or parts.fragment
+        ):
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "SONGMIRROR_PUBLIC_URL must be an absolute http(s) URL "
+                    "without credentials, a query, or a fragment"
+                ),
+            )
+        # Preserve an optional reverse-proxy base path while canonicalizing the
+        # scheme and removing the trailing slash before appending our route.
+        base = urlunsplit((parts.scheme.lower(), parts.netloc, parts.path.rstrip("/"), "", ""))
+
+    base = base.rstrip("/")
     # Spotify (and increasingly others) reject `localhost` for http loopback
     # OAuth redirects — the explicit 127.0.0.1 loopback IP is required over http.
-    # Force it here so the redirect works no matter how the app is opened.
+    # Force it for the request-derived fallback. A configured public URL is still
+    # normalized too, which catches an accidentally configured localhost alias.
     base = re.sub(r"://localhost(?=[:/]|$)", "://127.0.0.1", base, count=1)
     return base + f"/oauth/{cid}/callback"
 
@@ -37,7 +75,9 @@ def list_accounts(request: Request):
         fields = []
         for f in c.config_fields:
             d = asdict(f)
-            cur = store.get(f.key) or ""
+            cur = store.get(f.key)
+            if cur in (None, ""):
+                cur = os.getenv(f.key) or ""
             # Pre-fill on reconnect, but NEVER echo a secret back to the browser —
             # send its value only when it's non-secret; a `configured` flag lets the
             # wizard show "saved — leave blank to keep" for a stored secret instead.

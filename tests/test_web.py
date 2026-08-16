@@ -135,6 +135,76 @@ def test_oauth_callback_handles_provider_error(tmp_path):
         assert "server_error" in r.text and "Spotify" in r.text
 
 
+def test_oauth_redirect_uses_configured_public_url(tmp_path, monkeypatch):
+    """A remotely hosted Docker app must advertise its browser-reachable URL,
+    not the container/request URL that happened to reach FastAPI."""
+    from songmirror.services.accounts.spotify import SpotifyConnector
+
+    seen = []
+    monkeypatch.setenv("SPOTIFY_AUTH_MODE", "oauth")
+    monkeypatch.setattr(
+        SpotifyConnector,
+        "begin_redirect",
+        lambda _self, uri: (seen.append(uri), "https://accounts.spotify.test/authorize")[1],
+    )
+    monkeypatch.setenv("SONGMIRROR_PUBLIC_URL", "https://music.example.test/songmirror/")
+
+    with TestClient(_app(tmp_path)) as client:
+        result = client.post(
+            "/api/accounts/spotify/connect",
+            headers={"host": "127.0.0.1:8080"},
+        ).json()
+
+    expected = "https://music.example.test/songmirror/oauth/spotify/callback"
+    assert seen == [expected]
+    assert result["redirect_uri"] == expected
+
+
+def test_spotify_oauth_mode_exposes_masked_env_credentials(tmp_path, monkeypatch):
+    monkeypatch.setenv("SPOTIFY_AUTH_MODE", "oauth")
+    monkeypatch.setenv("SPOTIFY_CLIENT_ID", "env-client")
+    monkeypatch.setenv("SPOTIFY_CLIENT_SECRET", "env-secret")
+
+    with TestClient(_app(tmp_path)) as client:
+        spotify = next(a for a in client.get("/api/accounts").json() if a["id"] == "spotify")
+
+    assert spotify["auth_kind"] == "oauth_redirect"
+    fields = {field["key"]: field for field in spotify["fields"]}
+    assert fields["SPOTIFY_CLIENT_ID"]["value"] == "env-client"
+    assert fields["SPOTIFY_CLIENT_ID"]["configured"] is True
+    assert fields["SPOTIFY_CLIENT_SECRET"]["value"] == ""
+    assert fields["SPOTIFY_CLIENT_SECRET"]["configured"] is True
+
+
+def test_oauth_redirect_rejects_invalid_public_url(tmp_path, monkeypatch):
+    from songmirror.services.accounts.spotify import SpotifyConnector
+
+    monkeypatch.setenv("SPOTIFY_AUTH_MODE", "oauth")
+    monkeypatch.setenv("SONGMIRROR_PUBLIC_URL", "music.example.test?from=compose")
+
+    with TestClient(_app(tmp_path), raise_server_exceptions=False) as client:
+        result = client.post("/api/accounts/spotify/connect")
+
+    assert result.status_code == 500
+    assert "SONGMIRROR_PUBLIC_URL" in result.json()["detail"]
+
+
+def test_oauth_redirect_keeps_safe_loopback_fallback(tmp_path, monkeypatch):
+    from songmirror.services.accounts.spotify import SpotifyConnector
+
+    monkeypatch.delenv("SONGMIRROR_PUBLIC_URL", raising=False)
+    monkeypatch.setenv("SPOTIFY_AUTH_MODE", "oauth")
+    monkeypatch.setattr(SpotifyConnector, "begin_redirect", lambda _self, _uri: "https://example.test")
+
+    with TestClient(_app(tmp_path)) as client:
+        result = client.post(
+            "/api/accounts/spotify/connect",
+            headers={"host": "localhost:8888"},
+        ).json()
+
+    assert result["redirect_uri"] == "http://127.0.0.1:8888/oauth/spotify/callback"
+
+
 def test_sync_run_queues(tmp_path, monkeypatch):
     import songmirror.services.sync_service as m
 

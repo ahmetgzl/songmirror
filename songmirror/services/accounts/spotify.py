@@ -10,10 +10,31 @@ class SpotifyConnector(Connector):
     id = "spotify"
     name = "Spotify"
     auth_kind = "token_paste"
-    config_fields = [
+    _cookie_fields = [
         Field("SPOTIFY_SP_DC", "sp_dc cookie", secret=True,
               help="From open.spotify.com → browser dev tools → Application/Storage → Cookies"),
     ]
+    _oauth_fields = [
+        Field("SPOTIFY_CLIENT_ID", "Client ID"),
+        Field("SPOTIFY_CLIENT_SECRET", "Client secret", secret=True),
+    ]
+    # The class-level union lets settings.py discover every Spotify secret.
+    # Each connector instance narrows this to the fields for its selected flow.
+    config_fields = _cookie_fields + _oauth_fields
+
+    def __init__(self, store):
+        super().__init__(store)
+        self._select_auth_flow()
+
+    def _select_auth_flow(self):
+        selected = str(self._value("SPOTIFY_AUTH_MODE") or "").strip().lower()
+        oauth = selected == "oauth"
+        self.auth_kind = "oauth_redirect" if oauth else "token_paste"
+        self.config_fields = list(self._oauth_fields if oauth else self._cookie_fields)
+
+    def _value(self, key):
+        value = self._store.get(key)
+        return value if value not in (None, "") else os.getenv(key)
 
     def _token_cache(self):
         # os.getenv first so Docker's SPOTIFY_TOKEN_CACHE=/data/... (the persistent
@@ -34,8 +55,8 @@ class SpotifyConnector(Connector):
         # and — because engine and connector request the identical scope — spotipy's
         # per-refresh scope rewrite can never narrow the cached token.
         return SpotifyOAuth(
-            client_id=self._store.get("SPOTIFY_CLIENT_ID"),
-            client_secret=self._store.get("SPOTIFY_CLIENT_SECRET"),
+            client_id=self._value("SPOTIFY_CLIENT_ID"),
+            client_secret=self._value("SPOTIFY_CLIENT_SECRET"),
             redirect_uri=redirect_uri,
             scope=SPOTIFY_SCOPE,
             cache_path=cache,
@@ -43,20 +64,28 @@ class SpotifyConnector(Connector):
         )
 
     def _cookie_on(self):
-        backend = self._store.get("SPOTIFY_WRITE_BACKEND") or os.getenv("SPOTIFY_WRITE_BACKEND") or "oauth"
+        backend = self._value("SPOTIFY_WRITE_BACKEND") or "oauth"
         return str(backend).strip().lower() == "cookie"
 
     def _isrc_app_on(self):
-        return bool(self._store.get("SPOTIFY_ISRC_CLIENTS") or os.getenv("SPOTIFY_ISRC_CLIENTS"))
+        return bool(self._value("SPOTIFY_ISRC_CLIENTS"))
 
     def status(self) -> ConnStatus:
         from ...engine import spotify, spotify_cookie
 
-        if self._cookie_on() and spotify_cookie.configured():
-            return ConnStatus("connected", "signed-in web session · no developer API")
+        # Settings can be saved through this connector instance immediately
+        # before status() is called (for example when switching backends).
+        self._select_auth_flow()
+        if self.auth_kind == "token_paste":
+            if self._cookie_on() and spotify_cookie.configured():
+                return ConnStatus("connected", "signed-in web session · no developer API")
+            # Preserve the status of pre-existing wizard-managed OAuth grants,
+            # while keeping env-only credentials opt-in via SPOTIFY_AUTH_MODE.
+            if not all(self._store.get(k) for k in ("SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET")):
+                return ConnStatus("unconfigured")
 
-        if not self._configured("SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"):
-            return ConnStatus("unconfigured")
+        elif not all(self._value(k) for k in ("SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET")):
+            return ConnStatus("unconfigured", "legacy OAuth needs a client ID and secret")
         note = ((" · cookie writes" if self._cookie_on() else "")
                 + (" · ISRC app" if self._isrc_app_on() else ""))
         if not os.path.exists(self._token_cache()):
@@ -162,7 +191,10 @@ class SpotifyConnector(Connector):
                 pass
 
     def begin_redirect(self, redirect_uri: str) -> str:
-        self._store.save({"SPOTIFY_REDIRECT_URI": redirect_uri})
+        self._store.save({
+            "SPOTIFY_WRITE_BACKEND": "oauth",
+            "SPOTIFY_REDIRECT_URI": redirect_uri,
+        })
         return self._oauth(redirect_uri).get_authorize_url()
 
     def complete_redirect(self, params: dict) -> ConnStatus:
