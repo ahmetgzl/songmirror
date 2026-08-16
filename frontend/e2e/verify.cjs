@@ -2799,6 +2799,7 @@ async function main() {
           { ts: 1700000005, kind: 'hold', tag: 'qobuz', message: 'Protected 4 changes pending deletion confirmation', data: { count: 4, classification: 'unconfirmed_absence', playlist: 'Road Trip 2025', provider: 'qobuz' } },
           { ts: 1700000006, kind: 'repair', tag: 'spotify', message: 'Repaired 2 stable Spotify track identities', data: { count: 2, classification: 'identity_migration', playlist: 'Road Trip 2025', provider: 'spotify' } },
           { ts: 1700000007, kind: 'miss', tag: 'qobuz', message: 'not on Qobuz: Catalog Ghost - Signal' },
+          { ts: 1700000008, kind: 'download', tag: 'jelly', message: 'cover set: Test Playlist' },
         ]
         await route.fulfill({
           status: 200,
@@ -2809,7 +2810,7 @@ async function main() {
       await page.setViewportSize({ width: 1280, height: 900 })
       await page.goto(BASE_URL + '/', { waitUntil: 'networkidle' })
       await page.waitForSelector('h2:has-text("Your services")')
-      await page.waitForSelector('text=not on Qobuz: Catalog Ghost - Signal') // last live-feed line has landed
+      await page.waitForSelector('text=cover set: Test Playlist') // last live-feed line has landed
 
       // "Your services": every row (all known ids) shows a real brand
       // mark, not the old plain dot. Scoped to the <li> rows specifically
@@ -2875,6 +2876,28 @@ async function main() {
       console.log(`${tooltipOk ? 'ok        ' : 'FAIL      '} held counter tooltip explains per-service totals and evidence reason`)
       if (!tooltipOk) results.push({ label: 'live feed counter evidence tooltip', overflow: true })
 
+      // These controls must render their menus inside the app. A native <select>
+      // hands the popup to Windows/macOS, producing a visually unrelated grey
+      // menu that cannot inherit SongMirror's tokens (the reported regression).
+      const activityFilterTriggers = page.locator('[data-activity-filter-trigger]')
+      const activityFilterTags = await activityFilterTriggers.evaluateAll((nodes) => nodes.map((node) => node.tagName))
+      const customFilterMenusOk = activityFilterTags.length === 3
+        && activityFilterTags.every((tag) => tag === 'BUTTON')
+        && await activityFilterTriggers.evaluateAll((nodes) => nodes.every((node) => node.getAttribute('aria-haspopup') === 'listbox'))
+      console.log(`${customFilterMenusOk ? 'ok        ' : 'FAIL      '} activity filters use themed in-app listboxes, never native select popups (tags=${activityFilterTags.join(',') || 'none'})`)
+      if (!customFilterMenusOk) results.push({ label: 'live feed native select popup', overflow: true })
+
+      const sourceTrigger = page.getByRole('button', { name: 'Filter by source', exact: true })
+      await sourceTrigger.click()
+      const sourceListbox = page.getByRole('listbox', { name: 'Filter by source', exact: true })
+      const sourceLabels = await sourceListbox.getByRole('option').allInnerTexts()
+      const sourceLabelsOk = ['All sources', 'Jellyfin', 'Local library', 'Qobuz', 'SongMirror', 'Spotify']
+        .every((label) => sourceLabels.includes(label))
+        && !sourceLabels.includes('jelly')
+        && !sourceLabels.includes('Sync')
+      console.log(`${sourceLabelsOk ? 'ok        ' : 'FAIL      '} activity source labels use product names instead of raw engine tags (${sourceLabels.join(' | ')})`)
+      if (!sourceLabelsOk) results.push({ label: 'live feed source labels', overflow: true })
+
       const feed = page.getByRole('log', { name: 'Live sync activity' })
       async function waitForFeedRows(count, firstText = null) {
         await page.waitForFunction(
@@ -2885,12 +2908,19 @@ async function main() {
           { count, firstText },
         )
       }
-      await page.getByLabel('Filter by service').selectOption('qobuz')
+      async function chooseActivityFilter(ariaLabel, optionLabel) {
+        await page.getByRole('button', { name: ariaLabel, exact: true }).click()
+        await page
+          .getByRole('listbox', { name: ariaLabel, exact: true })
+          .getByRole('option', { name: optionLabel, exact: true })
+          .click()
+      }
+      await sourceListbox.getByRole('option', { name: 'Qobuz', exact: true }).click()
       await waitForFeedRows(2)
       const qobuzOnly = (await feed.locator('li').count()) === 2
         && (await feed.innerText()).includes('Protected 4 changes')
         && (await feed.innerText()).includes('Catalog Ghost')
-      await page.getByLabel('Filter by activity type').selectOption('miss')
+      await chooseActivityFilter('Filter by activity type', 'Missing matches')
       await waitForFeedRows(1, 'Catalog Ghost')
       const typeFiltered = (await feed.locator('li').count()) === 1 && (await feed.innerText()).includes('Catalog Ghost')
       await page.getByRole('searchbox', { name: 'Search activity' }).fill('old track')
@@ -2901,15 +2931,26 @@ async function main() {
       await waitForFeedRows(1, 'Old Track')
       const searchFiltered = (await feed.locator('li').count()) === 1 && (await feed.innerText()).includes('Old Track')
       await page.getByRole('button', { name: 'Clear activity search', exact: true }).click()
-      await page.getByLabel('Sort activity').selectOption('newest')
-      await waitForFeedRows(8, 'Catalog Ghost')
-      const newestFirst = (await feed.locator('li').first().innerText()).includes('Catalog Ghost')
-      await page.getByLabel('Sort activity').selectOption('oldest')
-      await waitForFeedRows(8, 'Pass started')
+      await chooseActivityFilter('Sort activity', 'Newest first')
+      await waitForFeedRows(9, 'cover set: Test Playlist')
+      const newestFirst = (await feed.locator('li').first().innerText()).includes('cover set: Test Playlist')
+      await chooseActivityFilter('Sort activity', 'Oldest first')
+      await waitForFeedRows(9, 'Pass started')
       const oldestFirst = (await feed.locator('li').first().innerText()).toLowerCase().includes('pass started')
       const controlsOk = qobuzOnly && typeFiltered && combinedEmpty && searchFiltered && newestFirst && oldestFirst
-      console.log(`${controlsOk ? 'ok        ' : 'FAIL      '} live feed filters by service/type/search and sorts both directions`)
+      console.log(`${controlsOk ? 'ok        ' : 'FAIL      '} live feed filters by source/type/search and sorts both directions`)
       if (!controlsOk) results.push({ label: 'live feed filter and sort controls', overflow: true })
+
+      await sourceTrigger.focus()
+      await page.keyboard.press('ArrowDown')
+      const keyboardListbox = page.getByRole('listbox', { name: 'Filter by source', exact: true })
+      const keyboardOpened = await keyboardListbox.isVisible()
+      await page.keyboard.press('Escape')
+      await keyboardListbox.waitFor({ state: 'detached' })
+      const focusReturned = await sourceTrigger.evaluate((node) => document.activeElement === node)
+      const keyboardOk = keyboardOpened && focusReturned
+      console.log(`${keyboardOk ? 'ok        ' : 'FAIL      '} activity filters open with arrow keys and return focus on Escape`)
+      if (!keyboardOk) results.push({ label: 'live feed filter keyboard navigation', overflow: true })
 
       // The committed README/promo capture is a showcase state, not the
       // deliberately broken fixture used by the assertions above. Re-route

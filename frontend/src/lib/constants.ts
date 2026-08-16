@@ -34,10 +34,9 @@ interface ServiceStyle {
   text: string
 }
 
-/** Service identity — dots + soft-tinted badges only, never buttons (the app
- * accent is teal). Keyed by whichever string shows up: account ids (used in
- * API paths, e.g. "ytmusic") and live-feed event tags (e.g. "yt") don't
- * always match, plus two internal, non-service tags ("sync", "local"). */
+/** Service/source identity — dots + soft-tinted badges only, never buttons
+ * (the app accent is teal). Engine events historically used a few shortened
+ * tags, so normalize them before presenting or filtering them. */
 const SERVICE_STYLES: Record<string, ServiceStyle> = {
   spotify: { label: 'Spotify', dot: 'bg-svc-spotify', soft: 'bg-svc-spotify-soft', text: 'text-svc-spotify' },
   tidal: { label: 'TIDAL', dot: 'bg-svc-tidal', soft: 'bg-svc-tidal-soft', text: 'text-svc-tidal' },
@@ -45,11 +44,15 @@ const SERVICE_STYLES: Record<string, ServiceStyle> = {
   deezer: { label: 'Deezer', dot: 'bg-svc-deezer', soft: 'bg-svc-deezer-soft', text: 'text-svc-deezer' },
   amazon: { label: 'Amazon Music', dot: 'bg-svc-amazon', soft: 'bg-svc-amazon-soft', text: 'text-svc-amazon' },
   apple: { label: 'Apple Music', dot: 'bg-svc-apple', soft: 'bg-svc-apple-soft', text: 'text-svc-apple' },
-  yt: { label: 'YouTube Music', dot: 'bg-svc-ytmusic', soft: 'bg-svc-ytmusic-soft', text: 'text-svc-ytmusic' },
   ytmusic: { label: 'YouTube Music', dot: 'bg-svc-ytmusic', soft: 'bg-svc-ytmusic-soft', text: 'text-svc-ytmusic' },
   jellyfin: { label: 'Jellyfin', dot: 'bg-svc-jellyfin', soft: 'bg-svc-jellyfin-soft', text: 'text-svc-jellyfin' },
-  sync: { label: 'Sync', dot: 'bg-accent', soft: 'bg-accent-soft', text: 'text-accent' },
-  local: { label: 'Local files', dot: 'bg-info', soft: 'bg-info-soft', text: 'text-info' },
+  sync: { label: 'SongMirror', dot: 'bg-accent', soft: 'bg-accent-soft', text: 'text-accent' },
+  local: { label: 'Local library', dot: 'bg-info', soft: 'bg-info-soft', text: 'text-info' },
+  transfer: { label: 'Playlist transfer', dot: 'bg-info', soft: 'bg-info-soft', text: 'text-info' },
+}
+const SOURCE_ALIASES: Record<string, string> = {
+  jelly: 'jellyfin',
+  yt: 'ytmusic',
 }
 const DEFAULT_SERVICE_STYLE: ServiceStyle = {
   label: '',
@@ -58,29 +61,41 @@ const DEFAULT_SERVICE_STYLE: ServiceStyle = {
   text: 'text-neutral',
 }
 
+/** Stable source identity used by filters as well as display helpers. */
+export function activitySourceId(tag: string): string {
+  return SOURCE_ALIASES[tag] ?? tag
+}
+
+function humanizeTag(tag: string): string {
+  return tag
+    .replace(/[._-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toLocaleUpperCase())
+}
+
 export function tagLabel(tag: string): string {
-  return SERVICE_STYLES[tag]?.label || tag
+  return SERVICE_STYLES[activitySourceId(tag)]?.label || humanizeTag(tag)
 }
 export function tagDot(tag: string): string {
-  return (SERVICE_STYLES[tag] ?? DEFAULT_SERVICE_STYLE).dot
+  return (SERVICE_STYLES[activitySourceId(tag)] ?? DEFAULT_SERVICE_STYLE).dot
 }
 export function tagSoft(tag: string): string {
-  return (SERVICE_STYLES[tag] ?? DEFAULT_SERVICE_STYLE).soft
+  return (SERVICE_STYLES[activitySourceId(tag)] ?? DEFAULT_SERVICE_STYLE).soft
 }
 export function tagText(tag: string): string {
-  return (SERVICE_STYLES[tag] ?? DEFAULT_SERVICE_STYLE).text
+  return (SERVICE_STYLES[activitySourceId(tag)] ?? DEFAULT_SERVICE_STYLE).text
 }
 
 /** Provider id -> ServiceLogo id (both the "yt" event tag and the "ytmusic"
  * account id resolve to the same YouTube Music mark). */
 export function serviceLogoId(idOrTag: string): 'spotify' | 'tidal' | 'qobuz' | 'deezer' | 'amazon' | 'apple' | 'ytmusic' | 'jellyfin' | null {
+  idOrTag = activitySourceId(idOrTag)
   if (idOrTag === 'spotify') return 'spotify'
   if (idOrTag === 'tidal') return 'tidal'
   if (idOrTag === 'qobuz') return 'qobuz'
   if (idOrTag === 'deezer') return 'deezer'
   if (idOrTag === 'amazon') return 'amazon'
   if (idOrTag === 'apple') return 'apple'
-  if (idOrTag === 'yt' || idOrTag === 'ytmusic') return 'ytmusic'
+  if (idOrTag === 'ytmusic') return 'ytmusic'
   if (idOrTag === 'jellyfin') return 'jellyfin'
   return null
 }

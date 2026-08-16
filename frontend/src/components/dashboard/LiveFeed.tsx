@@ -3,12 +3,18 @@ import type { IconType } from 'react-icons'
 import {
   LuArrowDownUp,
   LuClockAlert,
+  LuHistory,
+  LuInfo,
+  LuLayers3,
+  LuListFilter,
   LuListMinus,
   LuListPlus,
   LuRefreshCw,
+  LuRotateCcw,
   LuSearch,
   LuSearchX,
   LuSlidersHorizontal,
+  LuTriangleAlert,
   LuX,
 } from 'react-icons/lu'
 
@@ -16,10 +22,11 @@ import { EventFeedList } from '@/components/events/EventFeedList'
 import { useEventStream } from '@/hooks/useEventStream'
 import type { EventCounterKey } from '@/hooks/useEventStream'
 import { cn } from '@/lib/cn'
-import { serviceLogoId, tagDot, tagLabel, tagText } from '@/lib/constants'
+import { activitySourceId, serviceLogoId, tagDot, tagLabel, tagText } from '@/lib/constants'
 import type { EventKind, SyncEvent } from '@/types'
 
 import { CountChip, type CountChipTone } from '../ui/CountChip'
+import { FilterSelect, type FilterSelectOption } from '../ui/FilterSelect'
 import { ServiceLogo } from '../ui/ServiceLogo'
 
 const COUNTER_META: Array<{
@@ -65,15 +72,20 @@ const HOLD_REASON_LABELS: Record<string, string> = {
 type KindFilter = 'all' | EventKind | 'system'
 type SortOrder = 'oldest' | 'newest'
 
-const KIND_OPTIONS: Array<{ value: KindFilter; label: string }> = [
-  { value: 'all', label: 'All activity' },
-  { value: 'add', label: 'Added' },
-  { value: 'remove', label: 'Removed' },
-  { value: 'hold', label: 'Held / protected' },
-  { value: 'repair', label: 'Identity repaired' },
-  { value: 'miss', label: 'Missing match' },
-  { value: 'warn', label: 'Warnings' },
-  { value: 'system', label: 'Notes & summaries' },
+const KIND_OPTIONS: Array<FilterSelectOption<KindFilter>> = [
+  { value: 'all', label: 'All events', leading: <LuLayers3 className="size-3.5 text-text-3" /> },
+  { value: 'add', label: 'Tracks added', leading: <LuListPlus className="size-3.5 text-success" /> },
+  { value: 'remove', label: 'Tracks removed', leading: <LuListMinus className="size-3.5 text-danger" /> },
+  { value: 'hold', label: 'Protected changes', leading: <LuClockAlert className="size-3.5 text-warning" /> },
+  { value: 'repair', label: 'Identity repairs', leading: <LuRefreshCw className="size-3.5 text-info" /> },
+  { value: 'miss', label: 'Missing matches', leading: <LuSearchX className="size-3.5 text-text-3" /> },
+  { value: 'warn', label: 'Warnings', leading: <LuTriangleAlert className="size-3.5 text-warning" /> },
+  { value: 'system', label: 'Run summaries', leading: <LuInfo className="size-3.5 text-text-3" /> },
+]
+
+const SORT_OPTIONS: Array<FilterSelectOption<SortOrder>> = [
+  { value: 'oldest', label: 'Oldest first', leading: <LuHistory className="size-3.5 text-text-3" /> },
+  { value: 'newest', label: 'Newest first', leading: <LuArrowDownUp className="size-3.5 text-text-3" /> },
 ]
 
 const COUNT_FORMATTER = new Intl.NumberFormat('en-US')
@@ -146,34 +158,51 @@ function matchesKind(event: SyncEvent, filter: KindFilter): boolean {
   return event.kind === filter
 }
 
+function ServiceOptionMark({ tag }: { tag: string }) {
+  const logo = serviceLogoId(tag)
+  return logo ? (
+    <ServiceLogo service={logo} className={cn('size-3.5', tagText(tag))} />
+  ) : (
+    <span className={cn('size-2 rounded-full', tagDot(tag))} />
+  )
+}
+
 /** A live signal desk: current-pass counters disclose their service/evidence
  * ledger, while the persisted event stream can be searched, sliced and sorted
  * without changing what the sync engine records. */
 export function LiveFeed() {
   const { events, counters, breakdown, holdReasons, connected } = useEventStream()
   const [query, setQuery] = useState('')
-  const [provider, setProvider] = useState('all')
+  const [source, setSource] = useState('all')
   const [kind, setKind] = useState<KindFilter>('all')
   const [sort, setSort] = useState<SortOrder>('oldest')
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase())
 
-  const providers = useMemo(
-    () => [...new Set(events.map((event) => event.tag).filter(Boolean))]
+  const sources = useMemo(
+    () => [...new Set(events.map((event) => activitySourceId(event.tag)).filter(Boolean))]
       .sort((a, b) => tagLabel(a).localeCompare(tagLabel(b))),
     [events],
   )
+  const sourceOptions = useMemo<Array<FilterSelectOption<string>>>(() => [
+    { value: 'all', label: 'All sources', leading: <LuLayers3 className="size-3.5 text-text-3" /> },
+    ...sources.map((tag) => ({
+      value: tag,
+      label: tagLabel(tag),
+      leading: <ServiceOptionMark tag={tag} />,
+    })),
+  ], [sources])
 
   const visibleEvents = useMemo(() => {
     const filtered = events.filter((event) => {
-      if (provider !== 'all' && event.tag !== provider) return false
+      if (source !== 'all' && activitySourceId(event.tag) !== source) return false
       if (!matchesKind(event, kind)) return false
       if (!deferredQuery) return true
       return `${event.message} ${tagLabel(event.tag)} ${event.kind}`.toLocaleLowerCase().includes(deferredQuery)
     })
     return sort === 'newest' ? filtered.slice().reverse() : filtered
-  }, [deferredQuery, events, kind, provider, sort])
+  }, [deferredQuery, events, kind, sort, source])
 
-  const filtered = query.trim() !== '' || provider !== 'all' || kind !== 'all'
+  const filtered = query.trim() !== '' || source !== 'all' || kind !== 'all'
 
   return (
     <div className="flex flex-col gap-3">
@@ -208,16 +237,19 @@ export function LiveFeed() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-2 rounded-control border border-border bg-surface-2/45 p-2 sm:flex-row sm:items-center">
+      <div
+        data-activity-filter-bar
+        className="rounded-card border border-border bg-surface-2/45 p-2.5"
+      >
         <label className="relative min-w-0 flex-1">
           <span className="sr-only">Search activity</span>
-          <LuSearch className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-text-3" aria-hidden="true" />
+          <LuSearch className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-text-3" aria-hidden="true" />
           <input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search tracks, playlists…"
-            className="h-8 w-full rounded-control border border-border-strong bg-field pl-8 pr-8 text-xs text-text placeholder:text-text-3 focus:border-accent focus:outline-none"
+            placeholder="Search activity…"
+            className="h-9 w-full rounded-control border border-border-strong bg-field pl-9 pr-9 text-xs text-text placeholder:text-text-3 transition-[background-color,border-color,box-shadow] duration-fast hover:border-text-3 hover:bg-surface focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20"
           />
           {query && (
             <button
@@ -231,59 +263,51 @@ export function LiveFeed() {
           )}
         </label>
 
-        <label className="relative min-w-36">
-          <span className="sr-only">Filter by service</span>
-          <LuSlidersHorizontal className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-text-3" aria-hidden="true" />
-          <select
-            value={provider}
-            onChange={(event) => setProvider(event.target.value)}
-            aria-label="Filter by service"
-            className="h-8 w-full appearance-none rounded-control border border-border-strong bg-field pl-8 pr-7 text-xs text-text focus:border-accent focus:outline-none"
-          >
-            <option value="all">All services</option>
-            {providers.map((tag) => <option key={tag} value={tag}>{tagLabel(tag)}</option>)}
-          </select>
-        </label>
-
-        <select
-          value={kind}
-          onChange={(event) => setKind(event.target.value as KindFilter)}
-          aria-label="Filter by activity type"
-          className="h-8 min-w-36 rounded-control border border-border-strong bg-field px-2.5 text-xs text-text focus:border-accent focus:outline-none"
-        >
-          {KIND_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select>
-
-        <label className="relative min-w-32">
-          <span className="sr-only">Sort activity</span>
-          <LuArrowDownUp className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-text-3" aria-hidden="true" />
-          <select
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <FilterSelect
+            ariaLabel="Filter by source"
+            caption="Source"
+            value={source}
+            options={sourceOptions}
+            onChange={setSource}
+            icon={<LuSlidersHorizontal className="size-3.5" />}
+          />
+          <FilterSelect
+            ariaLabel="Filter by activity type"
+            caption="Activity"
+            value={kind}
+            options={KIND_OPTIONS}
+            onChange={setKind}
+            icon={<LuListFilter className="size-3.5" />}
+          />
+          <FilterSelect
+            ariaLabel="Sort activity"
+            caption="Order"
             value={sort}
-            onChange={(event) => setSort(event.target.value as SortOrder)}
-            aria-label="Sort activity"
-            className="h-8 w-full appearance-none rounded-control border border-border-strong bg-field pl-8 pr-7 text-xs text-text focus:border-accent focus:outline-none"
-          >
-            <option value="oldest">Oldest first</option>
-            <option value="newest">Newest first</option>
-          </select>
-        </label>
+            options={SORT_OPTIONS}
+            onChange={setSort}
+            icon={<LuArrowDownUp className="size-3.5" />}
+          />
+        </div>
 
-        {filtered && (
-          <button
-            type="button"
-            onClick={() => { setQuery(''); setProvider('all'); setKind('all') }}
-            className="h-8 shrink-0 rounded-control px-2.5 text-xs font-semibold text-text-2 hover:bg-surface-2 hover:text-text"
-          >
-            Reset
-          </button>
-        )}
+        <div className="mt-2 flex min-h-6 items-center justify-between gap-3 px-0.5">
+          <p className="font-mono text-[10.5px] text-text-3" aria-live="polite">
+            {filtered
+              ? `Showing ${COUNT_FORMATTER.format(visibleEvents.length)} of ${COUNT_FORMATTER.format(events.length)} events`
+              : `${COUNT_FORMATTER.format(events.length)} event${events.length === 1 ? '' : 's'} in feed`}
+          </p>
+          {filtered ? (
+            <button
+              type="button"
+              onClick={() => { setQuery(''); setSource('all'); setKind('all') }}
+              className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-control px-2 text-[11px] font-semibold text-text-3 transition-colors duration-fast hover:bg-surface hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20"
+            >
+              <LuRotateCcw className="size-3" aria-hidden="true" />
+              Reset
+            </button>
+          ) : null}
+        </div>
       </div>
-
-      {filtered && (
-        <p className="font-mono text-[10.5px] text-text-3" aria-live="polite">
-          Showing {COUNT_FORMATTER.format(visibleEvents.length)} of {COUNT_FORMATTER.format(events.length)} events
-        </p>
-      )}
 
       <EventFeedList
         events={visibleEvents}
