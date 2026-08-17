@@ -253,6 +253,9 @@ const PLAYLISTS = {
     { id: 'pl_apple_1', name: 'Road Trip 2025', count: null, image: '' },
     { id: 'pl_apple_4', name: 'Rainy Day', count: null, image: '' },
   ],
+  ytmusic: [
+    { id: 'pl_yt_latest', name: 'YouTube ordering fixture', count: 3, image: svgCover('#d64545') },
+  ],
 }
 
 const PLAYLIST_DETAIL = {
@@ -281,6 +284,31 @@ const PLAYLIST_DETAIL = {
     added_at: index === 116 ? '1786850562' : '',
     external_url: `https://open.spotify.com/track/track_${index + 1}`,
   })),
+}
+
+const YTMUSIC_PLAYLIST_DETAIL = {
+  provider: 'ytmusic',
+  id: 'pl_yt_latest',
+  name: 'YouTube ordering fixture',
+  description: 'YouTube returns this physical list newest-first.',
+  count: 3,
+  image: svgCover('#d64545'),
+  owned: true,
+  editable: true,
+  external_url: 'https://music.youtube.com/playlist?list=pl_yt_latest',
+  tracks: ['Newest YouTube addition', 'Middle YouTube addition', 'Oldest YouTube addition']
+    .map((name, position) => ({
+      position,
+      id: `yt_track_${position + 1}`,
+      occurrence_id: `yt_entry_${position + 1}`,
+      name,
+      artist: 'YouTube Artist',
+      album: 'YouTube Album',
+      duration_ms: 180000,
+      image: svgCover('#d64545'),
+      added_at: '',
+      external_url: `https://music.youtube.com/watch?v=yt_track_${position + 1}`,
+    })),
 }
 
 // Polished, deterministic data used only for committed README/promo captures.
@@ -446,6 +474,9 @@ async function installMocks(page, opts = {}) {
 
     if (p === '/api/playlists/spotify/pl_spotify_1' && method === 'GET') {
       return json(PLAYLIST_DETAIL)
+    }
+    if (p === '/api/playlists/ytmusic/pl_yt_latest' && method === 'GET') {
+      return json(YTMUSIC_PLAYLIST_DETAIL)
     }
     if (p === '/api/playlists/spotify/pl_spotify_1/tracks' && method === 'DELETE') {
       return json({ ok: true })
@@ -706,6 +737,15 @@ async function main() {
       await context.addInitScript(() => window.localStorage.setItem('songmirror-theme', 'dark'))
       const page = await context.newPage()
       await installMocks(page)
+      await page.route('**/api/accounts', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(ACCOUNTS.map((account) => (
+            account.id === 'ytmusic' ? { ...account, state: 'connected', detail: null } : account
+          ))),
+        })
+      })
       await page.setViewportSize({ width: 1280, height: 900 })
       await page.goto(BASE_URL + '/playlists', { waitUntil: 'networkidle' })
       await page.getByRole('button', { name: 'Open Road Trip 2025 inside SongMirror' }).first().click()
@@ -744,6 +784,15 @@ async function main() {
       const bulkSelectOk = rangeSelected && bulkConfirmation
       console.log(`${bulkSelectOk ? 'ok        ' : 'FAIL      '} playlist ledger supports click/shift-click range selection and guarded bulk removal`)
       if (!bulkSelectOk) results.push({ label: 'playlist ledger bulk selection', overflow: true })
+
+      await page.keyboard.press('Escape')
+      await page.getByRole('button', { name: 'Open YouTube ordering fixture inside SongMirror' }).click()
+      const youtubeDialog = page.getByRole('dialog')
+      await youtubeDialog.getByText('Newest YouTube addition').waitFor()
+      const firstYoutube = await youtubeDialog.locator('ol > li').first().textContent()
+      const youtubeLatestOk = firstYoutube?.includes('Newest YouTube addition')
+      console.log(`${youtubeLatestOk ? 'ok        ' : 'FAIL      '} YouTube Music's undated newest-first response is not reversed (first=${JSON.stringify(firstYoutube?.slice(0, 50))})`)
+      if (!youtubeLatestOk) results.push({ label: 'playlist ledger YouTube newest-first order', overflow: true })
       await checkOverflow(page, 'Playlist track ledger @ 1280', results)
       await context.close()
     }

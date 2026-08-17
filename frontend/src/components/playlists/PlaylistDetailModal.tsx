@@ -125,13 +125,15 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
       }
       if (leftAdded !== null) return -1
       if (rightAdded !== null) return 1
-      // Mirrors append additions in source order. Providers such as Amazon,
-      // Apple, Deezer, Qobuz, and YouTube omit per-entry timestamps, so the
-      // last physical entry is the best available (and sync-correct) newest
-      // item. "Playlist order" remains available for the canonical sequence.
-      return right.position - left.position
+      // Most mirrors append additions and expose oldest-first physical order,
+      // making the last entry the newest available evidence. YouTube Music's
+      // authenticated playlist read is already newest-first, so reversing it
+      // would put the oldest track at the top under a misleading label.
+      return provider === 'ytmusic'
+        ? left.position - right.position
+        : right.position - left.position
     })
-  }, [detail, deferredQuery, order])
+  }, [detail, deferredQuery, order, provider])
 
   const pageCount = Math.max(1, Math.ceil(orderedTracks.length / PAGE_SIZE))
   const safePage = Math.min(page, pageCount)
