@@ -60,6 +60,7 @@ class SyncService:
         opts.execute = execute
         opts.sync_mode = job.mode
         opts.sync_source = job.source
+        opts.authorities = job.authorities
         opts.providers = job.providers
         opts.playlists = job.playlists
         opts.max_adds = job.max_adds

@@ -16,7 +16,7 @@ from . import archive, spotify, spotify_cookie
 from .config import spotify_write_backend
 from .logs import fmt_counts, fmt_secs, log, log_note, log_section, log_summary, log_warn, paint
 from .targets import TargetAuthError, build_one, build_peers, build_targets, mirror_pair, reconcile
-from .targets.base import _normalize
+from .targets.base import _normalize, reconcile_state_key
 
 
 def _load_json(path):
@@ -214,14 +214,14 @@ def run_pass(opts, should_continue=None):
     # saves win; the headless CLI falls back to a plain .env. Either way this
     # picks up re-captured tokens without a restart.
     load_dotenv(os.getenv("SONGMIRROR_ENV_FILE") or ".env", override=True)
-    # Writable (modify scopes) only for an actual N-way execute — so dry-runs
-    # preview without forcing the one-time re-auth a scope change triggers.
-    source_provider = opts.sync_source if opts.sync_mode == "oneway" else "spotify"
+    # Group mode's order authority also supplies playlist names and ordering.
+    # It remains writable because additions from another authority flow back.
+    source_provider = opts.sync_source if opts.sync_mode in {"oneway", "group"} else "spotify"
     wanted_providers = {s.strip() for s in (opts.providers or "").split(",") if s.strip()}
     spotify_requested = not wanted_providers or "spotify" in wanted_providers
-    # Spotify needs a writable client whenever it's a write destination: any N-way
-    # execute, or a one-way execute where another provider is the source and
-    # Spotify is one of the (writable) targets.
+    # Spotify needs a writable client whenever it's a write destination: any
+    # N-way/group execute, or a one-way execute where another provider is the
+    # source and Spotify is one of the targets.
     spotify_is_target = (opts.sync_mode == "oneway" and source_provider != "spotify"
                          and spotify_requested)
     sp = None
@@ -231,14 +231,15 @@ def run_pass(opts, should_continue=None):
             log_note("Spotify is using its signed-in web session (no developer API)", tag="spotify")
         else:
             try:
-                sp = spotify.client(writable=opts.execute and (opts.sync_mode == "nway" or spotify_is_target))
+                sp = spotify.client(writable=opts.execute and (
+                    opts.sync_mode in {"nway", "group"} or spotify_is_target))
             except RuntimeError as exc:
                 if source_provider == "spotify":
                     raise
                 log_note(f"Spotify skipped: {exc}", tag="spotify")
 
-    # The library whose playlists drive this pass: always Spotify for N-way (the
-    # symmetric reconcile's name master), the chosen source-of-truth for one-way.
+    # The library whose playlists drive this pass: Spotify for N-way; the chosen
+    # source/order authority for one-way and authoritative-group modes.
     source = build_one(source_provider, opts, sp)
     if source is None:
         log_warn(f"sync source '{source_provider}' is not connected", indent="  ")
@@ -250,7 +251,11 @@ def run_pass(opts, should_continue=None):
 
     mode = paint("EXECUTE", "green", "bold") if opts.execute else paint("DRY RUN", "yellow", "bold")
     log(paint("═══ Omni playlist mirror ═══", "bold", "cyan"))
-    log(f"  mode: {mode}" + (paint("   ⇄ N-WAY", "magenta", "bold") if opts.sync_mode == "nway" else ""))
+    mode_label = (
+        paint("   ⇄ N-WAY", "magenta", "bold") if opts.sync_mode == "nway" else
+        paint("   ⇆ AUTHORITY GROUP", "magenta", "bold") if opts.sync_mode == "group" else ""
+    )
+    log(f"  mode: {mode}{mode_label}")
     log(f"  source: {paint(source.name, 'cyan')}")
     log(f"  playlists: {paint(str(len(selected)), 'bold')} selected"
         + (paint(f" ({', '.join(source.playlist_name(p) for p in selected)})", "grey") if selected else ""))
@@ -268,15 +273,19 @@ def run_pass(opts, should_continue=None):
         downloads.refresh(sp, selected, opts.download_dir)
         return _summary(opts, [], pass_started)
 
-    if opts.sync_mode == "nway":
+    if opts.sync_mode in {"nway", "group"}:
         songs = archive.connect(opts.song_cache_file)
         try:
-            per_target = _run_nway(opts, sp, selected, songs, ctrl)
+            if opts.sync_mode == "group":
+                per_target = _run_authoritative_group(opts, sp, selected, songs, ctrl)
+            else:
+                per_target = _run_nway(opts, sp, selected, songs, ctrl)
         finally:
             songs.close()
         c = ctrl()
         if c == "run":
-            _post_sync(opts, sp, selected, should_continue=ctrl)
+            _post_sync(opts, sp, selected, source_is_spotify=source.source == "spotify",
+                       should_continue=ctrl)
         return _summary(opts, per_target, pass_started, interrupted=(None if c == "run" else c))
 
     targets = build_targets(opts, sp)
@@ -416,13 +425,55 @@ def _post_sync(opts, sp, selected, source_is_spotify=True, should_continue=None)
 
 
 def _run_nway(opts, sp, selected, songs, should_continue=None):
-    """Bidirectional reconcile: each selected playlist across all peer providers,
-    sequentially (each reconcile reads then writes every peer). A change on any
-    provider propagates to the others via the stored canonical snapshot."""
+    """Reconcile with every selected provider contributing membership."""
+    return _run_peer_reconcile(
+        opts, sp, selected, songs, should_continue,
+        label="N-way", authority_sources=None,
+    )
+
+
+def _run_authoritative_group(opts, sp, selected, songs, should_continue=None):
+    """Reconcile selected authorities into each other and destination mirrors."""
+    authorities = {part.strip() for part in (opts.authorities or "").split(",") if part.strip()}
+    return _run_peer_reconcile(
+        opts, sp, selected, songs, should_continue,
+        label="Authoritative group", authority_sources=authorities,
+    )
+
+
+def _run_peer_reconcile(opts, sp, selected, songs, should_continue=None, *,
+                        label, authority_sources):
+    """Shared ordered playlist loop for N-way and authoritative-group syncs."""
     peers = build_peers(opts, sp, songs=songs)
+    order_source = opts.sync_source if authority_sources is not None else "spotify"
+    peers.sort(key=lambda peer: (peer.source != order_source))
+    peer_sources = {peer.source for peer in peers}
+    if authority_sources is not None:
+        error = None
+        if len(authority_sources) < 2:
+            error = "an authoritative group needs at least two authorities"
+        elif order_source not in authority_sources:
+            error = "the order authority must belong to the authoritative group"
+        elif authority_sources - peer_sources:
+            missing = ", ".join(sorted(authority_sources - peer_sources))
+            error = f"authoritative providers are not connected: {missing}"
+        if error:
+            log_warn(error, indent="  ")
+            return [_summary_entry(label, {
+                "failed": 1,
+                "failures": [{"playlist": "Configuration", "error": error}],
+            })]
     if len(peers) < 2:
-        log_warn("N-way sync needs at least two configured music providers", indent="  ")
+        log_warn(f"{label} sync needs at least two configured music providers", indent="  ")
         return []
+    order_peer = next((peer for peer in peers if peer.source == order_source), None)
+    if order_peer is None:
+        error = f"order provider '{order_source}' is not connected"
+        log_warn(error, indent="  ")
+        return [_summary_entry(label, {
+            "failed": 1,
+            "failures": [{"playlist": "Configuration", "error": error}],
+        })]
     log(f"  peers: {paint(', '.join(p.name for p in peers), 'cyan')}"
         + (paint(f"   local downloads -> {opts.download_dir}", "grey") if opts.download_dir and opts.execute else ""))
 
@@ -437,12 +488,16 @@ def _run_nway(opts, sp, selected, songs, should_continue=None):
     change_diagnostics = []
     failures = []
     try:
-        for sp_playlist in selected:
+        for order_playlist in selected:
             if should_continue and should_continue() != "run":
                 break  # Stop/Pause requested — leave the rest for a re-run
-            name = sp_playlist["name"]
+            name = (order_peer.playlist_name(order_playlist)
+                    if hasattr(order_peer, "playlist_name") else order_playlist["name"])
             key = name.strip().casefold()
+            state_key = reconcile_state_key(
+                name, authority_sources=authority_sources)
             playlists = {}
+            authority_failure_recorded = False
             for p in peers:
                 pl = dirs[p.source].get(key)
                 if not pl:
@@ -450,32 +505,48 @@ def _run_nway(opts, sp, selected, songs, should_continue=None):
                         log_note(f"{name}: no {p.name} playlist yet - would create on --execute", tag=p.tag)
                         continue
                     try:
-                        pl = p.create(sp_playlist)
+                        pl = p.create(order_playlist)
                         # This physical playlist did not produce the provider's
                         # stored logical baseline. Reset that side immediately;
                         # if reconcile later fails, the next pass must still see
                         # a bootstrap peer rather than a collapsed old playlist.
-                        archive.reset_playlist_peer_state(songs, key, p.source)
+                        archive.reset_playlist_peer_state(songs, state_key, p.source)
                         log_note(f"created {p.name} playlist '{name}'", tag=p.tag)
                     except TargetAuthError:
                         raise
                     except Exception as e:
                         _collect_failure(total, failures, name, e)
+                        if authority_sources is not None and p.source in authority_sources:
+                            authority_failure_recorded = True
                         log_warn(f"create {p.name} '{name}' failed: {e!r}", tag=p.tag)
                         continue
                 if not p.is_editable(pl):
                     log_warn(f"{name}: {p.name} playlist not editable - skipped", tag=p.tag)
+                    if authority_sources is not None and p.source in authority_sources:
+                        error = RuntimeError(f"{p.name} authoritative playlist is not editable")
+                        _collect_failure(total, failures, name, error)
+                        authority_failure_recorded = True
                     continue
                 playlists[p.source] = pl
 
             active = [p for p in peers if p.source in playlists]
+            if authority_sources is not None and not authority_sources <= set(playlists):
+                missing = ", ".join(sorted(authority_sources - set(playlists)))
+                log_warn(f"{name}: authoritative playlist unavailable on {missing} - skipped", tag="sync")
+                if opts.execute and not authority_failure_recorded:
+                    _collect_failure(
+                        total, failures, name,
+                        RuntimeError(f"authoritative playlist unavailable on {missing}"),
+                    )
+                continue
             if len(active) < 2:
                 log_note(f"{name}: fewer than 2 providers have this playlist - skipped", tag="sync")
                 continue
             try:
                 stats = reconcile(active, name, playlists, caches, songs,
                                   execute=opts.execute, max_removals=opts.max_removals, max_adds=opts.max_adds,
-                                  drain_removals=opts.apply_large_removals, should_continue=should_continue)
+                                  drain_removals=opts.apply_large_removals, should_continue=should_continue,
+                                  authority_sources=authority_sources)
                 for k in total:
                     total[k] += stats.get(k, 0)
                 _collect_held(held_detail, stats.get("held_removals", []))
@@ -494,4 +565,4 @@ def _run_nway(opts, sp, selected, songs, should_continue=None):
     # Drain any legacy explicit-ISRC caller residue. Cookie-only reconciliation
     # never enters that developer-catalog path.
     total["isrc_fallback"] = spotify_cookie.take_singles_used()
-    return [_summary_entry("N-way", total)]
+    return [_summary_entry(label, total)]

@@ -195,6 +195,61 @@ def test_adds_and_removes_always_disjoint():
         assert not (add_ids & rem_ids), f"{src}: add/remove overlap"
 
 
+def test_authoritative_group_ignores_mirror_additions_and_repairs_mirror_deletions():
+    prev = {
+        "spotify": {"a", "b"},
+        "apple": {"a", "b"},
+        "ytmusic": {"a", "b"},
+    }
+    cur = {
+        "spotify": {"a", "b"},
+        "apple": {"a", "b"},
+        "ytmusic": {"a", "mirror-only"},
+    }
+
+    desired, plan = _merge(prev, cur, set(), {"spotify", "apple"})
+
+    assert desired == {"a", "b"}
+    assert plan["spotify"] == (set(), set())
+    assert plan["apple"] == (set(), set())
+    assert plan["ytmusic"] == ({"b"}, {"mirror-only"})
+
+
+def test_authoritative_group_accepts_additions_from_either_authority():
+    prev = {"spotify": {"a"}, "apple": {"a"}, "tidal": {"a"}}
+    cur = {
+        "spotify": {"a", "from-spotify"},
+        "apple": {"a", "from-apple"},
+        "tidal": {"a"},
+    }
+
+    desired, plan = _merge(prev, cur, set(), {"spotify", "apple"})
+
+    assert desired == {"a", "from-spotify", "from-apple"}
+    assert plan["spotify"][0] == {"from-apple"}
+    assert plan["apple"][0] == {"from-spotify"}
+    assert plan["tidal"][0] == {"from-spotify", "from-apple"}
+
+
+def test_authoritative_group_removal_does_not_need_a_mirror_vote():
+    prev = {
+        "spotify": {"a", "removed"},
+        "apple": {"a", "removed"},
+        "deezer": {"a", "removed"},
+    }
+    cur = {
+        "spotify": {"a"},
+        "apple": {"a", "removed"},
+        "deezer": {"a", "removed", "mirror-only"},
+    }
+
+    desired, plan = _merge(prev, cur, set(), {"spotify", "apple"})
+
+    assert desired == {"a"}
+    assert plan["apple"][1] == {"removed"}
+    assert plan["deezer"][1] == {"removed", "mirror-only"}
+
+
 # --- archive: the per-provider persistence helpers ---------------------------
 def test_playlist_state_roundtrip_per_source():
     conn = archive.connect(os.path.join(tempfile.mkdtemp(), "s.db"))
@@ -234,6 +289,32 @@ def test_existing_nonempty_baseline_is_marked_initialized_on_connect(tmp_path):
 
     assert archive.has_playlist_state(conn, "mix", "spotify")
     assert archive.get_playlist_state(conn, "mix", "spotify") == {"i:A"}
+    conn.close()
+
+
+def test_playlist_state_meta_migrates_and_preserves_physical_id(tmp_path):
+    path = str(tmp_path / "physical-id-migration.db")
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE playlist_state_meta ("
+        "playlist TEXT NOT NULL, source TEXT NOT NULL, initialized_at TEXT NOT NULL, "
+        "PRIMARY KEY (playlist, source))"
+    )
+    conn.commit()
+    conn.close()
+
+    conn = archive.connect(path)
+    assert "physical_playlist_id" in {
+        row[1] for row in conn.execute("PRAGMA table_info(playlist_state_meta)")
+    }
+    archive.commit_reconcile_membership(
+        conn, "mix", {"apple": {"i:A"}}, {"apple": set()},
+        {"apple": "apple-playlist-v1"},
+    )
+    assert archive.get_playlist_physical_id(conn, "mix", "apple") == "apple-playlist-v1"
+
+    archive.set_reconcile_identities(conn, "mix", {"apple": {"i:A"}}, {})
+    assert archive.get_playlist_physical_id(conn, "mix", "apple") == "apple-playlist-v1"
     conn.close()
 
 
@@ -434,6 +515,124 @@ def test_reconcile_saves_baseline_when_only_adds_deferred(tmp_path):
                       _caches("spotify", "apple"), conn, execute=True, max_removals=25, max_adds=1)
     assert stats["deferred"] >= 1 and stats["clean"] is False   # add backlog deferred
     assert archive.get_playlist_state(conn, "mix", "spotify") == {"i:A", "i:B", "i:C"}  # baseline still saved
+    conn.close()
+
+
+def test_authoritative_group_bootstrap_is_scoped_and_non_destructive(tmp_path):
+    conn = archive.connect(str(tmp_path / "group-baseline.db"))
+    spotify = _P("spotify", ["A", "SPOTIFY"])
+    apple = _P("apple", ["A", "APPLE"])
+    mirror = _P("ytmusic", ["A", "MIRROR_ONLY"])
+    peers = [spotify, apple, mirror]
+    playlists = {p.source: {"id": p.source} for p in peers}
+    caches = _caches(*(p.source for p in peers))
+    kwargs = dict(
+        execute=True, max_removals=25, max_adds=200,
+        authority_sources={"spotify", "apple"},
+    )
+
+    first = reconcile(peers, "Mix", playlists, caches, conn, **kwargs)
+
+    assert first["clean"] is False
+    assert first["removed"] == 0
+    assert first["removals_skipped"] == 1
+    assert "authority_baseline" in {d["category"] for d in first["change_diagnostics"]}
+    assert spotify.added == ["APPLE"]
+    assert apple.added == ["SPOTIFY"]
+    assert set(mirror.added) == {"APPLE", "SPOTIFY"}
+    assert mirror.removed == []
+    key = "group:apple,spotify:mix"
+    assert archive.has_playlist_state(conn, key, "spotify")
+    assert not archive.has_playlist_state(conn, "mix", "spotify")
+
+    second = reconcile(peers, "Mix", playlists, caches, conn, **kwargs)
+
+    assert second["removed"] == 1
+    assert mirror.removed == ["MIRROR_ONLY"]
+    assert "MIRROR_ONLY" not in spotify.added
+    assert "MIRROR_ONLY" not in apple.added
+    conn.close()
+
+
+def test_authoritative_group_recognizes_a_same_name_recreated_playlist(tmp_path):
+    conn = archive.connect(str(tmp_path / "group-recreated.db"))
+    key = "group:apple,spotify:aurora"
+    baseline = {"i:A", "i:B", "i:C"}
+    archive.commit_reconcile_membership(
+        conn,
+        key,
+        {"spotify": baseline, "apple": baseline},
+        {"spotify": set(), "apple": set()},
+        {"spotify": "spotify-aurora", "apple": "deleted-apple-aurora"},
+    )
+    spotify = _P("spotify", ["A", "B", "C"])
+    apple = _P("apple", ["A"])
+
+    stats = reconcile(
+        [spotify, apple],
+        "Aurora",
+        {
+            "spotify": {"id": "spotify-aurora"},
+            "apple": {"id": "replacement-apple-aurora"},
+        },
+        _caches("spotify", "apple"),
+        conn,
+        execute=True,
+        max_removals=25,
+        max_adds=200,
+        authority_sources={"spotify", "apple"},
+    )
+
+    assert stats["read_anomalies"] == 0
+    assert stats["removed"] == 0
+    assert apple.added == ["B", "C"]
+    assert {d["category"] for d in stats["change_diagnostics"]} >= {
+        "playlist_recreated", "authority_baseline",
+    }
+    assert archive.get_playlist_physical_id(conn, key, "apple") == "replacement-apple-aurora"
+    conn.close()
+
+
+def test_reconcile_does_not_search_for_blank_catalog_entries(tmp_path):
+    """Provider tombstones/placeholder rows must never become empty searches."""
+
+    class BlankAuthority(_P):
+        def playlist_tracks(self, pl):
+            return [{
+                "id": "blank-row",
+                "name": "",
+                "artists": [],
+                "artist": "",
+                "duration_ms": 0,
+                "isrc": None,
+                "added_at": "2020",
+            }]
+
+    class QueryRecordingMirror(_P):
+        def __init__(self):
+            super().__init__("tidal", [])
+            self.resolve_queries = []
+
+        def resolve(self, norm, cache):
+            self.resolve_queries.append((norm["name"], norm["artist"]))
+            return None, None
+
+    conn = archive.connect(str(tmp_path / "blank-catalog-entry.db"))
+    authority = BlankAuthority("spotify", [])
+    mirror = QueryRecordingMirror()
+
+    reconcile(
+        [authority, mirror],
+        "Mix",
+        {"spotify": {"id": "s"}, "tidal": {"id": "t"}},
+        _caches("spotify", "tidal"),
+        conn,
+        execute=False,
+        max_removals=25,
+        max_adds=200,
+    )
+
+    assert mirror.resolve_queries == []
     conn.close()
 
 

@@ -1,7 +1,7 @@
 [project]
 name = "songmirror"
 version = "0.1.0"
-description = "Bidirectional N-way playlist sync across major music services, with optional local audio copies"
+description = "One-way, authoritative-group, and N-way playlist sync across major music services"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

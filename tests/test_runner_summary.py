@@ -191,6 +191,37 @@ def test_nway_wraps_accumulated_summary(monkeypatch):
     assert s["per_target"][0]["skipped"] == 0  # defaulted keys always present
 
 
+def test_authoritative_group_routes_with_writable_spotify(monkeypatch):
+    writable_requests = []
+    monkeypatch.setattr(
+        runner.spotify, "client",
+        lambda writable=False: writable_requests.append(writable) or object(),
+    )
+    monkeypatch.setattr(runner, "build_one", lambda *args, **kwargs: type("Source", (), {
+        "source": "spotify", "name": "Spotify", "list_playlists": lambda self: {},
+    })())
+    monkeypatch.setattr(runner.archive, "connect", lambda f: _FakeSongs())
+    monkeypatch.setattr(runner, "_post_sync", lambda *a, **k: None)
+    monkeypatch.setattr(
+        runner, "_run_authoritative_group",
+        lambda opts, sp, selected, songs, should_continue=None: [
+            runner._summary_entry("Authoritative group", {"added": 2})
+        ],
+    )
+
+    summary = runner.run_pass(_opts(
+        execute=True,
+        sync_mode="group",
+        authorities="spotify,apple",
+        providers="spotify,apple,ytmusic",
+    ))
+
+    assert writable_requests == [True]
+    assert summary["mode"] == "group"
+    assert summary["per_target"][0]["name"] == "Authoritative group"
+    assert summary["per_target"][0]["added"] == 2
+
+
 def test_run_target_honors_explicit_pairing(monkeypatch, tmp_path):
     from songmirror.engine import archive
     from songmirror.services.playlists import PlaylistLink
@@ -705,6 +736,51 @@ class _RecreatedPeer(_Peer):
 
     def remove(self, playlist, track):
         self._isrcs.remove(track["isrc"])
+
+
+def test_authoritative_group_forwards_only_its_authority_sources(monkeypatch):
+    peers = [_Peer("spotify"), _Peer("apple"), _Peer("ytmusic")]
+    seen = []
+    monkeypatch.setattr(runner, "build_peers", lambda opts, sp, songs=None: peers)
+    monkeypatch.setattr(runner, "load_cache", lambda path: {})
+    monkeypatch.setattr(runner, "save_cache", lambda path, cache: None)
+
+    def capture(*args, **kwargs):
+        seen.append((args[0][0].source, kwargs["authority_sources"]))
+        return {}
+
+    monkeypatch.setattr(runner, "reconcile", capture)
+
+    entry = runner._run_authoritative_group(
+        _opts(
+            sync_mode="group", sync_source="spotify",
+            authorities="spotify,apple", providers="spotify,apple,ytmusic",
+        ),
+        object(), [{"name": "Aurora"}], _FakeSongs(),
+    )[0]
+
+    assert seen == [("spotify", {"spotify", "apple"})]
+    assert entry["name"] == "Authoritative group"
+
+
+def test_authoritative_group_reports_a_disconnected_authority(monkeypatch):
+    monkeypatch.setattr(
+        runner, "build_peers", lambda opts, sp, songs=None: [_Peer("spotify")],
+    )
+
+    entry = runner._run_authoritative_group(
+        _opts(
+            sync_mode="group", sync_source="spotify",
+            authorities="spotify,apple", providers="spotify,apple",
+        ),
+        object(), [], _FakeSongs(),
+    )[0]
+
+    assert entry["failed"] == 1
+    assert entry["failures"] == [{
+        "playlist": "Configuration",
+        "error": "authoritative providers are not connected: apple",
+    }]
 
 
 def test_nway_created_replacement_discards_the_deleted_playlists_baseline(monkeypatch, tmp_path):

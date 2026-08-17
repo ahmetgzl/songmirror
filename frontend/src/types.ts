@@ -130,6 +130,8 @@ export interface HeldRemoval {
 
 export type ChangeDiagnosticCategory =
   | 'identity_migration'
+  | 'authority_baseline'
+  | 'playlist_recreated'
   | 'unconfirmed_absence'
   | 'confirmed_absence'
   | 'incomplete_read'
@@ -198,7 +200,7 @@ export interface SyncStatus {
   jobs: SyncJobStatus[]
 }
 
-export type SyncMode = 'oneway' | 'nway'
+export type SyncMode = 'oneway' | 'group' | 'nway'
 
 /** GET/POST/PUT /api/syncs — one independent, named sync configuration
  * (multiple jobs can run side by side, Soundiiz-style). `providers` and
@@ -211,7 +213,12 @@ export interface SyncJob {
   name: string
   enabled: boolean
   mode: SyncMode
+  /** One-way source, or the provider whose playlist names/order lead an
+   * authoritative group. Ignored for fully N-way jobs. */
   source: string
+  /** Comma-separated membership authorities in group mode. Mirrors never
+   * contribute playlist changes back into this set. */
+  authorities: string
   providers: string
   playlists: string
   interval: string

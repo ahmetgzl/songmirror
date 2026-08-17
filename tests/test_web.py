@@ -356,6 +356,34 @@ def test_syncs_crud(tmp_path):
         assert jid not in [j["id"] for j in client.get("/api/syncs").json()]
 
 
+def test_syncs_validate_authoritative_groups(tmp_path):
+    store = SyncStore(dir=tmp_path)
+    with TestClient(create_app(settings=SettingsStore(dir=tmp_path), syncs=store)) as client:
+        created = client.post("/api/syncs", json={
+            "name": "Two authorities",
+            "mode": "group",
+            "source": "spotify",
+            "authorities": "spotify,apple",
+            "providers": "spotify,apple,tidal",
+        })
+        assert created.status_code == 200
+        assert created.json()["authorities"] == "spotify,apple"
+
+        too_small = client.post("/api/syncs", json={
+            "name": "Unsafe", "mode": "group", "source": "spotify",
+            "authorities": "spotify", "providers": "spotify,apple",
+        })
+        assert too_small.status_code == 422
+        assert "at least two" in too_small.json()["detail"]
+
+        missing_provider = client.post("/api/syncs", json={
+            "name": "Unsafe", "mode": "group", "source": "spotify",
+            "authorities": "spotify,apple", "providers": "spotify,tidal",
+        })
+        assert missing_provider.status_code == 422
+        assert "missing: apple" in missing_provider.json()["detail"]
+
+
 def test_download_dir_prefers_container_override(tmp_path, monkeypatch):
     # In Docker the download path is a container bind-mount (/music). An
     # SONGMIRROR_DOWNLOAD_DIR override must win over a UI-saved DOWNLOAD_DIR — inside

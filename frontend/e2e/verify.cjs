@@ -144,6 +144,7 @@ function initialSyncs() {
       enabled: true,
       mode: 'nway',
       source: 'apple',
+      authorities: '',
       providers: 'spotify',
       playlists: 'Road Trip 2025, Some Old Mix',
       interval: '15m',
@@ -157,6 +158,7 @@ function initialSyncs() {
       enabled: false,
       mode: 'oneway',
       source: 'spotify',
+      authorities: '',
       providers: 'spotify,apple',
       playlists: '',
       interval: '1h',
@@ -446,6 +448,7 @@ async function installMocks(page, opts = {}) {
         enabled: true,
         mode: 'oneway',
         source: 'spotify',
+        authorities: '',
         providers: 'spotify,apple,ytmusic',
         playlists: '',
         interval: '15m',
@@ -1935,6 +1938,93 @@ async function main() {
     }
 
     // -----------------------------------------------------------------
+    // Wizard Direction: authoritative groups distinguish one order
+    // authority, two-or-more membership authorities, and destination-only
+    // mirrors. The roles must survive the PUT round trip and remain legible
+    // in the list-card summary.
+    // -----------------------------------------------------------------
+    {
+      const context = await browser.newContext()
+      await context.addInitScript(() => window.localStorage.setItem('songmirror-theme', 'light'))
+      const page = await context.newPage()
+      await installMocks(page)
+      await page.route('**/api/accounts', async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback()
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(ACCOUNTS.map((a) => (a.id === 'tidal' ? { ...a, state: 'connected' } : a))),
+        })
+      })
+      let savedGroup = null
+      await page.route('**/api/syncs/job1', async (route) => {
+        if (route.request().method() === 'PUT') savedGroup = route.request().postDataJSON()
+        await route.fallback()
+      })
+
+      await page.setViewportSize({ width: 1280, height: 900 })
+      await page.goto(BASE_URL + '/sync', { waitUntil: 'networkidle' })
+      await page.waitForSelector('h1:has-text("Sync")')
+      const defaultCard = page.locator('h3', { hasText: 'Default' }).locator('xpath=ancestor::div[contains(@class,"rounded-card")][1]')
+      await defaultCard.getByRole('button', { name: 'Edit', exact: true }).click()
+      const dialog = page.getByRole('dialog')
+      await dialog.waitFor()
+
+      await dialog.getByText('Authority group ⇆', { exact: true }).click()
+      await dialog.getByText('Membership authorities', { exact: true }).waitFor()
+
+      const appleOrder = dialog.getByRole('button', { name: /Apple Music order/, exact: false })
+      const spotifyAuthority = dialog.getByRole('button', { name: /Spotify authority/, exact: false })
+      const autoSelectedTwo =
+        (await appleOrder.getAttribute('aria-pressed')) === 'true' &&
+        (await spotifyAuthority.getAttribute('aria-pressed')) === 'true'
+      console.log(`${autoSelectedTwo ? 'ok        ' : 'FAIL      '} Authority group starts with the saved order authority plus a second connected authority`)
+      if (!autoSelectedTwo) results.push({ label: 'wizard authority group defaults', overflow: true })
+      await checkOverflow(page, 'Wizard authoritative group direction @ 1280', results)
+      await shot(page, 'wizard-authoritative-group-direction')
+
+      await dialog.getByRole('radio', { name: 'Services', exact: true }).click()
+      const appleLocked = await dialog.getByRole('button', { name: /Apple Music order/, exact: false }).isDisabled()
+      const spotifyLocked = await dialog.getByRole('button', { name: /Spotify authority/, exact: false }).isDisabled()
+      const authorityLocksOk = appleLocked && spotifyLocked
+      console.log(`${authorityLocksOk ? 'ok        ' : 'FAIL      '} Services locks both authorities so neither can be dropped accidentally`)
+      if (!authorityLocksOk) results.push({ label: 'wizard authority group locks', overflow: true })
+
+      await dialog.getByRole('button', { name: 'TIDAL', exact: true }).click()
+      const tidalMirror = dialog.getByRole('button', { name: /TIDAL mirror/, exact: false })
+      const mirrorRoleOk = (await tidalMirror.getAttribute('aria-pressed')) === 'true'
+      console.log(`${mirrorRoleOk ? 'ok        ' : 'FAIL      '} A selected non-authority is explicitly badged as a mirror`)
+      if (!mirrorRoleOk) results.push({ label: 'wizard authority mirror role', overflow: true })
+
+      await dialog.getByRole('radio', { name: 'Limits & downloads', exact: true }).click()
+      const review = await dialog.getByText('REVIEW', { exact: true }).locator('xpath=..').innerText()
+      const groupReviewOk =
+        review.includes('Authoritative group') &&
+        review.includes('Apple Music + Spotify → TIDAL')
+      console.log(`${groupReviewOk ? 'ok        ' : 'FAIL      '} Review distinguishes authorities from mirrors (got "${review.replace(/\n/g, ' ')}")`)
+      if (!groupReviewOk) results.push({ label: 'wizard authority group summary', overflow: true })
+      await checkOverflow(page, 'Wizard authoritative group review @ 1280', results)
+      await shot(page, 'wizard-authoritative-group')
+
+      await dialog.getByRole('button', { name: 'Save changes', exact: true }).click()
+      await dialog.waitFor({ state: 'hidden' })
+      await page.waitForSelector('text=Authoritative group')
+      const payloadOk =
+        savedGroup?.mode === 'group' &&
+        savedGroup?.source === 'apple' &&
+        savedGroup?.authorities === 'spotify,apple' &&
+        savedGroup?.providers === 'spotify,tidal,apple'
+      console.log(`${payloadOk ? 'ok        ' : 'FAIL      '} Group PUT persists mode, order authority, authorities, and mirrors separately (got ${JSON.stringify(savedGroup)})`)
+      if (!payloadOk) results.push({ label: 'wizard authority group payload', overflow: true })
+      const cardText = await defaultCard.innerText()
+      const cardSummaryOk = cardText.includes('Authoritative group') && cardText.includes('Apple Music + Spotify → TIDAL')
+      console.log(`${cardSummaryOk ? 'ok        ' : 'FAIL      '} Sync card keeps the authoritative-group roles visible after save`)
+      if (!cardSummaryOk) results.push({ label: 'sync card authority group summary', overflow: true })
+
+      await context.close()
+    }
+
+    // -----------------------------------------------------------------
     // Sync list: card-level quick actions — toggle enabled (immediate PUT),
     // delete (confirm + removal), run now (confirm + POST), and creating a
     // brand-new sync end to end.
@@ -2032,6 +2122,7 @@ async function main() {
         enabled: true,
         mode: 'nway',
         source: 'apple',
+        authorities: '',
         providers: 'spotify',
         playlists: '',
         interval: '15m',

@@ -15,6 +15,22 @@ def _svc(tmp_path, bus):
     return m.SyncService(SettingsStore(dir=tmp_path), bus, store), job.id
 
 
+def test_group_authorities_reach_engine_options(tmp_path):
+    from songmirror.services.sync_service import SyncService
+
+    service = SyncService(SettingsStore(dir=tmp_path), EventBus(), SyncStore(dir=tmp_path))
+    job = SyncJob(
+        name="Group", mode="group", source="spotify",
+        authorities="spotify,apple", providers="spotify,apple,tidal",
+    )
+
+    opts = service._opts_for(job, execute=False)
+
+    assert opts.sync_mode == "group"
+    assert opts.sync_source == "spotify"
+    assert opts.authorities == "spotify,apple"
+
+
 def test_run_job_coalesces(monkeypatch, tmp_path):
     calls = []
 

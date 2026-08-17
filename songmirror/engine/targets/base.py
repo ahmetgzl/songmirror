@@ -613,11 +613,13 @@ def _unify_aliases(canon):
     return alias
 
 
-def _merge(prev, cur, collapsed):
+def _merge(prev, cur, collapsed, authority_sources=None):
     """Pure delta merge over PER-PROVIDER state. prev, cur: {source:
     set(canonical_id)} — each provider's membership after the last clean pass
     and now. collapsed: sources whose read is untrusted (skipped this pass).
-    Returns (desired, {source: (add_ids, remove_ids)}).
+    Returns (desired, {source: (add_ids, remove_ids)}). When
+    ``authority_sources`` is supplied, only those providers may change desired
+    membership; every other current set is a destination-only mirror.
 
     A canonical is REMOVED only when it leaves a provider that actually had it
     (prev[src] - cur[src]) — so a track that merely can't be matched on a
@@ -625,9 +627,10 @@ def _merge(prev, cur, collapsed):
     Concurrent additions on initialized peers win over removals. Membership on
     a peer absent from `prev` is bootstrap state, not a user addition, so it
     joins the initial union but cannot resurrect an established removal."""
+    contributors = set(cur) if authority_sources is None else set(authority_sources)
     adds, bootstrap, removes = set(), set(), set()
     for src, ids in cur.items():
-        if src in collapsed:
+        if src in collapsed or src not in contributors:
             continue  # untrusted read contributes neither adds nor removes
         if src not in prev:
             bootstrap |= ids
@@ -635,13 +638,15 @@ def _merge(prev, cur, collapsed):
         adds |= ids - prev[src]
         removes |= prev[src] - ids
     removes -= adds
-    union_prev = set().union(*prev.values()) if prev else set()
+    previous_authority_sets = [ids for src, ids in prev.items() if src in contributors]
+    union_prev = set().union(*previous_authority_sets) if previous_authority_sets else set()
     desired = (union_prev | adds | bootstrap) - removes
     plan = {src: (desired - ids, ids - desired) for src, ids in cur.items()}
     return desired, plan
 
 
-def _addition_order_by_cid(peers, per_entry, prev, cur, collapsed, alias):
+def _addition_order_by_cid(peers, per_entry, prev, cur, collapsed, alias,
+                           authority_sources=None):
     """Choose deterministic ordering evidence from each track's origin peer.
 
     Reconcile membership is intentionally set-based, so plan iteration cannot
@@ -650,6 +655,8 @@ def _addition_order_by_cid(peers, per_entry, prev, cur, collapsed, alias):
     trusted current peer. Date-added wins when present, otherwise peer rank and
     the entry's source-playlist position preserve a stable order.
     """
+    contributors = ({peer.source for peer in peers} if authority_sources is None
+                    else set(authority_sources))
     source_rank = {peer.source: rank for rank, peer in enumerate(peers)}
     all_evidence, origin_evidence = {}, {}
     for peer in peers:
@@ -665,7 +672,7 @@ def _addition_order_by_cid(peers, per_entry, prev, cur, collapsed, alias):
                 playlist_position=norm.get("_playlist_position", 0),
             )
             all_evidence.setdefault(cid, []).append(order)
-            if cid in introduced:
+            if source in contributors and cid in introduced:
                 origin_evidence.setdefault(cid, []).append(order)
     return {
         cid: min(origin_evidence.get(cid) or evidence)
@@ -673,23 +680,74 @@ def _addition_order_by_cid(peers, per_entry, prev, cur, collapsed, alias):
     }
 
 
+def reconcile_state_key(name, *, link_key=None, authority_sources=None):
+    """Stable baseline namespace for one logical reconciliation policy."""
+    logical_key = link_key or name.casefold()
+    if authority_sources is None:
+        return logical_key
+    authority_key = ",".join(sorted(set(authority_sources)))
+    return f"group:{authority_key}:{logical_key}"
+
+
 def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, max_adds,
-              drain_removals=False, should_continue=None, link_key=None):
-    """Reconcile one logical playlist across N provider peers, bidirectionally.
+              drain_removals=False, should_continue=None, link_key=None,
+              authority_sources=None):
+    """Reconcile one logical playlist across provider peers.
 
     playlists: {source: playlist dict}; caches: {source: resolution cache}.
+    With ``authority_sources=None``, every peer contributes changes (N-way).
+    Otherwise only those providers contribute membership and all remaining
+    peers are mirrors. The first pass under a new authority set establishes a
+    separate baseline and refuses destructive writes.
     `link_key`, when given (explicit pairing), addresses the canonical snapshot
     state so differently-named paired playlists share one logical identity;
     otherwise the casefolded display name is used (implicit same-name pairing).
     Returns a stats dict; `clean` is True when every side applied with no guard
     tripped (only then is the canonical snapshot advanced)."""
-    key = link_key or name.casefold()
+    authorities = None if authority_sources is None else frozenset(authority_sources)
+    peer_sources = {p.source for p in peers}
+    if authorities is not None:
+        if len(authorities) < 2:
+            raise ValueError("authoritative reconciliation needs at least two authorities")
+        missing_authorities = authorities - peer_sources
+        if missing_authorities:
+            raise ValueError(
+                "authoritative reconciliation is missing peers: "
+                + ", ".join(sorted(missing_authorities))
+            )
+    key = reconcile_state_key(name, link_key=link_key, authority_sources=authorities)
     started = time.monotonic()
     peer_names = {p.source: p.name for p in peers}
     diagnostics = []
     identity_changes = 0
     read_anomalies = 0
     initialized = {p.source for p in peers if archive.has_playlist_state(songs, key, p.source)}
+    physical_playlist_ids = {}
+    replaced_sources = set()
+    for p in peers:
+        playlist_id_getter = getattr(p, "playlist_id", lambda playlist: playlist.get("id"))
+        physical_id = playlist_id_getter(playlists[p.source])
+        if physical_id is None:
+            continue
+        physical_id = str(physical_id)
+        physical_playlist_ids[p.source] = physical_id
+        previous_physical_id = archive.get_playlist_physical_id(songs, key, p.source)
+        if p.source in initialized and previous_physical_id and previous_physical_id != physical_id:
+            replaced_sources.add(p.source)
+            diagnostics.append({
+                "category": "playlist_recreated", "playlist": name, "provider": p.name,
+                "count": 1,
+                "evidence": (
+                    f"provider playlist id changed from {previous_physical_id} to {physical_id}; "
+                    "this side is re-establishing its baseline"
+                ),
+            })
+            log_note(
+                f"{name}: {p.name} playlist was recreated ({previous_physical_id} -> {physical_id}); "
+                "re-establishing that baseline",
+                tag=p.tag,
+            )
+    initialized -= replaced_sources
     # Missing keys deliberately mean "bootstrap peer" to _merge. Keeping an
     # initialized empty set in the mapping is why playlist_state_meta exists.
     prev = {p.source: {normalize_canonical_id(cid) for cid in
@@ -704,7 +762,18 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
     key2isrc = {}      # track_key -> ISRC, seeded by every ISRC-bearing provider before canonicalization
     raw_by_source = {}
     for p in peers:
-        raw = p.playlist_tracks(playlists[p.source])
+        provider_rows = p.playlist_tracks(playlists[p.source])
+        raw = [
+            track for track in provider_rows
+            if isinstance(track, dict) and str(track.get("name") or "").strip()
+        ]
+        ignored = len(provider_rows) - len(raw)
+        if ignored:
+            log_warn(
+                f"{p.name}/{name}: ignored {ignored} malformed playlist "
+                f"entr{'y' if ignored == 1 else 'ies'} without a usable title",
+                tag=p.tag,
+            )
         raw_by_source[p.source] = raw
         archive.upsert_many(songs, p.source, raw)
         archive.record_order(songs, key, p.source,
@@ -859,7 +928,8 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
     # source-local absence retained from a prior executing pass is confirmed.
     missing_by_source, first_seen_removals, confirmed_removals = {}, {}, {}
     effective_cur = {src: set(ids) for src, ids in cur.items()}
-    for src in initialized:
+    confirmation_sources = initialized if authorities is None else initialized & authorities
+    for src in confirmation_sources:
         if src in collapsed or src not in cur:
             continue
         pending = {
@@ -886,10 +956,10 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
                 "evidence": "missing from two consecutive trusted snapshots on this provider",
             })
 
-    _, unconfirmed_plan = _merge(prev, cur, collapsed)
-    desired, plan = _merge(prev, effective_cur, collapsed)
+    _, unconfirmed_plan = _merge(prev, cur, collapsed, authorities)
+    desired, plan = _merge(prev, effective_cur, collapsed, authorities)
     addition_order = _addition_order_by_cid(
-        peers, per_entry, prev, cur, collapsed, alias)
+        peers, per_entry, prev, cur, collapsed, alias, authorities)
     desired_recordings = {}
     for cid in desired:
         norm = repr_.get(cid)
@@ -899,7 +969,8 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
 
     awaiting_confirmation = sum(len(ids) for ids in first_seen_removals.values())
     confirmed_absence_count = sum(len(ids) for ids in confirmed_removals.values())
-    stats = {"clean": execute and not collapsed and not awaiting_confirmation,
+    authority_bootstrap = authorities is not None and bool(authorities - initialized)
+    stats = {"clean": execute and not collapsed and not awaiting_confirmation and not authority_bootstrap,
              "added": 0, "removed": 0, "missing": 0,
              "held": 0, "deferred": 0, "removals_skipped": 0, "held_removals": [],
              "identity_changes": identity_changes,
@@ -907,7 +978,18 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
              "confirmed_absences": confirmed_absence_count,
              "read_anomalies": read_anomalies,
              "change_diagnostics": diagnostics}
-    baseline_blocked = bool(awaiting_confirmation)
+    baseline_blocked = bool(awaiting_confirmation or authority_bootstrap)
+    if authority_bootstrap:
+        initializing = ", ".join(sorted(peer_names.get(src, src) for src in authorities - initialized))
+        diagnostics.append({
+            "category": "authority_baseline", "playlist": name,
+            "provider": initializing, "count": len(authorities - initialized),
+            "evidence": "the authority set has no trusted baseline yet; destructive writes wait for the next pass",
+        })
+        log_note(
+            f"{name}: establishing authoritative baseline for {initializing}; removals are held this pass",
+            tag="sync",
+        )
     if awaiting_confirmation:
         # Report actual destination removals held, deduplicated when several
         # sources first report the same absence. The detail is what lets the UI
@@ -1092,7 +1174,23 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
                 continue
             remove_pairs.append((cid, norm))
         safe, held = protect_removals([n for _, n in remove_pairs], not_found)
-        if provider_add_incomplete:
+        if authority_bootstrap:
+            held = [norm for _, norm in remove_pairs]
+            safe = []
+            if held:
+                stats["removals_skipped"] += len(held)
+                stats["held_removals"] += held_removals(
+                    p.name, name, held, max_removals,
+                    reason="the authoritative group is establishing its first trusted baseline",
+                    category="authority_baseline",
+                    source=", ".join(sorted(peer_names.get(src, src) for src in authorities)),
+                    evidence="destructive writes begin only after every authority has one complete baseline",
+                )
+                log_warn(
+                    f"{p.name}/{name}: held {len(held)} removals while the authoritative baseline is established",
+                    tag=p.tag,
+                )
+        elif provider_add_incomplete:
             # Removals are the destructive half of a replacement transaction.
             # If any desired addition is unresolved, deferred, or interrupted,
             # keep every current entry until the complete add plan can succeed.
@@ -1169,9 +1267,10 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
                     dry=not execute, tag=p.tag)
         for norm in safe:
             log_remove(f"{p.name}: {norm['name']} - {norm['artist']}", dry=not execute, tag=p.tag)
-        hold_reason = ("replacement additions incomplete" if provider_add_incomplete
-                       else "no re-add match")
-        if held and not provider_add_incomplete:
+        hold_reason = ("authoritative baseline" if authority_bootstrap else
+                       "replacement additions incomplete" if provider_add_incomplete else
+                       "no re-add match")
+        if held and not provider_add_incomplete and not authority_bootstrap:
             diagnostics.append({
                 "category": "uncertain_match", "playlist": name,
                 "provider": p.name, "count": len(held),
@@ -1180,8 +1279,9 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
         for norm in held:
             log_protected(
                 f"{p.name}: kept ({hold_reason}): {norm['name']} - {norm['artist']}", tag=p.tag,
-                data={"classification": ("replacement_blocked" if provider_add_incomplete
-                                         else "uncertain_match"),
+                data={"classification": ("authority_baseline" if authority_bootstrap else
+                                         "replacement_blocked" if provider_add_incomplete else
+                                         "uncertain_match"),
                       "count": 1, "playlist": name, "provider": p.source},
             )
         for norm in not_found:
@@ -1217,14 +1317,15 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
         if not collapsed and not interrupted:
             persist = new_state if not baseline_blocked else {
                 src: ids for src, ids in new_state.items() if src not in initialized}
+            pending_sources = initialized if authorities is None else initialized & authorities
             pending_updates = (
                 {src: missing_by_source.get(src, set()) | applied_removals.get(src, set())
-                 for src in initialized}
+                 for src in pending_sources}
                 if baseline_blocked else
-                {src: set() for src in initialized}
+                {src: set() for src in pending_sources}
             )
             archive.commit_reconcile_membership(
-                songs, key, persist, pending_updates)
+                songs, key, persist, pending_updates, physical_playlist_ids)
             if baseline_blocked:
                 for src in persist:
                     label = next((p.name for p in peers if p.source == src), src)

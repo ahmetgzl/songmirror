@@ -33,8 +33,9 @@ LEGACY_NAMED_JOB_PROVIDERS = "spotify,apple,ytmusic"
 class SyncJob:
     name: str = "Sync"
     enabled: bool = True                      # participates in scheduled auto-sync
-    mode: str = DEFAULT_SYNC_MODE             # oneway | nway
-    source: str = DEFAULT_SYNC_SOURCE         # one-way source of truth
+    mode: str = DEFAULT_SYNC_MODE             # oneway | group | nway
+    source: str = DEFAULT_SYNC_SOURCE         # one-way source / group order authority
+    authorities: str = ""                    # group membership authorities, comma-separated
     providers: str = DEFAULT_PROVIDERS        # comma-separated participating providers
     playlists: str = ""                       # comma-separated names (empty = every same-named pair)
     interval: str = DEFAULT_INTERVAL          # this job's own auto-sync cadence
@@ -43,6 +44,43 @@ class SyncJob:
     apply_large_removals: bool = False        # drain removals over max_removals across passes (default: hold back)
     download: bool = False                    # opt into the global download mirror
     id: str = ""
+
+
+VALID_SYNC_MODES = {"oneway", "group", "nway"}
+
+
+def _provider_ids(value):
+    return {part.strip() for part in str(value or "").split(",") if part.strip()}
+
+
+def validate_sync_job(job):
+    """Reject configurations whose direction cannot be reconciled safely.
+
+    Existing one-way and N-way jobs do not need an ``authorities`` value. An
+    authoritative group does: every authority must participate, and the
+    provider whose playlist supplies names/order must itself be authoritative.
+    """
+    if job.mode not in VALID_SYNC_MODES:
+        raise ValueError(f"mode must be one of: {', '.join(sorted(VALID_SYNC_MODES))}")
+    if job.max_adds < 1:
+        raise ValueError("max_adds must be at least 1")
+    if job.max_removals < 0:
+        raise ValueError("max_removals must be at least 0")
+    if job.mode != "group":
+        return job
+
+    providers = _provider_ids(job.providers)
+    authorities = _provider_ids(job.authorities)
+    if len(authorities) < 2:
+        raise ValueError("an authoritative group needs at least two authorities")
+    if job.source not in authorities:
+        raise ValueError("the order authority must belong to the authoritative group")
+    missing = authorities - providers
+    if missing:
+        raise ValueError(
+            "every authority must be a selected provider; missing: " + ", ".join(sorted(missing))
+        )
+    return job
 
 
 class SyncStore:
@@ -70,6 +108,7 @@ class SyncStore:
         return next((j for j in self.list() if j.id == job_id), None)
 
     def upsert(self, job):
+        validate_sync_job(job)
         if not job.id:
             job.id = uuid.uuid4().hex[:8]
         jobs = [j for j in self.list() if j.id != job.id]

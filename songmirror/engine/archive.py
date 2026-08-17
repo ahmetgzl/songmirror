@@ -74,9 +74,10 @@ CREATE TABLE IF NOT EXISTS playlist_state (
     # an empty canonical set remains representable.
     """
 CREATE TABLE IF NOT EXISTS playlist_state_meta (
-    playlist       TEXT NOT NULL,
-    source         TEXT NOT NULL,
-    initialized_at TEXT NOT NULL,
+    playlist            TEXT NOT NULL,
+    source              TEXT NOT NULL,
+    initialized_at      TEXT NOT NULL,
+    physical_playlist_id TEXT,
     PRIMARY KEY (playlist, source)
 )
 """,
@@ -212,6 +213,17 @@ def connect(path):
         conn.execute(
             "ALTER TABLE playlist_track_cache "
             "ADD COLUMN isrc TEXT NOT NULL DEFAULT ''"
+        )
+    state_meta_cols = [
+        row[1]
+        for row in conn.execute(
+            "PRAGMA table_info(playlist_state_meta)"
+        ).fetchall()
+    ]
+    if state_meta_cols and "physical_playlist_id" not in state_meta_cols:
+        conn.execute(
+            "ALTER TABLE playlist_state_meta "
+            "ADD COLUMN physical_playlist_id TEXT"
         )
     # Existing non-empty baselines predate playlist_state_meta. Mark them as
     # initialized in place; providers with no rows remain correctly classified
@@ -459,6 +471,16 @@ def has_playlist_state(conn, playlist, source):
     return row is not None
 
 
+def get_playlist_physical_id(conn, playlist, source):
+    """Provider playlist id associated with this baseline, if recorded."""
+    row = conn.execute(
+        "SELECT physical_playlist_id FROM playlist_state_meta "
+        "WHERE playlist = ? AND source = ?",
+        (playlist, source),
+    ).fetchone()
+    return row[0] if row and row[0] else None
+
+
 def get_pending_removals(conn, playlist, source):
     """Canonical ids absent on one prior trusted N-way pass for this source."""
     rows = conn.execute(
@@ -469,7 +491,8 @@ def get_pending_removals(conn, playlist, source):
     return {row[0] for row in rows.fetchall()}
 
 
-def commit_reconcile_membership(conn, playlist, state_updates, pending_updates):
+def commit_reconcile_membership(conn, playlist, state_updates, pending_updates,
+                                physical_playlist_ids=None):
     """Atomically replace selected baselines and pending removal observations.
 
     A source absent from either mapping is untouched. An empty set explicitly
@@ -478,11 +501,17 @@ def commit_reconcile_membership(conn, playlist, state_updates, pending_updates):
     when it did not, and a failed pass never confirms a deletion.
     """
     now = _now()
+    physical_playlist_ids = physical_playlist_ids or {}
     try:
         for source, canonical_ids in state_updates.items():
             conn.execute(
-                "INSERT OR REPLACE INTO playlist_state_meta VALUES (?, ?, ?)",
-                (playlist, source, now),
+                "INSERT INTO playlist_state_meta "
+                "(playlist, source, initialized_at, physical_playlist_id) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(playlist, source) DO UPDATE SET "
+                "initialized_at = excluded.initialized_at, "
+                "physical_playlist_id = COALESCE(excluded.physical_playlist_id, "
+                "playlist_state_meta.physical_playlist_id)",
+                (playlist, source, now, physical_playlist_ids.get(source)),
             )
             conn.execute(
                 "DELETE FROM playlist_state WHERE playlist = ? AND source = ?",
@@ -529,7 +558,8 @@ def set_reconcile_identities(conn, playlist, repaired_states, learned_identities
     try:
         for source, canonical_ids in repaired_states.items():
             conn.execute(
-                "INSERT OR REPLACE INTO playlist_state_meta VALUES (?, ?, ?)",
+                "INSERT INTO playlist_state_meta (playlist, source, initialized_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(playlist, source) DO UPDATE SET initialized_at = excluded.initialized_at",
                 (playlist, source, now),
             )
             conn.execute(

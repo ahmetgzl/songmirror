@@ -1,7 +1,7 @@
 import type { Account, SyncJob } from '@/types'
 
-export function parseCsv(value: string): string[] {
-  return value
+export function parseCsv(value: string | null | undefined): string[] {
+  return (value || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
@@ -20,10 +20,21 @@ export function syncPeersOf(accounts: Account[]): Account[] {
   return accounts.filter((a) => a.transferable)
 }
 
-/** Whichever peer is locked as the source in one-way mode — `null` in
- * N-way, which has no single source. */
+/** Whichever peer is locked as the source in one-way mode. Group jobs lock
+ * every authority separately; N-way has no locked provider. */
 export function lockedSourceOf(job: Pick<SyncJob, 'mode' | 'source'>): string | null {
-  return job.mode === 'nway' ? null : job.source || 'spotify'
+  return job.mode === 'oneway' ? job.source || 'spotify' : null
+}
+
+export function authorityProvidersOf(job: Pick<SyncJob, 'mode' | 'authorities'>): Set<string> {
+  return job.mode === 'group' ? new Set(parseCsv(job.authorities)) : new Set()
+}
+
+export function lockedProvidersOf(
+  job: Pick<SyncJob, 'mode' | 'source' | 'authorities'>,
+): Set<string> {
+  if (job.mode === 'oneway') return new Set([job.source || 'spotify'])
+  return authorityProvidersOf(job)
 }
 
 /** Which providers a job explicitly includes. Empty means none; treating it
@@ -53,11 +64,24 @@ export function buildSyncSummaryRows(job: SyncJob, peers: Account[], downloadDir
 
   const enabled = enabledProvidersOf(job, peers)
   const lockedId = lockedSourceOf(job)
-  const enabledNames = peers.filter((a) => a.id === lockedId || enabled.has(a.id)).map((a) => a.name)
+  const authorities = authorityProvidersOf(job)
+  const included = new Set([...enabled, ...(lockedId ? [lockedId] : []), ...authorities])
+  const enabledNames = peers.filter((a) => included.has(a.id)).map((a) => a.name)
   if (job.mode === 'nway') {
     // No single source in N-way — just list who's included.
     const who = enabledNames.length > 0 ? enabledNames.join(' ⇄ ') : 'no services selected'
     rows.push({ label: 'Direction', value: `Bidirectional (N-way) · ${who}` })
+  } else if (job.mode === 'group') {
+    const sourceId = job.source || 'spotify'
+    const orderedAuthorities = [
+      ...peers.filter((a) => a.id === sourceId && authorities.has(a.id)),
+      ...peers.filter((a) => a.id !== sourceId && authorities.has(a.id)),
+    ]
+    const authorityNames = orderedAuthorities.map((a) => a.name)
+    const mirrorNames = peers.filter((a) => included.has(a.id) && !authorities.has(a.id)).map((a) => a.name)
+    const authorityLabel = authorityNames.length > 0 ? authorityNames.join(' + ') : 'no authorities selected'
+    const who = mirrorNames.length > 0 ? `${authorityLabel} → ${mirrorNames.join(', ')}` : `${authorityLabel} only`
+    rows.push({ label: 'Direction', value: `Authoritative group · ${who}` })
   } else {
     const sourceName = peers.find((a) => a.id === (job.source || 'spotify'))?.name ?? 'Spotify'
     const others = enabledNames.filter((n) => n !== sourceName)

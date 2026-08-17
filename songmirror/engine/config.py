@@ -17,7 +17,7 @@ DEFAULT_CACHE_FILE = "apple_resolve_cache.json"
 DEFAULT_SONG_CACHE_FILE = "song_cache.db"
 DEFAULT_STOREFRONT = "us"
 DEFAULT_SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8888/callback"
-DEFAULT_SYNC_MODE = "oneway"                          # oneway (source->targets) | nway (bidirectional)
+DEFAULT_SYNC_MODE = "oneway"                          # oneway | group | nway
 DEFAULT_PROVIDERS = "spotify,tidal,qobuz,deezer,amazon,apple,ytmusic"  # participating providers
 DEFAULT_SYNC_SOURCE = "spotify"                       # one-way source of truth (any connected provider)
 DEFAULT_SPOTIFY_CACHE_FILE = "spotify_resolve_cache.json"
@@ -82,6 +82,7 @@ class Options:
     sync_mode: str = DEFAULT_SYNC_MODE
     providers: str = DEFAULT_PROVIDERS
     sync_source: str = DEFAULT_SYNC_SOURCE
+    authorities: str = ""
     spotify_cache_file: str = DEFAULT_SPOTIFY_CACHE_FILE
     apply_large_removals: bool = False
 
@@ -116,13 +117,17 @@ def parse_args(argv=None):
                    help=f"ISRC/search resolution cache (default: {DEFAULT_CACHE_FILE}).")
     p.add_argument("--song-cache-file", default=os.getenv("SONG_CACHE_FILE", DEFAULT_SONG_CACHE_FILE),
                    help=f"Ever-growing SQLite song archive (default: {DEFAULT_SONG_CACHE_FILE}).")
-    p.add_argument("--sync-mode", default=os.getenv("SYNC_MODE", DEFAULT_SYNC_MODE), choices=("oneway", "nway"),
-                   help=f"oneway = Spotify->targets (default); nway = bidirectional across all providers.")
+    p.add_argument("--sync-mode", default=os.getenv("SYNC_MODE", DEFAULT_SYNC_MODE),
+                   choices=("oneway", "group", "nway"),
+                   help="oneway = one source; group = selected authorities feed mirrors; "
+                        "nway = every provider is bidirectional.")
     p.add_argument("--providers", default=os.getenv("PROVIDERS", DEFAULT_PROVIDERS),
                    help=f"Providers participating in sync, comma-separated (default: {DEFAULT_PROVIDERS}).")
     p.add_argument("--sync-source", default=os.getenv("SYNC_SOURCE", DEFAULT_SYNC_SOURCE),
                    choices=("spotify", "tidal", "qobuz", "deezer", "amazon", "apple", "ytmusic"),
-                   help=f"One-way source of truth (default: {DEFAULT_SYNC_SOURCE}).")
+                   help=f"One-way source or group order authority (default: {DEFAULT_SYNC_SOURCE}).")
+    p.add_argument("--authorities", default=os.getenv("SYNC_AUTHORITIES", ""),
+                   help="Authoritative-group providers, comma-separated (group mode only).")
     p.add_argument("--spotify-cache-file", default=os.getenv("SPOTIFY_CACHE_FILE", DEFAULT_SPOTIFY_CACHE_FILE),
                    help=f"Spotify resolution cache for N-way writes (default: {DEFAULT_SPOTIFY_CACHE_FILE}).")
     a = p.parse_args(argv)
@@ -131,11 +136,21 @@ def parse_args(argv=None):
         p.error("--max-removals must be >= 0")
     if a.max_adds < 1:
         p.error("--max-adds must be >= 1")
+    if a.sync_mode == "group":
+        providers = {part.strip() for part in a.providers.split(",") if part.strip()}
+        authorities = {part.strip() for part in a.authorities.split(",") if part.strip()}
+        if len(authorities) < 2:
+            p.error("--sync-mode group needs at least two --authorities")
+        if a.sync_source not in authorities:
+            p.error("--sync-source must be one of --authorities in group mode")
+        if not authorities <= providers:
+            p.error("every --authorities entry must also appear in --providers")
     return Options(
         execute=a.execute, loop=a.loop, interval_s=parse_interval(a.interval), playlists=a.playlists,
         max_removals=a.max_removals, max_adds=a.max_adds, download_dir=a.download_dir,
         storefront=a.storefront, cache_file=a.cache_file, song_cache_file=a.song_cache_file,
         refresh_local=a.refresh_local, sync_mode=a.sync_mode, providers=a.providers,
-        sync_source=a.sync_source, spotify_cache_file=a.spotify_cache_file,
+        sync_source=a.sync_source, authorities=a.authorities,
+        spotify_cache_file=a.spotify_cache_file,
         apply_large_removals=a.apply_large_removals,
     )
