@@ -3,7 +3,7 @@ import useSWR from 'swr'
 
 import { errorMessage } from '@/api'
 
-const CACHE_SCHEMA_VERSION = 1
+const CACHE_SCHEMA_VERSION = 2
 const CACHE_PREFIX = `songmirror-cache-v${CACHE_SCHEMA_VERSION}:`
 
 interface CacheEnvelope<T> {

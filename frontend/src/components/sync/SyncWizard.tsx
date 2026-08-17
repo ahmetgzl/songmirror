@@ -15,7 +15,14 @@ import { useSettings } from '@/hooks/useSettings'
 import { cn } from '@/lib/cn'
 import { serviceLogoId, tagDot, tagText } from '@/lib/constants'
 import { isValidIntervalText, isValidPositiveInt } from '@/lib/format'
-import { buildSyncSummaryRows, enabledProvidersOf, lockedSourceOf, syncPeersOf } from '@/lib/syncSummary'
+import {
+  authorityProvidersOf,
+  buildSyncSummaryRows,
+  enabledProvidersOf,
+  lockedProvidersOf,
+  parseCsv,
+  syncPeersOf,
+} from '@/lib/syncSummary'
 import { PlaylistFilterField } from '../settings/PlaylistFilterField'
 import type { Account, SyncJob, SyncJobUpsertRequest, SyncMode } from '@/types'
 
@@ -27,6 +34,7 @@ interface JobFormState {
   enabled: boolean
   mode: SyncMode
   source: string
+  authorities: string
   providers: string
   playlists: string
   interval: string
@@ -43,6 +51,7 @@ const NEW_JOB_DEFAULTS: JobFormState = {
   enabled: true,
   mode: 'oneway',
   source: 'spotify',
+  authorities: '',
   providers: '',
   playlists: '',
   interval: '15m',
@@ -60,6 +69,7 @@ function formFromJob(job: SyncJob | null): JobFormState {
     enabled: job.enabled,
     mode: job.mode,
     source: job.source,
+    authorities: job.authorities || '',
     providers: job.providers,
     playlists: job.playlists,
     interval: job.interval,
@@ -100,11 +110,13 @@ function ProviderChip({
   account,
   checked,
   locked,
+  role,
   onToggle,
 }: {
   account: Account
   checked: boolean
   locked: boolean
+  role?: 'source' | 'order' | 'authority' | 'mirror'
   onToggle: () => void
 }) {
   const logoId = serviceLogoId(account.id)
@@ -114,13 +126,13 @@ function ProviderChip({
     <button
       type="button"
       onClick={connected && !locked ? onToggle : undefined}
-      disabled={!connected}
+      disabled={!connected || locked}
       aria-pressed={connected ? checked : undefined}
       title={
         !connected
           ? `Connect ${account.name} on the Accounts page to include it in syncing.`
           : locked
-            ? `${account.name} is the sync source, always included, and it's never modified.`
+            ? `${account.name} is ${role === 'order' ? 'the order authority' : role === 'authority' ? 'an authority' : 'the sync source'} and is always included.`
             : undefined
       }
       className={cn(
@@ -138,9 +150,9 @@ function ProviderChip({
         <span className={cn('size-2 shrink-0 rounded-full', tagDot(account.id))} aria-hidden="true" />
       )}
       {account.name}
-      {locked && connected && (
+      {role && connected && checked && (
         <span className="rounded-full bg-accent px-1.5 py-[1px] font-mono text-[9px] font-bold uppercase tracking-wide text-on-accent">
-          source
+          {role}
         </span>
       )}
       {!connected && <span className="font-normal text-text-3">not connected</span>}
@@ -290,16 +302,93 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
   const syncPeers = syncPeersOf(accounts)
   const jellyfinConnected = accounts.some((a) => a.id === 'jellyfin' && a.state === 'connected')
 
-  // The configurable one-way source of truth (default: spotify). Only
-  // meaningful in one-way mode — N-way has no single source, so nothing is
-  // locked there even if a non-default source was saved from an earlier
-  // one-way session.
+  // One-way uses this as its source of truth. In group mode it is the order
+  // authority: playlist names and sequence follow it, while membership can be
+  // changed on any authority.
   const syncSource = form.source || 'spotify'
-  const lockedSourceId = lockedSourceOf({ mode: form.mode, source: form.source })
+  const authorityIds = authorityProvidersOf({ mode: form.mode, authorities: form.authorities })
+  const lockedProviderIds = lockedProvidersOf({
+    mode: form.mode,
+    source: form.source,
+    authorities: form.authorities,
+  })
   const nonSpotifySourceConflict =
     form.mode !== 'nway' && syncSource !== 'spotify' && (form.download || jellyfinConnected)
 
   const enabledProviders = enabledProvidersOf({ providers: form.providers }, syncPeers)
+  const connectedPeerIds = new Set(syncPeers.filter((account) => account.state === 'connected').map((account) => account.id))
+
+  function csvInPeerOrder(ids: Set<string>) {
+    return syncPeers.filter((account) => ids.has(account.id)).map((account) => account.id).join(',')
+  }
+
+  function selectMode(mode: SyncMode) {
+    setForm((prev) => {
+      const next = { ...prev, mode }
+      const connected = syncPeers.filter((account) => account.state === 'connected').map((account) => account.id)
+      if (mode === 'group') {
+        const source = connected.includes(prev.source)
+          ? prev.source
+          : connected.includes('spotify')
+            ? 'spotify'
+            : connected[0] || prev.source
+        const authorities = new Set(parseCsv(prev.authorities).filter((id) => connected.includes(id)))
+        if (source) authorities.add(source)
+        if (authorities.size < 2) {
+          const second = connected.find((id) => id !== source)
+          if (second) authorities.add(second)
+        }
+        const providers = new Set(parseCsv(prev.providers))
+        for (const id of authorities) providers.add(id)
+        next.source = source
+        next.authorities = csvInPeerOrder(authorities)
+        next.providers = csvInPeerOrder(providers)
+      } else if (mode === 'oneway') {
+        const providers = new Set(parseCsv(prev.providers))
+        if (prev.source) providers.add(prev.source)
+        next.providers = csvInPeerOrder(providers)
+      }
+      return next
+    })
+  }
+
+  function selectOrderAuthority(id: string) {
+    setForm((prev) => {
+      const providers = new Set(parseCsv(prev.providers))
+      providers.add(id)
+      if (prev.mode !== 'group') {
+        return { ...prev, source: id, providers: csvInPeerOrder(providers) }
+      }
+      const authorities = new Set(parseCsv(prev.authorities))
+      authorities.add(id)
+      return {
+        ...prev,
+        source: id,
+        authorities: csvInPeerOrder(authorities),
+        providers: csvInPeerOrder(providers),
+      }
+    })
+  }
+
+  function toggleAuthority(id: string) {
+    if (!connectedPeerIds.has(id)) return
+    setForm((prev) => {
+      const authorities = new Set(parseCsv(prev.authorities))
+      if (authorities.has(id)) {
+        if (id === (prev.source || 'spotify')) return prev
+        authorities.delete(id)
+      } else {
+        authorities.add(id)
+      }
+      const providers = new Set(parseCsv(prev.providers))
+      providers.add(id)
+      return {
+        ...prev,
+        authorities: csvInPeerOrder(authorities),
+        providers: csvInPeerOrder(providers),
+      }
+    })
+  }
 
   // Step 3's playlist picker has to browse whichever provider is actually
   // meaningful for this job, not always Spotify (the picker's original,
@@ -312,23 +401,27 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
     form.mode !== 'nway' ? syncSource : (enabledProviders.has('spotify') ? 'spotify' : syncPeers.find((a) => enabledProviders.has(a.id))?.id) || null
 
   function toggleProvider(id: string) {
-    if (id === lockedSourceId) return // the source — never toggleable
+    if (lockedProviderIds.has(id)) return
     const next = new Set(enabledProviders)
-    if (lockedSourceId) next.add(lockedSourceId) // materializing an explicit list must never drop the source
+    for (const lockedId of lockedProviderIds) next.add(lockedId)
     if (next.has(id)) next.delete(id)
     else next.add(id)
-    setField('providers', [...next].join(','))
+    setField('providers', csvInPeerOrder(next))
   }
 
   const nameValid = form.name.trim().length > 0
   const intervalValid = isValidIntervalText(form.interval)
   const maxAddsValid = isValidPositiveInt(form.max_adds)
   const maxRemovalsValid = !form.mirror_removals || isValidPositiveInt(form.max_removals)
-  const formValid = nameValid && intervalValid && maxAddsValid && maxRemovalsValid
+  const groupValid =
+    form.mode !== 'group' ||
+    (authorityIds.size >= 2 && authorityIds.has(syncSource) &&
+      [...authorityIds].every((id) => connectedPeerIds.has(id) && enabledProviders.has(id)))
+  const formValid = nameValid && intervalValid && maxAddsValid && maxRemovalsValid && groupValid
 
   // Only Direction's name (always valid) aside, Schedule (interval) and
   // Limits (caps) are the only steps with a bad state to block Next on.
-  const stepValid = [true, true, true, intervalValid, maxAddsValid && maxRemovalsValid]
+  const stepValid = [groupValid, true, true, intervalValid, maxAddsValid && maxRemovalsValid]
   const isLastStep = step === STEPS.length - 1
 
   const previewJob: SyncJob = {
@@ -337,6 +430,7 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
     enabled: form.enabled,
     mode: form.mode,
     source: form.source,
+    authorities: form.authorities,
     providers: form.providers,
     playlists: form.playlists,
     interval: form.interval,
@@ -357,6 +451,7 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
         enabled: form.enabled,
         mode: form.mode,
         source: form.source,
+        authorities: form.authorities,
         providers: form.providers,
         playlists: form.playlists,
         interval: form.interval,
@@ -422,8 +517,8 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
                 <RadioCard
                   name="sync-mode"
                   value="oneway"
-                  checked={form.mode !== 'nway'}
-                  onChange={() => setField('mode', 'oneway')}
+                  checked={form.mode === 'oneway'}
+                  onChange={() => selectMode('oneway')}
                   title="One-way →"
                   description="One provider is the source of truth. Everyone else follows it, and it's never modified."
                 />
@@ -431,13 +526,22 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
                   name="sync-mode"
                   value="nway"
                   checked={form.mode === 'nway'}
-                  onChange={() => setField('mode', 'nway')}
+                  onChange={() => selectMode('nway')}
                   title="Bidirectional (N-way) ⇄"
                   description="A track added or removed on any connected service propagates to all the others."
                 />
+                <RadioCard
+                  name="sync-mode"
+                  value="group"
+                  checked={form.mode === 'group'}
+                  onChange={() => selectMode('group')}
+                  title="Authority group ⇆"
+                  description="Two or more trusted services contribute changes; every other selected service only mirrors them."
+                  className="sm:col-span-2"
+                />
               </div>
 
-              {form.mode !== 'nway' && (
+              {form.mode === 'oneway' && (
                 <div className="flex flex-col gap-2.5 border-t border-border pt-3.5">
                   <div>
                     <span className="text-[12.5px] font-semibold text-text-2">Source of truth</span>
@@ -452,7 +556,7 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
                         key={account.id}
                         account={account}
                         selected={syncSource === account.id}
-                        onSelect={() => setField('source', account.id)}
+                        onSelect={() => selectOrderAuthority(account.id)}
                       />
                     ))}
                   </div>
@@ -465,20 +569,100 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
                   )}
                 </div>
               )}
+
+              {form.mode === 'group' && (
+                <div className="flex flex-col gap-4 border-t border-border pt-3.5">
+                  <div className="flex flex-col gap-2.5">
+                    <div>
+                      <span className="text-[12.5px] font-semibold text-text-2">Order authority</span>
+                      <p className="mt-1 text-xs leading-relaxed text-text-3">
+                        Playlist names and track sequence follow this service. New membership can still come from
+                        any authority below.
+                      </p>
+                    </div>
+                    <div role="radiogroup" aria-label="Order authority" className="flex flex-wrap gap-2">
+                      {syncPeers.map((account) => (
+                        <SourceChip
+                          key={account.id}
+                          account={account}
+                          selected={syncSource === account.id}
+                          onSelect={() => selectOrderAuthority(account.id)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2.5">
+                    <div>
+                      <span className="text-[12.5px] font-semibold text-text-2">Membership authorities</span>
+                      <p className="mt-1 text-xs leading-relaxed text-text-3">
+                        Additions and confirmed removals on any selected authority flow to the full group. Choose at
+                        least two; the order authority is always included.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {syncPeers.map((account) => {
+                        const selected = authorityIds.has(account.id)
+                        const isOrder = account.id === syncSource
+                        return (
+                          <ProviderChip
+                            key={account.id}
+                            account={account}
+                            checked={selected}
+                            locked={isOrder}
+                            role={isOrder && selected ? 'order' : selected ? 'authority' : undefined}
+                            onToggle={() => toggleAuthority(account.id)}
+                          />
+                        )
+                      })}
+                    </div>
+                    {!groupValid && (
+                      <p className="text-xs leading-relaxed text-danger">
+                        Select at least two connected authorities, including the order authority.
+                      </p>
+                    )}
+                  </div>
+
+                  {nonSpotifySourceConflict && (
+                    <p className="flex items-start gap-1.5 text-xs leading-relaxed text-text-3">
+                      <LuInfo className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                      Local downloads + Jellyfin covers currently require Spotify as the order authority, so they'll
+                      be skipped.
+                    </p>
+                  )}
+                </div>
+              )}
             </>
           )}
 
           {step === 1 && (
             <div className="flex flex-wrap gap-2">
-              {syncPeers.map((account) => (
-                <ProviderChip
-                  key={account.id}
-                  account={account}
-                  checked={account.id === lockedSourceId || enabledProviders.has(account.id)}
-                  locked={account.id === lockedSourceId}
-                  onToggle={() => toggleProvider(account.id)}
-                />
-              ))}
+              {syncPeers.map((account) => {
+                const locked = lockedProviderIds.has(account.id)
+                const checked = locked || enabledProviders.has(account.id)
+                const role =
+                  form.mode === 'group'
+                    ? account.id === syncSource && authorityIds.has(account.id)
+                      ? 'order'
+                      : authorityIds.has(account.id)
+                        ? 'authority'
+                        : checked
+                          ? 'mirror'
+                          : undefined
+                    : form.mode === 'oneway' && account.id === syncSource
+                      ? 'source'
+                      : undefined
+                return (
+                  <ProviderChip
+                    key={account.id}
+                    account={account}
+                    checked={checked}
+                    locked={locked}
+                    role={role}
+                    onToggle={() => toggleProvider(account.id)}
+                  />
+                )
+              })}
             </div>
           )}
 
@@ -555,14 +739,32 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
                     checked={form.mirror_removals}
                     onChange={(v) => setField('mirror_removals', v)}
                     label="Mirror removals"
-                    description="Off (default): a track removed on one service is kept on the others — so a song losing licensing on one platform never disappears everywhere. On: removals sync too, capped per pass."
+                    description={
+                      form.mode === 'group'
+                        ? 'Off (default): removals and mirror-only tracks are kept. On: confirmed removals from either authority—and tracks found only on mirrors—are pruned everywhere, capped per pass.'
+                        : form.mode === 'nway'
+                          ? 'Off (default): a track removed on one service is kept on the others. On: confirmed removals from any service sync too, capped per pass.'
+                          : 'Off (default): tracks missing from the source are kept on mirrors. On: source removals sync too, capped per pass.'
+                    }
                   />
                   <Tooltip
                     content={
                       <>
-                        A track removed on <span className="font-semibold text-text">any</span> service — including one
-                        quietly pulled by a licensing change — is deleted from all the others, and its downloaded copy
-                        goes too. Removals under the cap apply without review.
+                        {form.mode === 'group' ? (
+                          <>
+                            A confirmed removal on <span className="font-semibold text-text">either authority</span>, or
+                            a track added only to a mirror, is removed across the group. Mirror edits never become
+                            authoritative.
+                          </>
+                        ) : form.mode === 'nway' ? (
+                          <>
+                            A track removed on <span className="font-semibold text-text">any</span> service is deleted
+                            from all the others after confirmation.
+                          </>
+                        ) : (
+                          <>A track absent from the source is removed from every selected mirror.</>
+                        )}{' '}
+                        Removals under the cap apply without review.
                       </>
                     }
                   >

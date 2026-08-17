@@ -49,6 +49,11 @@ class SettingsStore:
         self.env_path = str(self._dir / "app.env")
         self._data = self._read()
 
+    @property
+    def data_dir(self):
+        """Persistent application-data directory for sibling service caches."""
+        return self._dir
+
     def _read(self):
         try:
             with open(self._json, encoding="utf-8") as f:

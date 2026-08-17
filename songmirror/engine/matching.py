@@ -31,6 +31,19 @@ FROM_RELEASE_RE = re.compile(
     r'\s*(?:[-–—]\s*from|[\(\[]\s*from)\s+["“][^"”]+["”]\s*[\)\]]?\s*$',
     re.IGNORECASE,
 )
+CREATIVE_VERSION_PATTERNS = (
+    ("live", re.compile(r"\blive\b", re.IGNORECASE)),
+    ("acoustic", re.compile(r"\b(?:acoustic|unplugged)\b", re.IGNORECASE)),
+    ("remix", re.compile(r"\b(?:remix|rework|extended mix|radio edit)\b", re.IGNORECASE)),
+    ("instrumental", re.compile(r"\binstrumental\b", re.IGNORECASE)),
+    ("karaoke", re.compile(r"\bkaraoke\b", re.IGNORECASE)),
+    ("piano", re.compile(r"\bpiano\b", re.IGNORECASE)),
+    ("demo", re.compile(r"\bdemo\b", re.IGNORECASE)),
+    ("session", re.compile(r"\bsession\b", re.IGNORECASE)),
+    ("alternate-speed", re.compile(r"\b(?:sped up|slowed(?: down)?|nightcore)\b", re.IGNORECASE)),
+    ("mix-format", re.compile(r"\b(?:mono|stereo)\b", re.IGNORECASE)),
+    ("cover", re.compile(r"\bcover\b", re.IGNORECASE)),
+)
 
 
 def _added_at_epoch(value):
@@ -150,6 +163,26 @@ def catalog_name(name):
     return loose_name(cleaned)
 
 
+def creative_version_markers(name):
+    """Recording-changing title qualifiers that must agree during fuzzy search.
+
+    Search APIs regularly rank a live/acoustic/remix release above the ordinary
+    studio track. Similar title/artist text (and occasionally similar duration)
+    is not enough evidence to substitute one for the other. Generic "version"
+    is used only when no more specific qualifier explains it, so "Piano
+    Version" and "Piano" still describe the same creative variant.
+    """
+    normalized = normalize_text(name)
+    markers = {
+        marker
+        for marker, pattern in CREATIVE_VERSION_PATTERNS
+        if pattern.search(normalized)
+    }
+    if not markers and re.search(r"\bversion\b", normalized):
+        markers.add("alternate-version")
+    return markers
+
+
 def romanized(text):
     """ASCII romanization for cross-script matching (Камин->kamin, ত্রি->tri).
     Cyrillic / Bengali / Greek / Arabic romanize reliably; CJK yields a Chinese
@@ -196,6 +229,8 @@ def fuzzy_in(key, keys, threshold=FUZZY_THRESHOLD):
 def score_candidate(name, artists, duration_ms, cand_name, cand_artist, cand_duration_ms):
     """(score in 0..1, acceptable) for a search-result candidate vs the wanted
     track — the fuzzy fallback when no ISRC/link resolves it."""
+    if creative_version_markers(name) != creative_version_markers(cand_name):
+        return 0.0, False
     if isinstance(artists, str):
         artists = [artists]
     q_names, c_names = _name_variants(name), _name_variants(cand_name)
@@ -276,12 +311,15 @@ def compute_diff(sp_tracks, target_tracks, expected_by_sp, target_id_of, thresho
 
     expected_all = set()
     sp_keys = set()
+    sp_keys_by_version = {}
     to_add = []
     for tr in sp_tracks:
         expected = expected_by_sp.get(tr.get("id")) or set()
         expected_all |= expected
         keys = spotify_track_keys(tr)
         sp_keys |= keys
+        version = frozenset(creative_version_markers(tr.get("name")))
+        sp_keys_by_version.setdefault(version, set()).update(keys)
         if expected & target_ids:
             continue
         if keys & target_keys:
@@ -295,7 +333,10 @@ def compute_diff(sp_tracks, target_tracks, expected_by_sp, target_id_of, thresho
         if tid and tid in expected_all:
             continue
         key = track_key(t["name"], t["artist"])
-        if key in sp_keys or fuzzy_in(key, sp_keys, threshold):
+        compatible_keys = sp_keys_by_version.get(
+            frozenset(creative_version_markers(t.get("name"))), set()
+        )
+        if key in sp_keys or fuzzy_in(key, compatible_keys, threshold):
             continue
         to_remove.append(t)
     return to_add, to_remove
@@ -307,12 +348,19 @@ def protect_removals(to_remove, not_found_tracks, threshold=0.8):
     drop the song with no replacement. Deliberately loose threshold: wrongly
     holding leaves an extra track; wrongly deleting loses music."""
     nf_keys = set()
+    nf_keys_by_version = {}
     for track in not_found_tracks:
-        nf_keys |= spotify_track_keys(track)
+        keys = spotify_track_keys(track)
+        nf_keys |= keys
+        version = frozenset(creative_version_markers(track.get("name")))
+        nf_keys_by_version.setdefault(version, set()).update(keys)
     safe, held = [], []
     for track in to_remove:
         key = track_key(track["name"], track["artist"])
-        if key in nf_keys or fuzzy_in(key, nf_keys, threshold):
+        compatible_keys = nf_keys_by_version.get(
+            frozenset(creative_version_markers(track.get("name"))), set()
+        )
+        if key in nf_keys or fuzzy_in(key, compatible_keys, threshold):
             held.append(track)
         else:
             safe.append(track)

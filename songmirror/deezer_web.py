@@ -128,7 +128,10 @@ query SongMirrorDeezerPlaylistTracks($playlistId: String!, $first: Int!, $cursor
         cursor
         node {
           id title duration
-          album { id displayTitle }
+          album {
+            id displayTitle
+            cover { urls(pictureRequest: {width: 128, height: 128}) }
+          }
           contributors { edges { node { ... on Artist { id name } } } }
         }
       }

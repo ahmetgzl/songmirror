@@ -30,6 +30,7 @@ class TidalTarget(MirrorTarget):
     name = "TIDAL"
     tag = "tidal"
     source = "tidal"
+    stable_occurrence_ids = True
 
     def __init__(self):
         self.cache_file = os.getenv("TIDAL_CACHE_FILE", "tidal_resolve_cache.json")
@@ -172,8 +173,26 @@ class TidalTarget(MirrorTarget):
             artists = [a for a in artists if a]
             album_ids = [str(a.get("id")) for a in ((relationships.get("albums") or {}).get("data") or [])]
             album = ""
+            image = ""
             if album_ids:
-                album = (resources.get(("albums", album_ids[0]), {}).get("attributes") or {}).get("title", "")
+                album_resource = resources.get(("albums", album_ids[0]), {})
+                album = (album_resource.get("attributes") or {}).get("title", "")
+                cover_ids = [
+                    str(item.get("id"))
+                    for item in (((album_resource.get("relationships") or {}).get("coverArt") or {}).get("data") or [])
+                    if item.get("id") is not None
+                ]
+                files = [
+                    file
+                    for cover_id in cover_ids
+                    for file in ((resources.get(("artworks", cover_id), {}).get("attributes") or {}).get("files") or [])
+                    if file.get("href")
+                ]
+                if files:
+                    image = min(
+                        files,
+                        key=lambda file: abs(int((file.get("meta") or {}).get("width") or 160) - 160),
+                    )["href"]
             meta = identifier.get("meta") or {}
             tracks.append(
                 {
@@ -183,6 +202,7 @@ class TidalTarget(MirrorTarget):
                     "artist": ", ".join(artists),
                     "artists": artists or [""],
                     "album": album or None,
+                    "image": image,
                     "duration_ms": iso_duration_ms(attrs.get("duration")),
                     "isrc": attrs.get("isrc"),
                     "added_at": meta.get("addedAt") or "",
@@ -269,7 +289,7 @@ class TidalTarget(MirrorTarget):
                 "tracks",
                 params={
                     "filter[id]": group,
-                    "include": ["artists", "albums"],
+                    "include": ["artists", "albums", "albums.coverArt"],
                     "countryCode": self.country,
                 },
             ).json()

@@ -9,6 +9,9 @@ import type {
   PlaylistLink,
   PollResponse,
   ProviderPlaylist,
+  ProviderPlaylistDetail,
+  RemovePlaylistTrackRequest,
+  RemovePlaylistTracksRequest,
   ResolveConflictRequest,
   RunResponse,
   ScheduleRequest,
@@ -114,6 +117,31 @@ export const api = {
   // Playlists (browse)
   getPlaylists: (provider: string) =>
     request<ProviderPlaylist[]>(`/api/playlists?provider=${encodeURIComponent(provider)}`),
+  getPlaylistDetail: (
+    provider: string,
+    playlistId: string,
+    options: { refresh?: boolean; expectedCount?: number | null } = {},
+  ) => {
+    const params = new URLSearchParams()
+    if (options.refresh) params.set('refresh', 'true')
+    if (options.expectedCount !== null && options.expectedCount !== undefined) {
+      params.set('expected_count', String(options.expectedCount))
+    }
+    const query = params.size > 0 ? `?${params}` : ''
+    return request<ProviderPlaylistDetail>(
+      `/api/playlists/${encodeURIComponent(provider)}/${encodeURIComponent(playlistId)}${query}`,
+    )
+  },
+  removePlaylistTrack: (provider: string, playlistId: string, body: RemovePlaylistTrackRequest) =>
+    request<OkResponse>(
+      `/api/playlists/${encodeURIComponent(provider)}/${encodeURIComponent(playlistId)}/tracks`,
+      { method: 'DELETE', body: JSON.stringify(body) },
+    ),
+  removePlaylistTracks: (provider: string, playlistId: string, body: RemovePlaylistTracksRequest) =>
+    request<OkResponse>(
+      `/api/playlists/${encodeURIComponent(provider)}/${encodeURIComponent(playlistId)}/tracks`,
+      { method: 'DELETE', body: JSON.stringify(body) },
+    ),
 
   // Links (cross-service pairings)
   getLinks: () => request<PlaylistLink[]>('/api/links'),

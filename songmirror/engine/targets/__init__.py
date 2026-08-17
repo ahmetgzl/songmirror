@@ -11,7 +11,7 @@ caching, safety rails — is provider-agnostic and needs no change.
 
 from .apple import AppleMusicTarget
 from .amazon_music import AmazonMusicTarget
-from .base import MirrorTarget, TargetAuthError, mirror_pair, reconcile
+from .base import MirrorTarget, TargetAuthError, TargetTransientError, mirror_pair, reconcile
 from .deezer import DeezerTarget
 from .qobuz import QobuzTarget
 from .spotify_target import SpotifyTarget
@@ -19,7 +19,7 @@ from .tidal import TidalTarget
 from . import ytmusic
 
 __all__ = ["AppleMusicTarget", "AmazonMusicTarget", "DeezerTarget", "QobuzTarget",
-           "SpotifyTarget", "TidalTarget", "MirrorTarget", "TargetAuthError",
+           "SpotifyTarget", "TidalTarget", "MirrorTarget", "TargetAuthError", "TargetTransientError",
            "mirror_pair", "reconcile", "build_targets", "build_peers", "build_one", "is_peer"]
 
 

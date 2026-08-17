@@ -65,6 +65,7 @@ const COUNTER_META: Array<{
 ]
 
 const HOLD_REASON_LABELS: Record<string, string> = {
+  authority_baseline: 'Waiting for the authority baseline',
   unconfirmed_absence: 'Awaiting a second trusted read',
   confirmed_removal_disabled: 'Confirmed; removal mirroring is off',
   removal_cap: 'Confirmed; over the removal cap',

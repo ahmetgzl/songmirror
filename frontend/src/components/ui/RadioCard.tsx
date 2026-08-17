@@ -8,17 +8,19 @@ interface RadioCardProps {
   title: string
   description: string
   disabled?: boolean
+  className?: string
 }
 
 /** Selected = accent border + soft wash, radio filled (a 5px ring trick, no
  * extra markup); for the two or three choices that deserve a sentence. */
-export function RadioCard({ name, value, checked, onChange, title, description, disabled }: RadioCardProps) {
+export function RadioCard({ name, value, checked, onChange, title, description, disabled, className }: RadioCardProps) {
   return (
     <label
       className={cn(
         'flex cursor-pointer gap-[11px] rounded-card border-[1.5px] p-[13px_14px] transition-colors duration-fast',
         checked ? 'border-accent bg-accent-soft' : 'border-border hover:border-border-strong',
         disabled && 'cursor-not-allowed opacity-45',
+        className,
       )}
     >
       <span

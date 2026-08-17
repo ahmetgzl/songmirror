@@ -7,14 +7,14 @@ stay in step with the store.
 import asyncio
 from dataclasses import asdict
 
-from fastapi import APIRouter, Body, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from ...services.syncs import SyncJob
+from ...services.syncs import SyncJob, validate_sync_job
 
 router = APIRouter()
 
-_FIELDS = {"name", "enabled", "mode", "source", "providers", "playlists",
+_FIELDS = {"name", "enabled", "mode", "source", "authorities", "providers", "playlists",
            "interval", "max_adds", "max_removals", "apply_large_removals", "download", "id"}
 
 
@@ -27,7 +27,10 @@ def _job_from(values):
     for k in ("enabled", "download", "apply_large_removals"):
         if k in data:
             data[k] = bool(data[k])
-    return SyncJob(**data)
+    try:
+        return validate_sync_job(SyncJob(**data))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/api/syncs")

@@ -130,6 +130,8 @@ export interface HeldRemoval {
 
 export type ChangeDiagnosticCategory =
   | 'identity_migration'
+  | 'authority_baseline'
+  | 'playlist_recreated'
   | 'unconfirmed_absence'
   | 'confirmed_absence'
   | 'incomplete_read'
@@ -198,7 +200,7 @@ export interface SyncStatus {
   jobs: SyncJobStatus[]
 }
 
-export type SyncMode = 'oneway' | 'nway'
+export type SyncMode = 'oneway' | 'group' | 'nway'
 
 /** GET/POST/PUT /api/syncs — one independent, named sync configuration
  * (multiple jobs can run side by side, Soundiiz-style). `providers` and
@@ -211,7 +213,12 @@ export interface SyncJob {
   name: string
   enabled: boolean
   mode: SyncMode
+  /** One-way source, or the provider whose playlist names/order lead an
+   * authoritative group. Ignored for fully N-way jobs. */
   source: string
+  /** Comma-separated membership authorities in group mode. Mirrors never
+   * contribute playlist changes back into this set. */
+  authorities: string
   providers: string
   playlists: string
   interval: string
@@ -260,9 +267,43 @@ export interface ProviderPlaylist {
   name: string
   count: number | null
   image: string
+  /** First-party web-player URL for opening this exact playlist. */
+  external_url: string
   /** False for a followed (non-owned) playlist. Only Spotify distinguishes the
    * two today; absent/true elsewhere. Drives the Created/Followed grouping. */
   owned?: boolean
+}
+
+export interface ProviderPlaylistTrack {
+  /** Zero-based position from the provider read; used as an optimistic edit guard. */
+  position: number
+  id: string
+  isrc: string
+  occurrence_id: string
+  name: string
+  artist: string
+  album: string | null
+  duration_ms: number | null
+  image: string
+  added_at: string
+  external_url: string
+}
+
+export interface ProviderPlaylistDetail extends ProviderPlaylist {
+  provider: string
+  description: string
+  editable: boolean
+  tracks: ProviderPlaylistTrack[]
+}
+
+export interface RemovePlaylistTrackRequest {
+  position: number
+  track_id: string
+  occurrence_id?: string
+}
+
+export interface RemovePlaylistTracksRequest {
+  tracks: RemovePlaylistTrackRequest[]
 }
 
 export type LinkDirection = 'oneway' | 'nway'

@@ -118,6 +118,32 @@ function buildItems(accounts: Account[] | null, status: SyncStatus | null): Need
   const targets = status?.last?.per_target ?? []
   const diagnostics = targets.flatMap((target) => target.change_diagnostics ?? [])
 
+  const authorityBaselineRows = diagnosticsByCategory(diagnostics, 'authority_baseline')
+  if (authorityBaselineRows.length > 0) {
+    items.push({
+      key: 'authority-baseline',
+      icon: LuTriangleAlert,
+      title: 'An authoritative baseline is being established',
+      description:
+        'This authority set has not completed a trusted pass before. Additions may proceed, but SongMirror held ' +
+        'every removal until the next complete pass can compare against this baseline.',
+      details: diagnosticDetails(authorityBaselineRows),
+    })
+  }
+
+  const recreatedRows = diagnosticsByCategory(diagnostics, 'playlist_recreated')
+  if (recreatedRows.length > 0) {
+    items.push({
+      key: 'playlist-recreated',
+      icon: LuTriangleAlert,
+      title: `${recreatedRows.length} provider playlist${recreatedRows.length === 1 ? '' : 's'} recreated`,
+      description:
+        'The playlist kept its name but received a new provider ID. SongMirror discarded that side’s stale ' +
+        'baseline and rebuilt it from the replacement instead of treating the smaller read as a deletion.',
+      details: diagnosticDetails(recreatedRows),
+    })
+  }
+
   const isrcFallback = targets.reduce((sum, t) => sum + (t.isrc_fallback ?? 0), 0)
   if (isrcFallback > 0) {
     items.push({

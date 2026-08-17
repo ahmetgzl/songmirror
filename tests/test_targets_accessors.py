@@ -3,7 +3,7 @@
 import pytest
 
 from songmirror.engine.targets.apple import AppleMusicTarget
-from songmirror.engine.targets.base import MirrorTarget
+from songmirror.engine.targets.base import MirrorTarget, TargetTransientError
 from songmirror.engine.targets.ytmusic import YTMusicTarget
 
 
@@ -221,6 +221,343 @@ def test_apple_get_exhausted_5xx_explains_safe_next_pass_retry(monkeypatch):
 
     with pytest.raises(RuntimeError, match=r"after 5 attempts;.*next pass will retry"):
         target._request("GET", "https://amp-api.music.apple.com/v1/me/library/playlists/p1/tracks")
+
+
+def test_apple_add_verifies_an_ambiguous_500_and_keeps_source_order(monkeypatch):
+    """A server error can arrive after Apple committed the singleton append.
+
+    The write queue must prove that outcome before retrying: a blind retry makes
+    a duplicate, while aborting loses the rest of the source-ordered queue.
+    """
+    import requests
+
+    from songmirror.engine.targets import apple
+
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    landed, calls = [], []
+
+    def fake_request(method, url, *, json_body=None, **kwargs):
+        catalog_id = json_body["data"][0]["id"]
+        calls.append(catalog_id)
+        landed.append(catalog_id)
+        if catalog_id == "middle":
+            response = requests.Response()
+            response.status_code = 500
+            raise requests.HTTPError("500 Server Error", response=response)
+        return object()
+
+    target._request = fake_request
+    target.playlist_tracks = lambda _playlist: [
+        {"catalog_id": catalog_id} for catalog_id in landed
+    ]
+    target._rebuild_session = lambda: None
+    monkeypatch.setattr(apple, "polite_sleep", lambda _seconds: None)
+    monkeypatch.setattr(apple.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(apple.random, "uniform", lambda *_args: 0)
+
+    target.add({"id": "aurora"}, ["oldest", "middle", "newest"])
+
+    assert landed == ["oldest", "middle", "newest"]
+    assert calls == ["oldest", "middle", "newest"]  # no duplicate retry
+
+
+def test_apple_add_waits_and_retries_a_429_without_skipping_a_track(monkeypatch):
+    import requests
+
+    from songmirror.engine.targets import apple
+
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    landed, calls = [], []
+
+    def fake_request(method, url, *, json_body=None, **kwargs):
+        catalog_id = json_body["data"][0]["id"]
+        calls.append(catalog_id)
+        if catalog_id == "middle" and calls.count("middle") == 1:
+            response = requests.Response()
+            response.status_code = 429
+            response.headers["Retry-After"] = "3"
+            raise requests.HTTPError("429 Too Many Requests", response=response)
+        landed.append(catalog_id)
+        return object()
+
+    target._request = fake_request
+    target.playlist_tracks = lambda _playlist: [
+        {"catalog_id": catalog_id} for catalog_id in landed
+    ]
+    target._rebuild_session = lambda: None
+    waits = []
+    monkeypatch.setattr(apple, "polite_sleep", lambda _seconds: None)
+    monkeypatch.setattr(apple.time, "sleep", waits.append)
+    monkeypatch.setattr(apple.random, "uniform", lambda *_args: 0)
+
+    target.add({"id": "aurora"}, ["oldest", "middle", "newest"])
+
+    assert landed == ["oldest", "middle", "newest"]
+    assert calls == ["oldest", "middle", "middle", "newest"]
+    assert waits and waits[0] >= 2.9
+
+
+def test_apple_add_repairs_a_stale_catalog_id_before_continuing(monkeypatch):
+    """A verified 500 can mean an obsolete Apple catalog release.
+
+    Re-resolve the same source recording through Apple's public catalog, retry
+    that replacement at the same queue position, and only then append later
+    tracks.
+    """
+    import requests
+
+    from songmirror.engine.targets import apple
+
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    target._write_not_before = 0.0
+    target._public_search_not_before = 0.0
+    target._resolved_catalog_context = {}
+    target._added_catalog_ids = {}
+    cache = {
+        "isrc": {
+            "QZEQU2502334": [{
+                "id": "1848462301",
+                "name": "It Ain't Nothing",
+                "artist": "Scout Willis",
+                "duration_ms": 191363,
+            }]
+        },
+        "search": {},
+        "dirty": False,
+    }
+    track = {
+        "id": "spotify-track",
+        "isrc": "QZEQU2502334",
+        "name": "It Ain't Nothing",
+        "artists": ["Scout Willis"],
+        "duration_ms": 191363,
+    }
+    target._remember_resolution(track, "1848462301", cache)
+
+    calls, landed = [], []
+
+    def fake_request(method, url, *, json_body=None, **kwargs):
+        catalog_id = json_body["data"][0]["id"]
+        calls.append(catalog_id)
+        if catalog_id == "1848462301":
+            response = requests.Response()
+            response.status_code = 500
+            raise requests.HTTPError("500 Server Error", response=response)
+        landed.append(catalog_id)
+        return object()
+
+    target._request = fake_request
+    target.playlist_tracks = lambda _playlist: [
+        {"catalog_id": catalog_id} for catalog_id in landed
+    ]
+    target._rebuild_session = lambda: None
+    target._public_search_once = lambda *_args: "6791344492"
+    monkeypatch.setattr(apple, "polite_sleep", lambda _seconds: None)
+    monkeypatch.setattr(apple.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(apple.random, "uniform", lambda *_args: 0)
+
+    target.add({"id": "aurora"}, ["1848462301", "later"])
+
+    assert calls == ["1848462301", "6791344492", "later"]
+    assert landed == ["6791344492", "later"]
+    assert target.added_id("1848462301") == "6791344492"
+    assert cache["isrc"]["QZEQU2502334"][0]["id"] == "6791344492"
+    assert cache["dirty"] is True
+
+
+def test_apple_current_isrc_candidate_outranks_an_archived_link():
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    track = {"id": "spotify-1", "isrc": "USAAA2600001"}
+    cache = {
+        "isrc": {"USAAA2600001": [{"id": "current-release"}]},
+        "search": {},
+    }
+
+    assert target.expected_ids(
+        [track], {"spotify-1": "stale-linked-release"}, cache
+    ) == {"spotify-1": {"current-release"}}
+
+
+def test_apple_rejected_unrepairable_catalog_id_is_evicted():
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    track = {
+        "id": "spotify-1",
+        "isrc": "USAAA2600001",
+        "name": "Post Break-Up Sex",
+        "artists": ["The Vaccines"],
+        "duration_ms": 174000,
+    }
+    cache = {
+        "isrc": {"USAAA2600001": [{"id": "bad-id"}]},
+        "search": {"post break-up sex|the vaccines": "bad-id"},
+        "dirty": False,
+    }
+    target._resolved_catalog_context = {"bad-id": (track, cache)}
+    target._public_search_once = lambda *_args: None
+
+    assert target._repair_catalog_id("bad-id") is None
+    assert "USAAA2600001" not in cache["isrc"]
+    assert cache["search"] == {}
+    assert cache["dirty"] is True
+
+
+def test_apple_empty_isrc_result_keeps_only_a_live_archived_catalog_id():
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    target.storefront = "us"
+    target._validated_catalog_ids = {}
+    track = {"isrc": "WRONGEDITION", "duration_ms": 1000}
+    cache = {"isrc": {"WRONGEDITION": []}}
+
+    target._request = lambda *args, **kwargs: object()
+    assert target.validate_link(track, "still-live", cache) == ("still-live", "link")
+
+    target._validated_catalog_ids.clear()
+    target._request = lambda *args, **kwargs: None
+    assert target.validate_link(track, "delisted", cache) == (None, None)
+
+
+def test_apple_search_falls_back_to_public_catalog_after_amp_429(monkeypatch):
+    """A throttled authenticated search must not block the ordered suffix.
+
+    Apple's public search is a read-only second route. A proven match may be
+    cached normally; it lets the queue keep moving without sending credentials
+    to a different host.
+    """
+    from songmirror.engine.targets import apple
+
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    target.storefront = "us"
+    target._search_throttled = False
+    target._write_not_before = 0.0
+    target._public_search_not_before = 0.0
+    target._search_once = lambda *_args: (_ for _ in ()).throw(
+        TargetTransientError("Apple search throttled", retry_after=4)
+    )
+    calls = []
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "results": [{
+                    "trackId": 1892105071,
+                    "trackName": "seaside_demo",
+                    "artistName": "SEB",
+                    "trackTimeMillis": 120000,
+                }]
+            }
+
+    def public_get(url, *, params, timeout):
+        calls.append((url, params, timeout))
+        return Response()
+
+    monkeypatch.setattr(apple.requests, "get", public_get)
+    monkeypatch.setattr(apple.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(apple.time, "sleep", lambda _seconds: None)
+    cache = {"search": {}, "dirty": False}
+
+    result = target._search("seaside_demo", ["SEB"], 120000, cache)
+
+    assert result == "1892105071"
+    assert cache["search"]["seaside_demo|seb"] == "1892105071"
+    assert target._search_throttled is True
+    assert calls[0][0] == "https://itunes.apple.com/search"
+    assert calls[0][1] == {
+        "term": "seaside_demo SEB",
+        "country": "US",
+        "media": "music",
+        "entity": "song",
+        "limit": 50,
+    }
+
+
+def test_apple_public_search_miss_is_not_cached(monkeypatch):
+    """A secondary-catalog miss is provisional, not a permanent mapping."""
+    from songmirror.engine.targets import apple
+
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    target.storefront = "us"
+    target._search_throttled = True
+    target._public_search_not_before = 0.0
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"resultCount": 0, "results": []}
+
+    monkeypatch.setattr(apple.requests, "get", lambda *_args, **_kwargs: Response())
+    monkeypatch.setattr(apple.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(apple.time, "sleep", lambda _seconds: None)
+    cache = {"search": {}, "dirty": False}
+
+    assert target._search("unavailable", ["artist"], 100000, cache) is None
+    assert cache == {"search": {}, "dirty": False}
+
+
+def test_apple_public_search_rejects_a_live_substitute(monkeypatch):
+    """A fuzzy fallback must not turn a studio song into a live recording."""
+    from songmirror.engine.targets import apple
+
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    target.storefront = "us"
+    target._public_search_not_before = 0.0
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"results": [{
+                "trackId": 542407156,
+                "trackName": "Post Break-Up Sex (Live in Brighton)",
+                "artistName": "The Vaccines",
+                "trackTimeMillis": 174000,
+            }]}
+
+    monkeypatch.setattr(apple.requests, "get", lambda *_args, **_kwargs: Response())
+    monkeypatch.setattr(apple.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(apple.time, "sleep", lambda _seconds: None)
+
+    assert target._public_search_once(
+        "Post Break-Up Sex The Vaccines",
+        "Post Break-Up Sex",
+        ["The Vaccines"],
+        174000,
+    ) is None
+
+
+def test_apple_public_search_429_preserves_order_for_a_later_pass(monkeypatch):
+    from songmirror.engine.targets import apple
+
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    target.storefront = "us"
+    target._search_throttled = True
+    target._public_search_not_before = 0.0
+
+    class Response:
+        status_code = 429
+        headers = {"Retry-After": "12"}
+
+    monkeypatch.setattr(apple.requests, "get", lambda *_args, **_kwargs: Response())
+    monkeypatch.setattr(apple.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(apple.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(TargetTransientError) as exc_info:
+        target._search("later", ["artist"], 100000, {"search": {}, "dirty": False})
+    assert exc_info.value.retry_after == 12
 
 
 def test_jellyfin_list_playlists_fills_counts(monkeypatch):

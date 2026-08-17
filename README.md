@@ -10,7 +10,7 @@
 Self-hosted, always-on **playlist sync for Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music, and YouTube Music** — plus a local, Jellyfin-ready audio mirror.<br/>
 A free, open-source, **self-hosted alternative to Soundiiz, TuneMyMusic, and FreeYourMusic** that _you_ own and run.
 
-**One-way mirror or full bidirectional (N-way) sync · one-off playlist transfers · ISRC-accurate matching · all from your browser**
+**One-way, authoritative-group, or full bidirectional (N-way) sync · one-off playlist transfers · ISRC-accurate matching · all from your browser**
 
 [Quick Start](#-quick-start) · [Features](#-features) · [Screenshots](#-screenshots) · [Docker](#-always-running-docker) · [How it works](#-how-it-works) · [Report Bug][github-issues-link] · [Request Feature][github-issues-link]
 
@@ -53,6 +53,7 @@ A free, open-source, **self-hosted alternative to Soundiiz, TuneMyMusic, and Fre
 - [🐳 Always running: Docker](#-always-running-docker)
 - [⚙️ How it works](#-how-it-works)
   - [Matching](#matching)
+  - [Authoritative groups](#authoritative-groups)
   - [Bidirectional (N-way) sync](#bidirectional-n-way-sync)
 - [💿 Local download mirror (Jellyfin)](#-local-download-mirror-jellyfin)
 - [🔌 Connecting each service](#-connecting-each-service)
@@ -82,6 +83,7 @@ A free, open-source, **self-hosted alternative to Soundiiz, TuneMyMusic, and Fre
 SongMirror keeps your playlists identical everywhere without manual re-adding, one-by-one copying, or a paid cloud service holding your library. It is **cross-platform, self-hosted, and open source**.
 
 - 🔁 **True mirroring, not append-only** — adds _and_ removals. Choose a source of truth (Spotify by default) and the others follow it.
+- ⇆ **Authoritative groups** — trust two or more services (for example Spotify + Apple Music) while every other selected service remains a destination-only mirror.
 - ⇄ **Bidirectional N-way sync** — an add or removal on _any_ connected service propagates to all the others, echo-free, behind removal guards.
 - 🎯 **ISRC-accurate matching** — exact recording identity where available, with Unicode-aware fuzzy title/artist/duration fallbacks (feat-credit drift, "- 2015 Remaster" suffixes, non-Latin scripts, video-only uploads — all handled).
 - 🎛️ **Multiple named syncs** — set up as many independent syncs as you like, each with its own services, playlists, schedule, and safety caps.
@@ -109,7 +111,7 @@ SongMirror keeps your playlists identical everywhere without manual re-adding, o
 
 <img src="./.github/assets/dashboard.png" alt="SongMirror dashboard showing sync status, configured jobs, live activity, and health for Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music, YouTube Music, and Jellyfin" width="82%">
 
-**Set up any number of syncs — one-way or bidirectional — in a short wizard**
+**Set up any number of syncs — one-way, authoritative-group, or bidirectional — in a short wizard**
 
 <img src="./.github/assets/sync-wizard.png" alt="The SongMirror setup wizard selecting services for a bidirectional sync across Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music, and YouTube Music" width="82%">
 
@@ -216,6 +218,19 @@ Same hierarchy the cross-service tools use ([TuneLink](https://tommcfarlin.com/c
    - **Video-only tracks** — YouTube search falls back to the `videos` filter for indie/OST tracks that live on YT only as uploads.
 
 The **duration anchor** unlocks the looser title match, so a different version (`Runaway - Piano Version`) or a wrong-artist cover isn't accepted when its length disagrees. Tracks with no confident match are reported and skipped.
+
+### Authoritative groups
+
+Use an **authoritative group** when you actively curate the same logical playlist on two or more services, but want every other selected service to follow them. A typical setup is **Spotify + Apple Music as authorities**, with TIDAL, Qobuz, Deezer, Amazon Music, and YouTube Music as mirrors.
+
+- **Membership comes only from authorities** — a track added on Spotify or Apple Music propagates to the other authority and every mirror. A track added only on a mirror is drift; it is never imported back into the authorities.
+- **One order authority** — choose which authority supplies playlist names and the ordering of additions. The other authorities still contribute membership changes.
+- **Confirmed removals propagate from either authority** — an absence must appear in two consecutive complete reads before it can delete anything. A simultaneous authority-side addition wins over a removal.
+- **Mirrors never get a vote** — deleting a track from a mirror repairs that mirror; it does not delete the track from Spotify or Apple Music.
+- **Safe first pass** — every authority set has its own baseline. Its first successful pass may add missing tracks, but holds all removals until a later pass proves the baseline is stable.
+- **Fail closed** — if any authority is disconnected, unreadable, or its playlist cannot be opened/created, that logical playlist is skipped instead of silently falling back to fewer authorities.
+
+Removal writes remain opt-in and capped. Enable **Mirror removals** for the job (or set `MAX_REMOVALS` in headless mode) if mirrors should be pruned to match the authoritative set.
 
 ### Bidirectional (N-way) sync
 
@@ -369,9 +384,11 @@ Useful flags:
 uv run main.py --execute --playlists "Aurora,Chill"   # only these pairs
 uv run main.py --execute --loop --interval 15m        # run forever
 uv run main.py --execute --max-removals 100           # one-off larger cleanup
+uv run main.py --execute --sync-mode group --sync-source spotify \
+  --authorities spotify,apple --providers spotify,apple,tidal,ytmusic
 ```
 
-Key env vars (see `.env.example`): the credentials for whichever providers you use, `PLAYLISTS`, `SYNC_INTERVAL`, `MAX_ADDS` / `MAX_REMOVALS`, `DOWNLOAD_DIR`, `SYNC_MODE=nway`, and `PROVIDERS`.
+Key env vars (see `.env.example`): the credentials for whichever providers you use, `PLAYLISTS`, `SYNC_INTERVAL`, `MAX_ADDS` / `MAX_REMOVALS`, `DOWNLOAD_DIR`, `SYNC_MODE`, `SYNC_SOURCE`, `SYNC_AUTHORITIES`, and `PROVIDERS`.
 
 <div align="right">
 

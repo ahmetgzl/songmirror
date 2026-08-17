@@ -518,14 +518,22 @@ def playlist_tracks(playlist, require_isrc=False, known_isrc=None):
         if not uri.startswith("spotify:track:"):
             continue  # local file / episode / unavailable — excluded like the official read
         artists = [(a.get("profile") or {}).get("name", "") for a in ((t.get("artists") or {}).get("items") or [])]
+        album = t.get("albumOfTrack") or {}
+        sources = [source for source in ((album.get("coverArt") or {}).get("sources") or [])
+                   if source and source.get("url")]
+        image = min(
+            sources,
+            key=lambda candidate: abs(int(candidate.get("width") or 96) - 96),
+        )["url"] if sources else ""
         out.append({
             "id": uri.rsplit(":", 1)[-1],
             "isrc": None,
             "name": t.get("name", "") or "",
             "artists": [a for a in artists if a] or [""],
-            "album": (t.get("albumOfTrack") or {}).get("name"),
+            "album": album.get("name"),
             "duration_ms": (t.get("trackDuration") or {}).get("totalMilliseconds"),
             "added_at": (it.get("addedAt") or {}).get("isoString") or "",
+            "image": image,
         })
     # Persisted ISRCs remain valuable in cookie-only mode, but a cache miss is
     # deliberately left blank for reconcile to infer from its ISRC-bearing peers.

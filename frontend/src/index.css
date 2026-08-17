@@ -240,3 +240,10 @@ body {
   background-color: var(--color-border-strong);
   border-radius: 9999px;
 }
+
+/* Playlist inspection can exceed 1,000 tracks. Keep the real ordered DOM for
+   find/accessibility while letting the browser skip paint/layout off-screen. */
+.playlist-track-row {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 56px;
+}

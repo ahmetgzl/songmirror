@@ -32,16 +32,23 @@ def _artist_name(track):
 def _normalized_track(track):
     artist = _artist_name(track)
     duration = track.get("duration")
+    album = track.get("album") or {}
+    album_image = album.get("image") or {}
+    if isinstance(album_image, dict):
+        image = album_image.get("small") or album_image.get("thumbnail") or album_image.get("large") or ""
+    else:
+        image = album_image if isinstance(album_image, str) else ""
     return {
         "id": str(track.get("id")) if track.get("id") is not None else None,
         "relationship_id": track.get("playlist_track_id"),
         "name": track.get("title", ""),
         "artist": artist,
         "artists": [artist] if artist else [""],
-        "album": (track.get("album") or {}).get("title"),
+        "album": album.get("title"),
         "duration_ms": int(duration * 1000) if isinstance(duration, (int, float)) else None,
         "isrc": track.get("isrc"),
         "added_at": str(track.get("created_at") or ""),
+        "image": image,
     }
 
 
@@ -49,6 +56,7 @@ class QobuzTarget(MirrorTarget):
     name = "Qobuz"
     tag = "qobuz"
     source = "qobuz"
+    stable_occurrence_ids = True
 
     def __init__(self):
         self.cache_file = os.getenv("QOBUZ_CACHE_FILE", "qobuz_resolve_cache.json")

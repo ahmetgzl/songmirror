@@ -275,14 +275,21 @@ def _playlist_tracks_api(sp, playlist_id):
             if not track:
                 continue
             artists = [a.get("name", "") for a in track.get("artists", []) if a.get("name")]
+            album = track.get("album") or {}
+            images = [image for image in album.get("images") or [] if image and image.get("url")]
+            image = min(
+                images,
+                key=lambda candidate: abs(int(candidate.get("width") or 96) - 96),
+            )["url"] if images else ""
             tracks.append({
                 "id": track.get("id"),
                 "isrc": (track.get("external_ids") or {}).get("isrc"),
                 "name": track.get("name", ""),
                 "artists": artists or [""],
-                "album": (track.get("album") or {}).get("name"),
+                "album": album.get("name"),
                 "duration_ms": track.get("duration_ms"),
                 "added_at": item.get("added_at") or "",
+                "image": image,
             })
         page = results
         results = _retry(lambda: sp.next(page), "tracks page") if results.get("next") else None
