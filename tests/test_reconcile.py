@@ -10,7 +10,7 @@ import pytest
 
 from songmirror.engine import archive
 from songmirror.engine.matching import spotify_track_keys, track_key
-from songmirror.engine.targets.base import _entry_cids, _merge, reconcile
+from songmirror.engine.targets.base import TargetTransientError, _entry_cids, _merge, reconcile
 
 
 # --- merge: the safety-critical set logic (per-provider prev + cur) ----------
@@ -477,6 +477,38 @@ def test_reconcile_adds_in_origin_playlist_order_even_if_plan_set_is_scrambled(t
     )
 
     assert apple.added == ["A", "B", "C"]
+    conn.close()
+
+
+def test_reconcile_stops_ordered_adds_at_a_transient_resolution_error(tmp_path):
+    """A later song must not leapfrog a rate-limited earlier source entry."""
+
+    class RateLimitedPeer(_P):
+        def resolve(self, norm, cache):
+            if norm["isrc"] == "B":
+                raise TargetTransientError("catalog search returned 429", retry_after=10)
+            return super().resolve(norm, cache)
+
+    conn = archive.connect(str(tmp_path / "rate-limited-order.db"))
+    for source in ("spotify", "apple"):
+        archive.set_playlist_state(conn, "mix", source, set())
+    spotify = _P("spotify", ["A", "B", "C"])
+    apple = RateLimitedPeer("apple", [])
+
+    stats = reconcile(
+        [spotify, apple],
+        "Mix",
+        {"spotify": {"id": "s"}, "apple": {"id": "a"}},
+        _caches("spotify", "apple"),
+        conn,
+        execute=True,
+        max_removals=0,
+        max_adds=200,
+    )
+
+    assert apple.added == ["A"]
+    assert stats["deferred"] == 2
+    assert stats["clean"] is False
     conn.close()
 
 

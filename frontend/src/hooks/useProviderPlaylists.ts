@@ -31,7 +31,8 @@ function isProviderPlaylistArray(value: unknown): value is ProviderPlaylist[] {
         'count' in playlist &&
         (playlist.count === null || typeof playlist.count === 'number') &&
         'image' in playlist &&
-        typeof playlist.image === 'string',
+        typeof playlist.image === 'string' &&
+        (!('external_url' in playlist) || typeof playlist.external_url === 'string'),
     )
   )
 }

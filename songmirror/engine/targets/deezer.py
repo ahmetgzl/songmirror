@@ -30,15 +30,23 @@ def _normalized_track(track):
     primary = (track.get("artist") or {}).get("name", "")
     artists = contributors or ([primary] if primary else [""])
     duration = track.get("duration")
+    album = track.get("album") or {}
+    cover = album.get("cover")
+    if isinstance(cover, dict):
+        image = next((url for url in reversed(cover.get("urls") or []) if url), "")
+    else:
+        image = next((album.get(key) for key in ("cover_medium", "cover_big", "cover_xl", "cover")
+                      if isinstance(album.get(key), str) and album.get(key)), "")
     return {
         "id": str(track.get("id")) if track.get("id") is not None else None,
         "name": track.get("title", ""),
         "artist": ", ".join(artists),
         "artists": artists,
-        "album": (track.get("album") or {}).get("title") or (track.get("album") or {}).get("displayTitle"),
+        "album": album.get("title") or album.get("displayTitle"),
         "duration_ms": int(duration * 1000) if isinstance(duration, (int, float)) else None,
         "isrc": track.get("isrc"),
         "added_at": str(track.get("time_add") or ""),
+        "image": image,
     }
 
 

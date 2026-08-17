@@ -10,13 +10,17 @@ import requests
 from ..config import AMP, REQUEST_TIMEOUT, polite_sleep, required_env
 from ..logs import log, log_warn
 from ..matching import normalize_text, romanized, score_candidate
-from .base import MirrorTarget, TargetAuthError
+from .base import MirrorTarget, TargetAuthError, TargetTransientError
 from .provider_utils import source_playlist_details
 
 # playlist_id -> (lastModifiedDate, track_count): in-process cache so the browse
 # doesn't re-issue a meta.total call for an unchanged Apple playlist (library
 # playlists carry no trackCount attribute, so each count is a live lookup).
 _COUNT_CACHE = {}
+_PUBLIC_SEARCH_URL = "https://itunes.apple.com/search"
+# Apple's documented public Search API is limited to roughly 20 calls/minute.
+# It is only a fallback after amp-api throttles, so pace it independently.
+_PUBLIC_SEARCH_INTERVAL_S = 3.1
 
 
 def _chunks(seq, size):
@@ -52,6 +56,11 @@ class AppleMusicTarget(MirrorTarget):
         self._session = requests.Session()
         self._session.headers.update(_headers())
         self._search_throttled = False  # set once catalog search rate-limits; defer the rest of the pass
+        self._write_not_before = 0.0
+        self._public_search_not_before = 0.0
+        self._validated_catalog_ids = {}
+        self._resolved_catalog_context = {}
+        self._added_catalog_ids = {}
 
     # -- HTTP ------------------------------------------------------------------
     def _rebuild_session(self):
@@ -92,13 +101,21 @@ class AppleMusicTarget(MirrorTarget):
                 )
             if r.status_code == 404 and ok404:
                 return None
-            if r.status_code == 429 and attempt < 1:
-                # One short retry for a transient blip; a sustained catalog-search
-                # limit is handled by the resolver deferring the rest of the pass.
-                wait = float(r.headers.get("Retry-After") or 10) + random.uniform(1, 4)
-                log(f"  rate-limited by Apple; waiting {int(wait)}s", tag=self.tag)
-                time.sleep(wait)
-                continue
+            if r.status_code == 429:
+                # 429 proves the mutation did not run, so a retry is safe. Give
+                # one blip an inline chance; callers then decide whether to hold
+                # an ordered queue or retry a known-safe singleton mutation.
+                retry_after = float(r.headers.get("Retry-After") or 10)
+                if attempt < 1:
+                    wait = retry_after + random.uniform(1, 4)
+                    log(f"  rate-limited by Apple; waiting {int(wait)}s", tag=self.tag)
+                    time.sleep(wait)
+                    continue
+                path = url.split("/v1/")[-1]
+                raise TargetTransientError(
+                    f"Apple kept returning HTTP 429 for {path}",
+                    retry_after=retry_after,
+                )
             if r.status_code >= 500 and method == "GET" and attempt < attempts - 1:
                 if attempt == 2:
                     self._rebuild_session()
@@ -107,7 +124,7 @@ class AppleMusicTarget(MirrorTarget):
                 continue
             if r.status_code >= 500 and method == "GET":
                 path = url.split("/v1/")[-1]
-                raise RuntimeError(
+                raise TargetTransientError(
                     f"Apple Music kept returning HTTP {r.status_code} while reading {path} "
                     f"after {attempts} attempts; this read was abandoned and the next pass will retry it"
                 )
@@ -161,6 +178,8 @@ class AppleMusicTarget(MirrorTarget):
             for t in rows:
                 attrs = t.get("attributes", {})
                 pp = attrs.get("playParams", {})
+                artwork = attrs.get("artwork") or {}
+                image = str(artwork.get("url") or "").replace("{w}", "128").replace("{h}", "128")
                 tracks.append({
                     "relationship_id": t.get("id"),
                     "catalog_id": pp.get("catalogId") or pp.get("id"),
@@ -168,6 +187,8 @@ class AppleMusicTarget(MirrorTarget):
                     "artist": attrs.get("artistName", ""),
                     "album": attrs.get("albumName"),
                     "duration_ms": attrs.get("durationInMillis"),
+                    "added_at": attrs.get("dateAdded") or "",
+                    "image": image,
                 })
             if not data.get("next"):
                 return tracks
@@ -240,11 +261,18 @@ class AppleMusicTarget(MirrorTarget):
         out = {}
         for t in sp_tracks:
             ids = set()
-            if links.get(t.get("id")):
-                ids.add(links[t["id"]])
-            for c in cache["isrc"].get(t.get("isrc") or "", []):
+            candidates = [
+                c for c in cache["isrc"].get(t.get("isrc") or "", [])
+                if c.get("id")
+            ]
+            for c in candidates:
                 if c.get("id"):
                     ids.add(c["id"])
+            # A current native ISRC result outranks an older archived link. If
+            # both are admitted, a stale/wrong linked release already present
+            # on Apple can suppress the correct recording forever.
+            if not candidates and links.get(t.get("id")):
+                ids.add(links[t["id"]])
             if ids:
                 out[t.get("id")] = ids
         return out
@@ -254,8 +282,60 @@ class AppleMusicTarget(MirrorTarget):
         if candidates and track["duration_ms"] is not None:
             candidates.sort(key=lambda c: abs((c.get("duration_ms") or 0) - track["duration_ms"]))
         if candidates:
-            return candidates[0]["id"], "isrc"
-        return self._search(track["name"], track["artists"], track["duration_ms"], cache), "search"
+            target_id = candidates[0]["id"]
+            self._remember_resolution(track, target_id, cache)
+            return target_id, "isrc"
+        target_id = self._search(
+            track["name"], track["artists"], track["duration_ms"], cache
+        )
+        if target_id:
+            self._remember_resolution(track, target_id, cache)
+        return target_id, "search"
+
+    def _remember_resolution(self, track, target_id, cache):
+        if target_id:
+            contexts = getattr(self, "_resolved_catalog_context", {})
+            contexts[str(target_id)] = (track, cache)
+            self._resolved_catalog_context = contexts
+
+    def validate_link(self, track, target_id, cache):
+        """Replace a stale historical catalog id with the current ISRC result.
+
+        Deleted Apple playlists can retain catalog ids that now 404 and produce
+        an opaque 500 when re-added. Once prefetch has checked this recording's
+        ISRC, that current catalog response outranks any older link/archive id.
+        """
+        isrc = track.get("isrc") or ""
+        if isrc not in cache["isrc"]:
+            return target_id, "link"
+        candidates = [candidate for candidate in cache["isrc"][isrc] if candidate.get("id")]
+        if candidates and track.get("duration_ms") is not None:
+            candidates.sort(
+                key=lambda candidate: abs(
+                    (candidate.get("duration_ms") or 0) - track["duration_ms"]
+                )
+            )
+        if candidates:
+            target_id = candidates[0]["id"]
+            self._remember_resolution(track, target_id, cache)
+            return target_id, "isrc"
+
+        # A source identity can point at a different release ISRC even when the
+        # archived Apple recording itself is still current. Prove the archived
+        # id directly before discarding it; a 404 falls through to live search.
+        validated = getattr(self, "_validated_catalog_ids", {})
+        if target_id not in validated:
+            response = self._request(
+                "GET",
+                f"{AMP}/catalog/{self.storefront}/songs/{target_id}",
+                ok404=True,
+            )
+            validated[target_id] = response is not None
+            self._validated_catalog_ids = validated
+        if validated[target_id]:
+            self._remember_resolution(track, target_id, cache)
+            return target_id, "link"
+        return None, None
 
     def _search_once(self, term, name, artists, duration_ms):
         r = self._request("GET", f"{AMP}/catalog/{self.storefront}/search",
@@ -270,15 +350,106 @@ class AppleMusicTarget(MirrorTarget):
                 best_id, best_score = song.get("id"), score
         return best_id
 
+    def _public_search_once(self, term, name, artists, duration_ms):
+        """Use Apple's unauthenticated Search API when amp-api is throttled.
+
+        This is a secondary read path only: no Apple credentials are sent to
+        the public host. A miss remains provisional and is never cached, while
+        a transient response still stops the ordered suffix for a later pass.
+        """
+        deadline = getattr(self, "_public_search_not_before", 0.0)
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(remaining)
+
+        try:
+            response = requests.get(
+                _PUBLIC_SEARCH_URL,
+                params={
+                    "term": term,
+                    "country": self.storefront.upper(),
+                    "media": "music",
+                    "entity": "song",
+                    "limit": 50,
+                },
+                timeout=REQUEST_TIMEOUT,
+            )
+        except requests.RequestException as exc:
+            raise TargetTransientError(
+                "Apple public catalog search was temporarily unreachable",
+                retry_after=10,
+            ) from exc
+        finally:
+            self._public_search_not_before = (
+                time.monotonic() + _PUBLIC_SEARCH_INTERVAL_S
+            )
+
+        if response.status_code == 429:
+            try:
+                retry_after = max(
+                    _PUBLIC_SEARCH_INTERVAL_S,
+                    float(response.headers.get("Retry-After") or 10),
+                )
+            except (TypeError, ValueError):
+                retry_after = 10
+            raise TargetTransientError(
+                "Apple public catalog search was rate-limited",
+                retry_after=retry_after,
+            )
+        if response.status_code >= 500:
+            raise TargetTransientError(
+                f"Apple public catalog search returned HTTP {response.status_code}",
+                retry_after=10,
+            )
+        try:
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise TargetTransientError(
+                f"Apple public catalog search returned HTTP {response.status_code}",
+                retry_after=10,
+            ) from exc
+
+        try:
+            results = response.json().get("results", [])
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise TargetTransientError(
+                "Apple public catalog search returned an invalid response",
+                retry_after=10,
+            ) from exc
+
+        best_id, best_score = None, -1.0
+        for song in results:
+            score, ok = score_candidate(
+                name,
+                artists,
+                duration_ms,
+                song.get("trackName", ""),
+                song.get("artistName", ""),
+                song.get("trackTimeMillis"),
+            )
+            if ok and score > best_score and song.get("trackId") is not None:
+                best_id, best_score = str(song["trackId"]), score
+        return best_id
+
     def _search(self, name, artists, duration_ms, cache):
         primary = artists[0] if artists else ""
+        public_term = f"{name} {' '.join(artists[:3])}".strip()
         if not f"{name} {primary}".strip():
             return None  # amp-api 400s on an empty term
         key = f"{name}|{primary}".casefold()
         if key in cache["search"]:
             return cache["search"][key]
         if self._search_throttled:
-            return None  # catalog search rate-limited earlier this pass; defer to the next (don't cache a miss)
+            # Keep the queue moving via Apple's separately rate-limited public
+            # catalog. A miss is deliberately not cached: the authenticated
+            # catalog gets another chance on the next pass.
+            best = self._public_search_once(
+                public_term, name, artists, duration_ms
+            )
+            if best:
+                cache["search"][key] = best
+                cache["dirty"] = True
+            return best
         try:
             best = self._search_once(f"{name} {primary}".strip(), name, artists, duration_ms)
             if not best:
@@ -286,25 +457,248 @@ class AppleMusicTarget(MirrorTarget):
                 if rom and rom != normalize_text(f"{name} {primary}"):
                     polite_sleep(0.3)
                     best = self._search_once(rom, name, artists, duration_ms)
-        except requests.HTTPError as e:
-            if "429" not in str(e):
-                raise
+        except TargetTransientError as e:
             self._search_throttled = True
-            log_warn("Apple Music search rate-limited — deferring the rest of the resolves to the next pass",
+            retry_after = e.retry_after or 10
+            # Catalog and library routes have separate budgets, but a sustained
+            # search throttle has repeatedly preceded library-write failures in
+            # practice. Keep a small safety margin before the ordered write queue.
+            self._write_not_before = max(
+                getattr(self, "_write_not_before", 0.0),
+                time.monotonic() + retry_after + 5,
+            )
+            log_warn("Apple Music search temporarily unavailable — switching to its public catalog fallback",
                      tag=self.tag)
-            return None
+            # amp-api and the public Search API have separate rate limits. The
+            # latter can resolve or provisionally skip this item so later
+            # source-ordered tracks still get a chance during the same pass.
+            best = self._public_search_once(
+                public_term, name, artists, duration_ms
+            )
+            if not best:
+                return None
         cache["search"][key] = best
         cache["dirty"] = True
         polite_sleep(0.3)
         return best
 
+    @staticmethod
+    def _error_status(exc):
+        response = getattr(exc, "response", None)
+        return getattr(response, "status_code", None) if response is not None else None
+
+    @staticmethod
+    def _retry_after(exc, fallback):
+        response = getattr(exc, "response", None)
+        value = response.headers.get("Retry-After") if response is not None else None
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            return float(fallback)
+
+    @staticmethod
+    def _error_detail(exc):
+        """A short credential-free Apple error description for diagnostics."""
+        response = getattr(exc, "response", None)
+        if response is None:
+            return ""
+        try:
+            error = (response.json().get("errors") or [])[0]
+        except (AttributeError, IndexError, TypeError, ValueError):
+            return ""
+        code = error.get("code")
+        message = " — ".join(
+            part for part in (error.get("title"), error.get("detail")) if part)
+        if code and message:
+            return f" ({code}: {message})"
+        if code:
+            return f" (code {code})"
+        return f" ({message})" if message else ""
+
+    def _wait_for_write_window(self):
+        deadline = getattr(self, "_write_not_before", 0.0)
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            log(f"  waiting {int(remaining) + 1}s for Apple's rate limit to clear before writes",
+                tag=self.tag)
+            time.sleep(remaining)
+            if getattr(self, "_write_not_before", 0.0) == deadline:
+                self._write_not_before = 0.0
+
+    def _repair_catalog_id(self, catalog_id):
+        """Find a current release id after Apple verifies an old id cannot add."""
+        context = getattr(self, "_resolved_catalog_context", {}).get(str(catalog_id))
+        if not context:
+            return None
+        track, cache = context
+        artists = track.get("artists") or []
+        replacement = self._public_search_once(
+            f"{track.get('name', '')} {' '.join(artists[:3])}".strip(),
+            track.get("name", ""),
+            artists,
+            track.get("duration_ms"),
+        )
+        if not replacement or str(replacement) == str(catalog_id):
+            # Do not persist a catalog id Apple has proven unwritable. This is
+            # especially important for fuzzy public-search hits: the next pass
+            # must search again under the current stricter recording-version
+            # rules instead of retrying a bad mapping forever.
+            isrc = track.get("isrc") or ""
+            candidates = cache.get("isrc", {}).get(isrc, [])
+            if candidates:
+                survivors = [
+                    candidate for candidate in candidates
+                    if str(candidate.get("id")) != str(catalog_id)
+                ]
+                if survivors:
+                    cache["isrc"][isrc] = survivors
+                else:
+                    cache["isrc"].pop(isrc, None)
+            search = cache.setdefault("search", {})
+            for key, value in list(search.items()):
+                if str(value) == str(catalog_id):
+                    del search[key]
+            cache["dirty"] = True
+            self._resolved_catalog_context.pop(str(catalog_id), None)
+            return None
+
+        replacement = str(replacement)
+        isrc = track.get("isrc") or ""
+        for candidate in cache.get("isrc", {}).get(isrc, []):
+            if str(candidate.get("id")) == str(catalog_id):
+                candidate["id"] = replacement
+        primary = artists[0] if artists else ""
+        cache.setdefault("search", {})[
+            f"{track.get('name', '')}|{primary}".casefold()
+        ] = replacement
+        cache["dirty"] = True
+        self._resolved_catalog_context[replacement] = (track, cache)
+        return replacement
+
+    def _verify_add_landed(self, playlist, catalog_id, before_count):
+        """True/False when a post-error read proves the outcome, None if reads fail.
+
+        Polling before retransmission covers Apple's short consistency lag and
+        prevents an ambiguous 5xx from creating a duplicate. Counts, rather
+        than mere membership, also keep duplicate-cleanup re-appends correct.
+        """
+        for check in range(3):
+            try:
+                actual = sum(
+                    1 for track in self.playlist_tracks(playlist)
+                    if self.track_id(track) == catalog_id
+                )
+            except TargetAuthError:
+                raise
+            except Exception as e:
+                if check == 2:
+                    log_warn(f"couldn't verify Apple add {catalog_id}: {e!r}", tag=self.tag)
+                    return None
+            else:
+                if actual > before_count:
+                    return True
+            if check < 2:
+                time.sleep(1 + check)
+        return False
+
+    def _add_one(self, playlist, catalog_id, before_count):
+        url = f"{AMP}/me/library/playlists/{playlist['id']}/tracks"
+        last_error = None
+        repaired = False
+        for attempt in range(6):
+            self._wait_for_write_window()
+            try:
+                self._request(
+                    "POST",
+                    url,
+                    json_body={"data": [{"id": catalog_id, "type": "songs"}]},
+                )
+                return catalog_id
+            except TargetAuthError:
+                raise
+            except TargetTransientError as e:
+                last_error = e
+                wait = float(e.retry_after or min(10 * (attempt + 1), 60)) + random.uniform(1, 3)
+                self._write_not_before = time.monotonic() + wait
+                log_warn(
+                    f"Apple rate-limited add {catalog_id}; preserving its queue position "
+                    f"and retrying after {int(wait)}s",
+                    tag=self.tag,
+                )
+                continue
+            except requests.RequestException as e:
+                status = self._error_status(e)
+                if status not in (408, 429) and status is not None and status < 500:
+                    raise
+                last_error = e
+
+                if status == 429:
+                    wait = self._retry_after(e, min(10 * (attempt + 1), 60)) + random.uniform(1, 3)
+                    self._write_not_before = time.monotonic() + wait
+                    log_warn(
+                        f"Apple rate-limited add {catalog_id}; preserving its queue position "
+                        f"and retrying after {int(wait)}s",
+                        tag=self.tag,
+                    )
+                    continue
+
+                # A connection loss or 5xx may be a committed write whose reply
+                # was lost. Reopen the connection, then prove the occurrence
+                # count before deciding whether retransmission is safe.
+                wait = min(2 ** attempt, 20) + random.uniform(0, 2)
+                detail = self._error_detail(e)
+                log_warn(
+                    f"Apple add {catalog_id} returned "
+                    f"{('HTTP ' + str(status)) if status else 'a network error'}{detail}; "
+                    f"verifying the playlist before retrying",
+                    tag=self.tag,
+                )
+                time.sleep(wait)
+                self._rebuild_session()
+                landed = self._verify_add_landed(playlist, catalog_id, before_count)
+                if landed is True:
+                    log(f"  Apple confirmed {catalog_id} was added despite the error", tag=self.tag)
+                    return catalog_id
+                if landed is None:
+                    raise RuntimeError(
+                        f"Apple add {catalog_id} had an ambiguous outcome and the playlist "
+                        "could not be verified; stopping this ordered queue until the next pass"
+                    ) from e
+                if not repaired:
+                    replacement = self._repair_catalog_id(catalog_id)
+                    repaired = True
+                    if replacement:
+                        log(
+                            f"  Apple replaced obsolete catalog id {catalog_id} with {replacement}",
+                            tag=self.tag,
+                        )
+                        catalog_id = replacement
+                        before_count = 0
+                        continue
+
+        raise RuntimeError(
+            f"Apple kept rejecting add {catalog_id} after 6 attempts; "
+            "stopping this ordered queue until the next pass"
+        ) from last_error
+
     def add(self, playlist, target_ids):
-        # One POST per track — batched arrays can land out of order, and append
-        # order is what keeps the playlist sorted by date added.
+        # One POST per track — batched arrays can land out of order. Never skip
+        # past a transiently failing id: later tracks would then receive earlier
+        # date-added stamps, and Apple offers no positional insert to repair it.
+        confirmed_counts = {}
+        added_catalog_ids = getattr(self, "_added_catalog_ids", {})
+        self._added_catalog_ids = added_catalog_ids
         for catalog_id in target_ids:
-            self._request("POST", f"{AMP}/me/library/playlists/{playlist['id']}/tracks",
-                         json_body={"data": [{"id": catalog_id, "type": "songs"}]})
-            polite_sleep(0.4)
+            requested_id = catalog_id
+            catalog_id = self.added_id(requested_id)
+            before_count = confirmed_counts.get(catalog_id, 0)
+            actual_id = self._add_one(playlist, catalog_id, before_count)
+            added_catalog_ids[str(requested_id)] = str(actual_id)
+            confirmed_counts[str(actual_id)] = before_count + 1
+            polite_sleep(1.0)
+
+    def added_id(self, target_id):
+        return getattr(self, "_added_catalog_ids", {}).get(str(target_id), target_id)
 
     def remove(self, playlist, track):
         self._request("DELETE", f"{AMP}/me/library/playlists/{playlist['id']}/tracks",

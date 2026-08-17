@@ -70,6 +70,50 @@ def test_compute_diff_preserves_playlist_position_without_timestamps():
     assert [track["name"] for track in to_add] == ["First", "Second", "Third"]
 
 
+def test_fuzzy_match_rejects_a_different_creative_version():
+    assert not accepts(
+        "Post Break-Up Sex",
+        ["The Vaccines"],
+        174000,
+        "Post Break-Up Sex (Live in Brighton)",
+        "The Vaccines",
+        174000,
+    )
+    assert not accepts(
+        "Runaway",
+        ["AURORA"],
+        243000,
+        "Runaway (Acoustic)",
+        "AURORA",
+        243000,
+    )
+    assert accepts(
+        "Runaway - Piano Version",
+        ["AURORA"],
+        243000,
+        "Runaway (Piano)",
+        "AURORA",
+        243500,
+    )
+
+
+def test_diff_replaces_a_wrong_live_variant_instead_of_fuzzy_protecting_it():
+    source = [sp("Post Break-Up Sex", "The Vaccines", None, "", dur=174000)]
+    live = ap(
+        "Post Break-Up Sex (Live in Brighton)",
+        "The Vaccines",
+        "live-id",
+    )
+    live["duration_ms"] = 174000
+
+    to_add, to_remove = compute_diff(source, [live], {}, cid_of)
+    safe, held = protect_removals(to_remove, source)
+
+    assert to_add == source
+    assert safe == [live]
+    assert held == []
+
+
 def run():
     assert parse_interval("900") == 900 and parse_interval("15m") == 900 and parse_interval("1h") == 3600
 

@@ -69,6 +69,7 @@ query SongMirrorAmazonPlaylistTracks($id: String!, $cursor: String, $limit: Floa
           title
           isrc
           duration
+          images { url width height imageType aspectRatio }
           album { id title }
           contributingArtists { edges { role node { id name } } }
         }
@@ -88,6 +89,7 @@ query SongMirrorAmazonSearchTracks($query: String!) {
         title
         isrc
         duration
+        images { url width height imageType aspectRatio }
         album { id title }
         contributingArtists { edges { role node { id name } } }
       }
@@ -138,16 +140,24 @@ def _normalized_track(track, entry_id=None):
             if (edge.get("node") or {}).get("name")
         ]
     duration = track.get("duration")
+    album = track.get("album") or {}
+    images = track.get("images") or album.get("images") or []
+    usable_images = [item for item in images if isinstance(item, dict) and item.get("url")]
+    image = min(
+        usable_images,
+        key=lambda item: abs(int(item.get("width") or 160) - 160),
+    )["url"] if usable_images else ""
     return {
         "id": str(track.get("id")) if track.get("id") is not None else None,
         "relationship_id": entry_id,
         "name": track.get("title") or track.get("name") or "",
         "artist": ", ".join(artists),
         "artists": artists or [""],
-        "album": (track.get("album") or {}).get("title") or (track.get("album") or {}).get("name"),
+        "album": album.get("title") or album.get("name"),
         "duration_ms": int(duration * 1000) if isinstance(duration, (int, float)) else None,
         "isrc": track.get("isrc"),
         "added_at": "",
+        "image": image,
     }
 
 
@@ -155,6 +165,7 @@ class AmazonMusicTarget(MirrorTarget):
     name = "Amazon Music"
     tag = "amazon"
     source = "amazon"
+    stable_occurrence_ids = True
 
     def __init__(self):
         self.cache_file = os.getenv("AMAZON_MUSIC_CACHE_FILE", "amazon_music_resolve_cache.json")

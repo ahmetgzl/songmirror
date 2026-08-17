@@ -255,6 +255,34 @@ const PLAYLISTS = {
   ],
 }
 
+const PLAYLIST_DETAIL = {
+  provider: 'spotify',
+  id: 'pl_spotify_1',
+  name: 'Road Trip 2025',
+  description: 'A clean provider description with another mix.',
+  count: 118,
+  image: svgCover('#3b6fd6'),
+  owned: true,
+  editable: true,
+  external_url: 'https://open.spotify.com/playlist/pl_spotify_1',
+  tracks: Array.from({ length: 118 }, (_, index) => ({
+    position: index,
+    id: `track_${index + 1}`,
+    occurrence_id: `entry_${index + 1}`,
+    name: `Track ${index + 1}`,
+    artist: `Artist ${index + 1}`,
+    album: `Album ${Math.floor(index / 10) + 1}`,
+    duration_ms: 180000 + index * 1000,
+    image: svgCover(index % 2 ? '#7b4bc4' : '#3aa76d'),
+    // Most providers omit per-entry dates, so undated rows use reverse append
+    // order. Qobuz returns Unix seconds; one deliberately non-terminal entry
+    // proves that timestamp outranks the fallback instead of being parsed as
+    // an invalid date.
+    added_at: index === 116 ? '1786850562' : '',
+    external_url: `https://open.spotify.com/track/track_${index + 1}`,
+  })),
+}
+
 // Polished, deterministic data used only for committed README/promo captures.
 // Every provider is connected and every playlist has cover art so the media
 // demonstrates the finished experience without setup errors or empty states.
@@ -416,6 +444,12 @@ async function installMocks(page, opts = {}) {
       return json({ ok: true })
     }
 
+    if (p === '/api/playlists/spotify/pl_spotify_1' && method === 'GET') {
+      return json(PLAYLIST_DETAIL)
+    }
+    if (p === '/api/playlists/spotify/pl_spotify_1/tracks' && method === 'DELETE') {
+      return json({ ok: true })
+    }
     if (p === '/api/playlists' && method === 'GET') {
       const provider = url.searchParams.get('provider')
       await delay('playlists')
@@ -661,6 +695,56 @@ async function main() {
         if (width !== 320) await shot(page, `settings-${width}-${theme}`)
       }
 
+      await context.close()
+    }
+
+    // The in-app playlist ledger renders only one 50-track page at a time,
+    // defaults to most-recently-added, keeps the provider-order option, and
+    // paints track artwork rather than a text-only thousand-row list.
+    {
+      const context = await browser.newContext()
+      await context.addInitScript(() => window.localStorage.setItem('songmirror-theme', 'dark'))
+      const page = await context.newPage()
+      await installMocks(page)
+      await page.setViewportSize({ width: 1280, height: 900 })
+      await page.goto(BASE_URL + '/playlists', { waitUntil: 'networkidle' })
+      await page.getByRole('button', { name: 'Open Road Trip 2025 inside SongMirror' }).first().click()
+      const dialog = page.getByRole('dialog')
+      await dialog.getByText('Showing 1–50 of 118 tracks · 50 per page').waitFor()
+
+      const firstLatest = await dialog.locator('ol > li').first().textContent()
+      const secondLatest = await dialog.locator('ol > li').nth(1).textContent()
+      const firstPageRows = await dialog.locator('ol > li').count()
+      const firstPageCovers = await dialog.locator('ol > li img').count()
+      const latestOk = firstLatest?.includes('Track 117')
+        && secondLatest?.includes('Track 118')
+        && firstPageRows === 50
+        && firstPageCovers === 50
+      console.log(`${latestOk ? 'ok        ' : 'FAIL      '} playlist ledger understands Unix date-added values and falls back to reverse append order with 50 covered rows (first=${JSON.stringify(firstLatest?.slice(0, 40))}, rows=${firstPageRows}, covers=${firstPageCovers})`)
+      if (!latestOk) results.push({ label: 'playlist ledger latest/page/covers', overflow: true })
+
+      await dialog.getByRole('button', { name: 'Next' }).click()
+      await dialog.getByText('Showing 51–100 of 118 tracks · 50 per page').waitFor()
+      const secondPageOk = (await dialog.locator('ol > li').first().textContent())?.includes('Track 68')
+      console.log(`${secondPageOk ? 'ok        ' : 'FAIL      '} playlist ledger advances to the next 50-track page`)
+      if (!secondPageOk) results.push({ label: 'playlist ledger next page', overflow: true })
+
+      await dialog.getByRole('button', { name: 'Sort playlist tracks' }).click()
+      await page.getByRole('option', { name: 'Playlist order' }).click()
+      const providerOrderOk = (await dialog.locator('ol > li').first().textContent())?.includes('Track 1')
+      console.log(`${providerOrderOk ? 'ok        ' : 'FAIL      '} playlist ledger can return to canonical playlist order`)
+      if (!providerOrderOk) results.push({ label: 'playlist ledger provider order', overflow: true })
+
+      await dialog.getByRole('button', { name: 'Select Track 1', exact: true }).click()
+      await dialog.getByRole('button', { name: 'Select Track 4', exact: true }).click({ modifiers: ['Shift'] })
+      const rangeSelected = await dialog.getByText('4 tracks selected').isVisible()
+      await dialog.getByRole('button', { name: 'Remove selected' }).click()
+      const bulkConfirmation = await dialog.getByRole('button', { name: 'Remove 4 tracks' }).isVisible()
+      await dialog.getByRole('button', { name: 'Keep selected' }).click()
+      const bulkSelectOk = rangeSelected && bulkConfirmation
+      console.log(`${bulkSelectOk ? 'ok        ' : 'FAIL      '} playlist ledger supports click/shift-click range selection and guarded bulk removal`)
+      if (!bulkSelectOk) results.push({ label: 'playlist ledger bulk selection', overflow: true })
+      await checkOverflow(page, 'Playlist track ledger @ 1280', results)
       await context.close()
     }
 
@@ -3280,14 +3364,14 @@ async function main() {
           const save = (key, data) => {
             window.localStorage.setItem(
               key,
-              JSON.stringify({ version: 1, savedAt: Date.now(), data }),
+              JSON.stringify({ version: 2, savedAt: Date.now(), data }),
             )
           }
           window.localStorage.setItem('songmirror-theme', 'light')
-          save('songmirror-cache-v1:accounts', accounts)
-          save('songmirror-cache-v1:syncs', syncs)
-          save('songmirror-cache-v1:settings', settings)
-          save('songmirror-cache-v1:playlists:spotify', playlists)
+          save('songmirror-cache-v2:accounts', accounts)
+          save('songmirror-cache-v2:syncs', syncs)
+          save('songmirror-cache-v2:settings', settings)
+          save('songmirror-cache-v2:playlists:spotify', playlists)
         },
         {
           accounts: cachedAccounts,
@@ -3393,7 +3477,7 @@ async function main() {
 
       const settingsCacheRefreshed = await page.evaluate(() => {
         try {
-          const raw = window.localStorage.getItem('songmirror-cache-v1:settings')
+          const raw = window.localStorage.getItem('songmirror-cache-v2:settings')
           if (!raw) return false
           return JSON.parse(raw).data?.DISPLAY_NAME === 'Maya'
         } catch {

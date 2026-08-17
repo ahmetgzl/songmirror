@@ -100,6 +100,20 @@ export function serviceLogoId(idOrTag: string): 'spotify' | 'tidal' | 'qobuz' | 
   return null
 }
 
+const SERVICE_HOME_URLS: Record<string, string> = {
+  spotify: 'https://open.spotify.com/',
+  tidal: 'https://listen.tidal.com/',
+  qobuz: 'https://play.qobuz.com/',
+  deezer: 'https://www.deezer.com/',
+  amazon: 'https://music.amazon.com/',
+  apple: 'https://music.apple.com/',
+  ytmusic: 'https://music.youtube.com/',
+}
+
+export function serviceHomeUrl(idOrTag: string): string {
+  return SERVICE_HOME_URLS[activitySourceId(idOrTag)] ?? ''
+}
+
 interface KindStyle {
   /** Plain-language name exposed alongside EventRow's visual action icon. */
   label: string

@@ -2,6 +2,7 @@
 
 import threading
 
+from songmirror.engine import archive
 import songmirror.engine.runner as runner
 from songmirror.engine.config import Options
 
@@ -224,7 +225,7 @@ def test_run_target_honors_explicit_pairing(monkeypatch, tmp_path):
                          source_key="spotify", source_name="Spotify", name=None):
         captured["tgt_id"] = tgt_playlist["id"]
         return {"clean": True, "added": 1, "removed": 0, "missing": 0, "held": 0,
-                "deferred": 0, "removals_skipped": 0, "target_count": 1}
+                "deferred": 2, "removals_skipped": 0, "target_count": 1}
 
     monkeypatch.setattr(runner, "mirror_pair", fake_mirror_pair)
 
@@ -235,6 +236,7 @@ def test_run_target_honors_explicit_pairing(monkeypatch, tmp_path):
 
     assert captured["tgt_id"] == "t99"          # paired target used, not same-name match
     assert agg["added"] == 1
+    assert agg["deferred"] == 2
     assert archive.get_state(songs, "LINK1", "apple") is not None  # state keyed by the link id
     songs.close()
 
@@ -319,6 +321,276 @@ def test_mirror_pair_non_spotify_source_never_writes_links(tmp_path):
     songs.close()
 
 
+def test_one_way_mirror_defers_the_ordered_suffix_after_a_transient_resolve(tmp_path):
+    from songmirror.engine.targets.base import TargetTransientError, mirror_pair
+
+    songs = archive.connect(str(tmp_path / "ordered-one-way.db"))
+
+    class Target:
+        name, tag, source = "Apple Music", "apple", "apple"
+
+        def playlist_tracks(self, playlist):
+            return []
+
+        def track_id(self, track):
+            return track.get("catalog_id")
+
+        def expected_ids(self, tracks, links, cache):
+            return {}
+
+        def prefetch(self, tracks, cache):
+            pass
+
+        def resolve(self, track, cache):
+            if track["name"] == "Middle":
+                raise TargetTransientError("HTTP 429", retry_after=10)
+            return track["name"].casefold(), "search"
+
+        def add(self, playlist, ids):
+            self.added = list(ids)
+
+        def remove(self, playlist, track):
+            pass
+
+    target = Target()
+    source_tracks = [
+        {"id": "a", "name": "Oldest", "artists": ["Artist"], "duration_ms": 1},
+        {"id": "b", "name": "Middle", "artists": ["Artist"], "duration_ms": 1},
+        {"id": "c", "name": "Newest", "artists": ["Artist"], "duration_ms": 1},
+    ]
+
+    stats = mirror_pair(
+        target,
+        source_tracks,
+        {"name": "Aurora"},
+        {"id": "apple-aurora"},
+        {"isrc": {}, "search": {}, "dirty": False},
+        songs,
+        execute=True,
+        max_removals=200,
+        max_adds=200,
+    )
+
+    assert target.added == ["oldest"]
+    assert stats["deferred"] == 2
+    assert stats["clean"] is False
+    songs.close()
+
+
+def test_one_way_unresolved_track_keeps_snapshot_retryable(tmp_path):
+    from songmirror.engine.targets.base import mirror_pair
+
+    songs = archive.connect(str(tmp_path / "unresolved-one-way.db"))
+
+    class Target:
+        name, tag, source = "Apple Music", "apple", "apple"
+
+        def playlist_tracks(self, playlist):
+            return []
+
+        def track_id(self, track):
+            return track.get("catalog_id")
+
+        def expected_ids(self, tracks, links, cache):
+            return {}
+
+        def prefetch(self, tracks, cache):
+            pass
+
+        def resolve(self, track, cache):
+            return None, None
+
+        def add(self, playlist, ids):
+            raise AssertionError("an unresolved track cannot be added")
+
+        def remove(self, playlist, track):
+            pass
+
+    stats = mirror_pair(
+        Target(),
+        [{"id": "missing", "name": "Missing", "artists": ["Artist"]}],
+        {"name": "Drive"},
+        {"id": "apple-drive"},
+        {"isrc": {}, "search": {}, "dirty": False},
+        songs,
+        execute=True,
+        max_removals=200,
+        max_adds=200,
+    )
+
+    assert stats["missing"] == 1
+    assert stats["clean"] is False
+    songs.close()
+
+
+def test_one_way_reuses_cross_provider_identity_for_a_recreated_playlist(tmp_path):
+    """A deleted destination playlist must not force known songs through search."""
+    from songmirror.engine.targets.base import mirror_pair
+
+    songs = archive.connect(str(tmp_path / "identity-crosswalk.db"))
+    archive.set_identities(songs, "spotify", {"sp-a": "i:ISRC-A"})
+    archive.set_identities(songs, "apple", {"apple-stale": "i:ISRC-A"})
+
+    class Target:
+        name, tag, source = "Apple Music", "apple", "apple"
+
+        def playlist_tracks(self, playlist):
+            return []
+
+        def track_id(self, track):
+            return track.get("catalog_id")
+
+        def expected_ids(self, tracks, links, cache):
+            return {track["id"]: {links[track["id"]]} for track in tracks if track["id"] in links}
+
+        def prefetch(self, tracks, cache):
+            assert tracks[0]["isrc"] == "ISRCA"
+            cache["isrc"]["ISRCA"] = [{
+                "id": "apple-current", "name": "Known",
+                "artist": "Artist", "duration_ms": 1000,
+            }]
+
+        def validate_link(self, track, target_id, cache):
+            assert target_id == "apple-stale"
+            return cache["isrc"][track["isrc"]][0]["id"], "isrc"
+
+        def resolve(self, track, cache):
+            raise AssertionError("a durable hard-identity crosswalk should avoid catalog search")
+
+        def add(self, playlist, ids):
+            self.added = list(ids)
+
+        def remove(self, playlist, track):
+            pass
+
+    target = Target()
+    source_tracks = [
+        {"id": "sp-a", "name": "Known", "artists": ["Artist"], "duration_ms": 1000},
+    ]
+    stats = mirror_pair(
+        target, source_tracks, {"name": "Aurora"}, {"id": "new-apple-aurora"},
+        {"isrc": {}, "search": {}, "dirty": False}, songs,
+        execute=True, max_removals=200, max_adds=200,
+    )
+
+    assert target.added == ["apple-current"]
+    assert stats["added"] == 1
+    assert archive.get_links(songs, "apple", ["sp-a"]) == {"sp-a": "apple-current"}
+    songs.close()
+
+
+def test_one_way_records_the_catalog_id_that_the_target_actually_added(tmp_path):
+    """A provider may repair an obsolete resolved id during the write itself."""
+    from songmirror.engine.targets.base import mirror_pair
+
+    songs = archive.connect(str(tmp_path / "write-time-repair.db"))
+
+    class Target:
+        name, tag, source = "Apple Music", "apple", "apple"
+
+        def playlist_tracks(self, playlist):
+            return []
+
+        def track_id(self, track):
+            return track.get("catalog_id")
+
+        def expected_ids(self, tracks, links, cache):
+            return {}
+
+        def prefetch(self, tracks, cache):
+            pass
+
+        def resolve(self, track, cache):
+            return "obsolete", "isrc"
+
+        def add(self, playlist, ids):
+            assert ids == ["obsolete"]
+
+        def added_id(self, target_id):
+            return "current" if target_id == "obsolete" else target_id
+
+        def remove(self, playlist, track):
+            pass
+
+    stats = mirror_pair(
+        Target(),
+        [{
+            "id": "spotify-id",
+            "isrc": "ISRC",
+            "name": "Song",
+            "artists": ["Artist"],
+            "duration_ms": 1000,
+        }],
+        {"name": "Aurora"},
+        {"id": "apple-aurora"},
+        {"isrc": {}, "search": {}, "dirty": False},
+        songs,
+        execute=True,
+        max_removals=200,
+        max_adds=200,
+    )
+
+    assert stats["added"] == 1
+    assert archive.get_links(songs, "apple", ["spotify-id"]) == {
+        "spotify-id": "current"
+    }
+    songs.close()
+
+
+def test_one_way_reuses_a_conservative_archived_recording_match(tmp_path):
+    from songmirror.engine.targets.base import mirror_pair
+
+    songs = archive.connect(str(tmp_path / "recording-history.db"))
+    archive.upsert_many(songs, "apple", [{
+        "catalog_id": "apple-drowning",
+        "name": "Drowning (feat. Kodak Black)",
+        "artist": "A Boogie wit da Hoodie",
+        "duration_ms": 209_269,
+    }])
+    archive.set_links(songs, "apple", {"sp-drowning": "apple-stale"})
+
+    class Target:
+        name, tag, source = "Apple Music", "apple", "apple"
+
+        def playlist_tracks(self, playlist):
+            return []
+
+        def track_id(self, track):
+            return track.get("catalog_id")
+
+        def expected_ids(self, tracks, links, cache):
+            return {track["id"]: {links[track["id"]]} for track in tracks if track["id"] in links}
+
+        def prefetch(self, tracks, cache):
+            pass
+
+        def resolve(self, track, cache):
+            raise AssertionError("the conservative archive match should avoid throttled search")
+
+        def add(self, playlist, ids):
+            self.added = list(ids)
+
+        def remove(self, playlist, track):
+            pass
+
+    target = Target()
+    source_tracks = [{
+        "id": "sp-drowning",
+        "name": "Drowning (feat. Kodak Black)",
+        "artists": ["A Boogie Wit da Hoodie", "Kodak Black"],
+        "duration_ms": 209_269,
+    }]
+    stats = mirror_pair(
+        target, source_tracks, {"name": "Aurora"}, {"id": "new-apple-aurora"},
+        {"isrc": {}, "search": {}, "dirty": False}, songs,
+        execute=True, max_removals=200, max_adds=200,
+    )
+
+    assert target.added == ["apple-drowning"]
+    assert stats["added"] == 1
+    songs.close()
+
+
 def test_held_removals_name_the_track_playlist_service_and_reason():
     from songmirror.engine.targets.base import held_removals
 
@@ -378,6 +650,87 @@ class _Peer:
 
     def is_editable(self, pl):
         return True
+
+
+class _RecreatedPeer(_Peer):
+    """N-way peer whose membership reflects writes to a newly created playlist."""
+
+    def __init__(self, source, isrcs, *, missing=False):
+        super().__init__(source)
+        self._isrcs = list(isrcs)
+        self._missing = missing
+        self.added = []
+
+    def list_playlists(self):
+        if self._missing:
+            return {}
+        return {"aurora": {"id": f"{self.source}-aurora", "name": "Aurora"}}
+
+    def create(self, playlist):
+        self._missing = False
+        return {"id": f"{self.source}-replacement", "name": playlist["name"]}
+
+    def playlist_tracks(self, playlist):
+        return [
+            {
+                "id": f"{self.source}-{isrc}",
+                "name": f"Song {isrc}",
+                "artists": ["Artist"],
+                "artist": "Artist",
+                "duration_ms": 180_000,
+                "isrc": isrc,
+                "added_at": "2026-01-01",
+            }
+            for isrc in self._isrcs
+        ]
+
+    def track_id(self, track):
+        return track["id"]
+
+    def prefetch(self, tracks, cache):
+        pass
+
+    def native_isrc_map(self, cache):
+        return {}
+
+    def resolve(self, track, cache):
+        return f"{self.source}-{track['isrc']}", "isrc"
+
+    def add(self, playlist, ids):
+        for track_id in ids:
+            isrc = track_id.removeprefix(f"{self.source}-")
+            self.added.append(isrc)
+            if isrc not in self._isrcs:
+                self._isrcs.append(isrc)
+
+    def remove(self, playlist, track):
+        self._isrcs.remove(track["isrc"])
+
+
+def test_nway_created_replacement_discards_the_deleted_playlists_baseline(monkeypatch, tmp_path):
+    songs = archive.connect(str(tmp_path / "songs.db"))
+    for source in ("spotify", "apple"):
+        archive.set_playlist_state(songs, "aurora", source, {"i:A", "i:B"})
+
+    spotify = _RecreatedPeer("spotify", ["A", "B"])
+    apple = _RecreatedPeer("apple", [], missing=True)
+    monkeypatch.setattr(runner, "build_peers", lambda opts, sp, songs=None: [spotify, apple])
+    monkeypatch.setattr(runner, "load_cache", lambda path: {"isrc": {}, "search": {}, "dirty": False})
+    monkeypatch.setattr(runner, "save_cache", lambda path, cache: None)
+
+    runner._run_nway(
+        _opts(sync_mode="nway", execute=True),
+        object(),
+        [{"id": "spotify-aurora", "name": "Aurora"}],
+        songs,
+    )
+
+    assert apple.added == ["A", "B"]
+    # Additions enter the baseline on the next read, after the provider proves
+    # they landed; this pass still marks the replacement as initialized-empty.
+    assert archive.has_playlist_state(songs, "aurora", "apple")
+    assert archive.get_playlist_state(songs, "aurora", "apple") == set()
+    songs.close()
 
 
 def test_nway_counts_and_names_a_playlist_it_could_not_sync(monkeypatch):

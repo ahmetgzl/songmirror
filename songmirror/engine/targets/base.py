@@ -33,6 +33,14 @@ class TargetAuthError(RuntimeError):
     """Auth expired / rejected. Fatal for the pass — never a partial write."""
 
 
+class TargetTransientError(RuntimeError):
+    """A retryable provider failure that must not let later writes overtake it."""
+
+    def __init__(self, message, *, retry_after=None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class MirrorTarget:
     """Interface a mirror destination implements. See apple.py / ytmusic.py."""
 
@@ -40,6 +48,10 @@ class MirrorTarget:
     tag = "target"        # short log tag, e.g. "apple"
     source = "target"     # archive source key, e.g. "apple"
     cache_file = None     # this target's own resolution cache path (ids differ per service)
+    # True only when the provider gives every physical playlist entry its own
+    # durable id. The manual editor can then delete that exact occurrence
+    # without rereading a thousand-track playlist to revalidate its position.
+    stable_occurrence_ids = False
 
     def list_playlists(self):
         """{casefolded name: playlist} of editable-or-not library playlists."""
@@ -60,6 +72,24 @@ class MirrorTarget:
         """Stable id of an existing target track (for diffing / linking)."""
         raise NotImplementedError
 
+    def occurrence_id(self, track):
+        """Provider id for one physical playlist entry, when available."""
+        for key in ("relationship_id", "playlistItemId", "setVideoId"):
+            value = track.get(key)
+            if value is not None and value != "":
+                return str(value)
+        return None
+
+    def remove_occurrence(self, playlist, track_id, occurrence_id):
+        """Delete one entry addressed by its provider-stable occurrence id."""
+        self.remove(playlist, {
+            "id": track_id,
+            "videoId": track_id,
+            "relationship_id": occurrence_id,
+            "playlistItemId": occurrence_id,
+            "setVideoId": occurrence_id,
+        })
+
     def playlist_count(self, playlist):
         """Current track count from list metadata (no API call), or None. Used
         to catch target-side edits when deciding a snapshot skip."""
@@ -78,8 +108,9 @@ class MirrorTarget:
         name-keyed list_playlists(); a provider whose list_playlists() dedupes by
         name (Spotify) overrides this to scan its full, un-deduped set so a followed
         playlist stays reachable by id."""
+        wanted = str(playlist_id)
         return next((pl for pl in self.browse_playlists()
-                     if self.playlist_id(pl) == playlist_id), None)
+                     if str(self.playlist_id(pl)) == wanted), None)
 
     def browse_playlists(self):
         """All library playlists for the browse / transfer pickers, as a flat list
@@ -114,9 +145,27 @@ class MirrorTarget:
         """(target_id, method) for an unlinked track, or (None, None)."""
         raise NotImplementedError
 
+    def validate_link(self, sp_track, target_id, cache):
+        """Return a still-addable linked id, or None to fall through to resolve.
+
+        Most provider ids are durable and use this default unchanged. A provider
+        whose catalog ids expire can override it using freshly prefetched data.
+        """
+        return target_id, "link"
+
     def add(self, playlist, target_ids):
         """Append target_ids IN ORDER, one request per id (never batch)."""
         raise NotImplementedError
+
+    def added_id(self, target_id):
+        """Catalog id actually written for a resolved id.
+
+        Most providers write the resolved id unchanged. A provider with
+        replaceable catalog releases may repair an obsolete id during the
+        mutation and report the replacement so the durable crosswalk follows
+        what really landed.
+        """
+        return target_id
 
     def remove(self, playlist, track):
         """Remove one existing target track."""
@@ -157,6 +206,65 @@ def held_removals(target_name, playlist, tracks, max_removals, reason=None, *,
     return out
 
 
+def _recover_archived_links(songs, source_key, target, source_tracks, known):
+    """Recover addable target ids from durable identity and recording history.
+
+    A destination playlist can be deleted while the catalog entries SongMirror
+    previously proved remain valid. Reusing those mappings avoids unnecessary
+    provider search traffic (and is especially important while a catalog search
+    route is throttled). Direct links supplied by the caller remain authoritative.
+    """
+    source_ids = [track.get("id") for track in source_tracks if track.get("id")]
+    recovered = archive.get_identity_crosswalk(
+        songs, source_key, target.source, source_ids)
+    recovered = {source_id: target_id for source_id, target_id in recovered.items()
+                 if source_id not in known and target_id}
+
+    by_name = {}
+    for candidate in archive.get_song_history(songs, target.source):
+        target_id = target.track_id(candidate) or candidate.get("_archive_id")
+        if target_id:
+            by_name.setdefault(catalog_name(candidate.get("name", "")), []).append(
+                (target_id, candidate))
+
+    for track in source_tracks:
+        if not track.get("id"):
+            continue
+        matches = [
+            (target_id, candidate)
+            for target_id, candidate in by_name.get(catalog_name(track.get("name", "")), [])
+            if same_catalog_recording(track, candidate)
+        ]
+        if matches:
+            # get_song_history is newest-first. same_catalog_recording is a
+            # conservative title/artist/duration gate, so the freshest proven
+            # catalog id is the best replacement-playlist candidate.
+            # Fresh, conservative metadata evidence also repairs a stale direct
+            # link or hard-identity candidate left by a deleted playlist.
+            recovered[track["id"]] = matches[0][0]
+    return recovered
+
+
+def _enrich_hard_isrcs(songs, source_key, source_tracks):
+    """Fill missing source ISRCs from identities proven on earlier N-way reads."""
+    identities = archive.get_identities(
+        songs, source_key, [track.get("id") for track in source_tracks])
+    enriched = []
+    for track in source_tracks:
+        if normalize_isrc(track.get("isrc")):
+            enriched.append(track)
+            continue
+        canonical_id = identities.get(track.get("id"), "")
+        isrc = normalize_isrc(canonical_id[2:]) if canonical_id.startswith("i:") else ""
+        if not isrc:
+            enriched.append(track)
+            continue
+        copy = dict(track)
+        copy["isrc"] = isrc
+        enriched.append(copy)
+    return enriched
+
+
 def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, execute, max_removals,
                 max_adds, drain_removals=False, should_continue=None, source_key="spotify", source_name="Spotify", name=None):
     """Reconcile one source→target playlist pair. Returns a stats dict; `clean`
@@ -170,6 +278,7 @@ def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, e
     tag = target.tag
     name = name or sp_playlist.get("name", "?")
     started = time.monotonic()
+    sp_tracks = _enrich_hard_isrcs(songs, source_key, sp_tracks)
     tgt_tracks = target.playlist_tracks(tgt_playlist)
     log_section(name, f"{source_name} {len(sp_tracks)} tracks - {target.name} {len(tgt_tracks)} tracks", tag=tag)
 
@@ -180,6 +289,9 @@ def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, e
 
     links = (archive.get_links(songs, target.source, [t.get("id") for t in sp_tracks])
              if source_key == "spotify" else {})
+    recovered_links = _recover_archived_links(
+        songs, source_key, target, sp_tracks, links)
+    links = {**links, **recovered_links}  # fresh conservative archive evidence repairs stale links
     target.prefetch(sp_tracks, cache)
     to_add, to_remove = compute_diff(
         sp_tracks, tgt_tracks, target.expected_ids(sp_tracks, links, cache), target.track_id
@@ -191,6 +303,7 @@ def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, e
     present = {target.track_id(t) for t in tgt_tracks if target.track_id(t)}
     additions, not_found, new_links, methods = [], [], {}, {}
     stopped_early = False
+    deferred = 0
     for i, track in enumerate(to_add, 1):
         if should_continue and should_continue() != "run":
             stopped_early = True  # Pause/Stop — defer the rest; keep the pass "not clean" below
@@ -198,14 +311,31 @@ def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, e
         label = f"{track['name']} - {', '.join(track['artists'])}"
         tid = links.get(track.get("id"))
         method = "link" if tid else None
-        if not tid:
-            try:
+        try:
+            if tid:
+                validator = getattr(target, "validate_link", None)
+                if validator:
+                    tid, method = validator(track, tid, cache)
+            if not tid:
                 tid, method = target.resolve(track, cache)
-            except TargetAuthError:
-                raise
-            except Exception as e:
-                log_warn(f"resolve failed: {label}: {e!r}", tag=tag)
-                tid, method = None, None
+        except TargetAuthError:
+            raise
+        except TargetTransientError as e:
+            # The destination appends, so allowing a later source track to
+            # pass a throttled one would permanently invert date-added
+            # order. Apply only the resolved prefix and resume here later.
+            stopped_early = True
+            deferred += len(to_add) - i + 1
+            retry = (f"; provider requested about {e.retry_after:g}s" if e.retry_after is not None else "")
+            log_warn(
+                f"resolve temporarily blocked at {label}: {e}{retry}; "
+                f"deferring this track and {len(to_add) - i} later track(s) to preserve order",
+                tag=tag,
+            )
+            break
+        except Exception as e:
+            log_warn(f"resolve failed: {label}: {e!r}", tag=tag)
+            tid, method = None, None
         if len(to_add) > 25 and i % 25 == 0:
             log_note(f"  ...resolved {i}/{len(to_add)}", tag=tag)
         if not tid:
@@ -218,14 +348,15 @@ def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, e
             additions.append((tid, label, method))
             present.add(tid)
             methods[method] = methods.get(method, 0) + 1
-    if source_key == "spotify":
-        archive.set_links(songs, target.source, new_links)  # keep the shared table Spotify-anchored
-
-    guard = stopped_early  # a pause mid-resolve must not advance the snapshot (a re-run finishes it)
-    deferred = 0
+    # A provider miss can be provisional (catalog throttling, regional indexing,
+    # or a temporarily stale search result). Do not mark the source snapshot
+    # complete while anything is unresolved; a later scheduled pass must get a
+    # chance to fill it even when Spotify itself has not changed.
+    guard = stopped_early or bool(not_found)
     if len(additions) > max_adds:
-        deferred = len(additions) - max_adds
-        log_warn(f"{len(additions)} additions exceed --max-adds={max_adds}; deferring {deferred} to next pass", tag=tag)
+        cap_deferred = len(additions) - max_adds
+        deferred += cap_deferred
+        log_warn(f"{len(additions)} additions exceed --max-adds={max_adds}; deferring {cap_deferred} to next pass", tag=tag)
         additions, guard = additions[:max_adds], True
 
     removals, held = protect_removals(to_remove, not_found)
@@ -258,10 +389,33 @@ def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, e
         log_miss(f"not on {target.name}: {track['name']} - {', '.join(track['artists'])}", tag=tag)
 
     if execute:
+        if additions or removals:
+            # Invalidate before the first provider write: a batched/ordered add
+            # can partially land before a transient exception. A cached ledger
+            # must never survive with the pre-write contents in that case.
+            playlist_id = getattr(
+                target, "playlist_id", lambda playlist: playlist.get("id")
+            )(tgt_playlist)
+            if playlist_id is not None:
+                archive.invalidate_playlist_detail_cache(
+                    songs, target.source, playlist_id
+                )
         if additions:
             target.add(tgt_playlist, [tid for tid, _, _ in additions])
+        if source_key == "spotify":
+            actual_id = getattr(target, "added_id", lambda target_id: target_id)
+            archive.set_links(
+                songs,
+                target.source,
+                {source_id: actual_id(target_id)
+                 for source_id, target_id in new_links.items()},
+            )
         for track in removals:
             target.remove(tgt_playlist, track)
+    elif source_key == "spotify":
+        # A dry run may still warm proven cross-provider mappings, but there is
+        # no write-time provider repair to account for.
+        archive.set_links(songs, target.source, new_links)
 
     via = ", ".join(f"{n} {m}" for m, n in sorted(methods.items(), key=lambda kv: -kv[1]))
     counts = fmt_counts(len(additions), len(removals), len(not_found), len(held), deferred)
@@ -838,7 +992,8 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
         except Exception as e:
             log_warn(f"{p.name} prefetch failed: {e!r}", tag=p.tag)
         additions, not_found = [], []
-        for cid, norm in add_items:
+        deferred = 0
+        for add_index, (cid, norm) in enumerate(add_items, 1):
             if should_continue and should_continue() != "run":
                 interrupted = True  # Pause/Stop — defer this provider's remaining adds
                 add_blockers.add("the sync was interrupted")
@@ -865,6 +1020,17 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
                 tid, method = p.resolve(norm, cache)
             except TargetAuthError:
                 raise
+            except TargetTransientError as e:
+                deferred += len(add_items) - add_index + 1
+                add_blockers.add("the provider temporarily blocked ordered resolution")
+                retry = (f"; provider requested about {e.retry_after:g}s"
+                         if e.retry_after is not None else "")
+                log_warn(
+                    f"{p.name}/{name}: resolve temporarily blocked at {norm['name']}: {e}{retry}; "
+                    f"deferring it and {len(add_items) - add_index} later track(s) to preserve order",
+                    tag=p.tag,
+                )
+                break
             except Exception as e:
                 log_warn(f"resolve failed on {p.name}: {norm['name']}: {e!r}", tag=p.tag)
                 tid, method = None, None
@@ -892,11 +1058,11 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
             present_recordings[p.source].setdefault(catalog_name(norm["name"]), []).append((None, norm))
             additions.append((cid, tid, method or "search", norm))
 
-        deferred = 0
         if len(additions) > max_adds:
-            deferred = len(additions) - max_adds
+            cap_deferred = len(additions) - max_adds
+            deferred += cap_deferred
             log_warn(f"{p.name}/{name}: {len(additions)} additions exceed --max-adds={max_adds}; "
-                     f"deferring {deferred}", tag=p.tag)
+                     f"deferring {cap_deferred}", tag=p.tag)
             additions = additions[:max_adds]
             add_blockers.add("replacement additions exceeded the add cap")
         for _, tid, _, norm in additions:

@@ -1,11 +1,13 @@
 import { Link } from 'react-router-dom'
+import { LuExternalLink, LuListMusic } from 'react-icons/lu'
 
 import type { ProviderPlaylistsEntry } from '@/hooks/useProviderPlaylists'
 import { cn } from '@/lib/cn'
-import { serviceLogoId, tagText } from '@/lib/constants'
+import { serviceHomeUrl, serviceLogoId, tagText } from '@/lib/constants'
 import { formatTrackCount } from '@/lib/format'
-import type { Account } from '@/types'
+import type { Account, ProviderPlaylist } from '@/types'
 
+import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { CoverArt } from '../ui/CoverArt'
 import { EmptyState } from '../ui/EmptyState'
@@ -16,9 +18,20 @@ import { BUTTON_BASE_CLASSES, BUTTON_SIZE_CLASSES, BUTTON_VARIANT_CLASSES } from
 
 /** One provider's playlists for the Browse section. Handles all four states
  * explicitly: not connected, loading, errored, and loaded (possibly empty). */
-export function ProviderPlaylistsCard({ account, entry }: { account: Account; entry: ProviderPlaylistsEntry | undefined }) {
+export function ProviderPlaylistsCard({
+  account,
+  entry,
+  onOpenPlaylist,
+  onRetry,
+}: {
+  account: Account
+  entry: ProviderPlaylistsEntry | undefined
+  onOpenPlaylist: (playlist: ProviderPlaylist) => void
+  onRetry: () => void
+}) {
   const connected = account.state === 'connected'
   const logoId = serviceLogoId(account.id)
+  const homeUrl = serviceHomeUrl(account.id)
 
   return (
     <Card className="flex flex-col gap-3 p-4 sm:p-5">
@@ -37,7 +50,20 @@ export function ProviderPlaylistsCard({ account, entry }: { account: Account; en
             </span>
           )}
         </div>
-        <StatusPill state={account.state} />
+        <div className="flex w-full items-center justify-between gap-2">
+          <StatusPill state={account.state} />
+          {connected && homeUrl ? (
+            <a
+              href={homeUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-h-8 items-center gap-1.5 rounded-control px-2 text-[11.5px] font-semibold text-text-3 hover:bg-surface-2 hover:text-text-2"
+            >
+              Open service
+              <LuExternalLink className="size-3" aria-hidden="true" />
+            </a>
+          ) : null}
+        </div>
       </div>
 
       {entry?.error && entry.playlists.length > 0 && (
@@ -66,24 +92,52 @@ export function ProviderPlaylistsCard({ account, entry }: { account: Account; en
           </div>
         </LoadingStatus>
       ) : entry.error && entry.playlists.length === 0 ? (
-        <p className="text-sm text-danger">Could not load playlists: {entry.error}</p>
+        <div className="flex flex-col items-start gap-3 rounded-control bg-danger-soft p-3">
+          <p className="text-sm text-danger">Could not load playlists: {entry.error}</p>
+          <Button variant="secondary" size="sm" onClick={onRetry}>Retry</Button>
+        </div>
       ) : entry.playlists.length > 0 ? (
         <ul className="thin-scrollbar flex max-h-80 flex-col divide-y divide-border overflow-y-auto">
           {entry.playlists.map((p, i) => (
             <li key={p.id} className="flex items-center gap-3 py-2">
-              <span className="shrink-0 font-mono text-[10px] text-text-3" aria-hidden="true">
-                {String(i + 1).padStart(2, '0')}
-              </span>
-              <CoverArt image={p.image} />
-              <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-text">{p.name}</span>
-              {formatTrackCount(p.count) && (
-                <span className="shrink-0 font-mono text-[11.5px] text-text-3">{formatTrackCount(p.count)}</span>
-              )}
+              <button
+                type="button"
+                onClick={() => onOpenPlaylist(p)}
+                className="group flex min-w-0 flex-1 items-center gap-3 rounded-control text-left hover:text-accent"
+                aria-label={`Open ${p.name} inside SongMirror`}
+              >
+                <span className="shrink-0 font-mono text-[10px] text-text-3" aria-hidden="true">
+                  {String(i + 1).padStart(2, '0')}
+                </span>
+                <CoverArt image={p.image} />
+                <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-text group-hover:text-accent">{p.name}</span>
+                {formatTrackCount(p.count) ? (
+                  <span className="shrink-0 font-mono text-[11.5px] text-text-3">{formatTrackCount(p.count)}</span>
+                ) : null}
+                <LuListMusic className="size-3.5 shrink-0 text-text-3 group-hover:text-accent" aria-hidden="true" />
+              </button>
+              {p.external_url ? (
+                <a
+                  href={p.external_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Open ${p.name} in ${account.name}`}
+                  title={`Open in ${account.name}`}
+                  className="inline-flex size-11 shrink-0 items-center justify-center rounded-control text-text-3 hover:bg-surface-2 hover:text-text md:size-8"
+                >
+                  <LuExternalLink className="size-3.5" aria-hidden="true" />
+                </a>
+              ) : null}
             </li>
           ))}
         </ul>
       ) : (
-        <EmptyState className="py-6" title="No playlists found" description="This service doesn't have any playlists yet." />
+        <EmptyState
+          className="py-6"
+          title="No playlists found"
+          description="No playlists were returned. Refresh once before creating a new one."
+          action={<Button variant="secondary" size="sm" onClick={onRetry}>Refresh</Button>}
+        />
       )}
     </Card>
   )

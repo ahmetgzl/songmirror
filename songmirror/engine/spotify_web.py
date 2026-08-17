@@ -55,14 +55,22 @@ def playlist_tracks(playlist_id):
             continue  # local file / unavailable / ghost entry — excluded like the official read
         artists = [a.name for a in (getattr(t, "artists", ()) or ()) if getattr(a, "name", "")]
         added = getattr(pt, "added_at", None)
+        album = getattr(t, "album", None)
+        image = ""
+        for candidate in reversed(list(getattr(album, "images", ()) or ())):
+            url = candidate.get("url") if isinstance(candidate, dict) else getattr(candidate, "url", "")
+            if url:
+                image = url
+                break
         out.append({
             "id": tid,
             "isrc": None,  # the web payload omits ISRC; matching falls back to name/artist/duration
             "name": getattr(t, "name", "") or "",
             "artists": artists or [""],
-            "album": getattr(getattr(t, "album", None), "name", None),
+            "album": getattr(album, "name", None),
             "duration_ms": getattr(t, "duration_ms", None),
             # ISO-8601 string like the official API (the diff sorts oldest-first on it).
             "added_at": added.isoformat() if hasattr(added, "isoformat") else (added or ""),
+            "image": image,
         })
     return out

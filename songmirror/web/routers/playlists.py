@@ -2,16 +2,113 @@
 
 from dataclasses import asdict
 
-from fastapi import APIRouter, Body, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 
-from ...services.playlists import PlaylistLink, PlaylistService
+from ...services.playlists import (
+    PlaylistLink, PlaylistService, PlaylistServiceError,
+)
 
 router = APIRouter()
 
 
 @router.get("/api/playlists")
 def playlists(request: Request, provider: str):
-    return PlaylistService(request.app.state.settings).browse(provider)
+    try:
+        return PlaylistService(request.app.state.settings).browse(provider)
+    except PlaylistServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.get("/api/playlists/{provider}/{playlist_id}")
+def playlist_detail(
+    request: Request,
+    provider: str,
+    playlist_id: str,
+    refresh: bool = False,
+    expected_count: int | None = None,
+):
+    try:
+        return PlaylistService(request.app.state.settings).detail(
+            provider,
+            playlist_id,
+            refresh=refresh,
+            expected_count=expected_count,
+        )
+    except PlaylistServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.delete("/api/playlists/{provider}/{playlist_id}/tracks")
+async def remove_playlist_track(
+    request: Request,
+    provider: str,
+    playlist_id: str,
+    body: dict = Body(...),
+):
+    raw_tracks = body.get("tracks")
+    if raw_tracks is not None:
+        if not isinstance(raw_tracks, list) or not raw_tracks or len(raw_tracks) > 1000:
+            raise HTTPException(
+                status_code=422,
+                detail="tracks must contain between 1 and 1000 selections",
+            )
+        selections = []
+        seen = set()
+        try:
+            for raw in raw_tracks:
+                position = int(raw["position"])
+                track_id = str(raw["track_id"])
+                occurrence_id = str(raw.get("occurrence_id") or "")
+                if position < 0 or not track_id:
+                    raise ValueError
+                key = (position, track_id, occurrence_id)
+                if key not in seen:
+                    seen.add(key)
+                    selections.append({
+                        "position": position,
+                        "track_id": track_id,
+                        "occurrence_id": occurrence_id,
+                    })
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="every selected track needs a non-negative position and track_id",
+            ) from exc
+
+        service = PlaylistService(request.app.state.settings)
+        try:
+            return await request.app.state.sync.run_exclusive(
+                lambda: service.remove_tracks(
+                    provider,
+                    playlist_id,
+                    selections=selections,
+                )
+            )
+        except PlaylistServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    try:
+        position = int(body["position"])
+        track_id = str(body["track_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="position and track_id are required",
+        ) from exc
+
+    service = PlaylistService(request.app.state.settings)
+    try:
+        return await request.app.state.sync.run_exclusive(
+            lambda: service.remove_track(
+                provider,
+                playlist_id,
+                position=position,
+                track_id=track_id,
+                occurrence_id=str(body.get("occurrence_id") or ""),
+            )
+        )
+    except PlaylistServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.get("/api/links")

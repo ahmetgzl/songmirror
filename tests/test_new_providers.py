@@ -23,7 +23,20 @@ def test_tidal_jsonapi_track_shape_carries_isrc_artist_and_entry_id():
                 },
             },
             {"type": "artists", "id": "a1", "attributes": {"name": "Artist"}},
-            {"type": "albums", "id": "al1", "attributes": {"title": "Album"}},
+            {
+                "type": "albums",
+                "id": "al1",
+                "attributes": {"title": "Album"},
+                "relationships": {"coverArt": {"data": [{"type": "artworks", "id": "art1"}]}},
+            },
+            {
+                "type": "artworks",
+                "id": "art1",
+                "attributes": {"files": [
+                    {"href": "https://tidal/1280.jpg", "meta": {"width": 1280}},
+                    {"href": "https://tidal/160.jpg", "meta": {"width": 160}},
+                ]},
+            },
         ],
     }
     track = TidalTarget._tracks_from_body(body)[0]
@@ -34,6 +47,7 @@ def test_tidal_jsonapi_track_shape_carries_isrc_artist_and_entry_id():
         "artist": "Artist",
         "artists": ["Artist"],
         "album": "Album",
+        "image": "https://tidal/160.jpg",
         "duration_ms": 182500,
         "isrc": "USAAA2600001",
         "added_at": "2026-01-01",
@@ -416,12 +430,16 @@ def test_deezer_track_shape_and_browser_header_minimization(tmp_path, monkeypatc
             "duration": 123,
             "isrc": "FRCCC2600003",
             "contributors": [{"name": "One"}, {"name": "Two"}],
-            "album": {"title": "World"},
+            "album": {
+                "title": "World",
+                "cover": {"urls": ["https://deezer/64.jpg", "https://deezer/128.jpg"]},
+            },
         }
     )
     assert (track["id"], track["artist"], track["duration_ms"], track["isrc"]) == (
         "12", "One, Two", 123000, "FRCCC2600003"
     )
+    assert track["image"] == "https://deezer/128.jpg"
 
     monkeypatch.setenv("DEEZER_WEB_HEADERS", "")
     monkeypatch.setenv("DEEZER_REFRESH_TOKEN", "")
@@ -908,6 +926,10 @@ def test_amazon_web_backend_maps_playlists_tracks_and_mutations():
                                         "title": "Song",
                                         "isrc": "USWEB2600001",
                                         "duration": 202,
+                                        "images": [
+                                            {"url": "https://amazon/160.jpg", "width": 160},
+                                            {"url": "https://amazon/1280.jpg", "width": 1280},
+                                        ],
                                         "album": {"title": "Album"},
                                         "contributingArtists": {
                                             "edges": [{"node": {"name": "Artist"}, "role": "PRIMARY"}]
@@ -930,6 +952,7 @@ def test_amazon_web_backend_maps_playlists_tracks_and_mutations():
     assert (track["relationship_id"], track["artist"], track["album"], track["isrc"]) == (
         "entry-1", "Artist", "Album", "USWEB2600001"
     )
+    assert track["image"] == "https://amazon/160.jpg"
     target.add(playlist, ["asin-1", "asin-2"])
     append_calls = [variables for operation, variables, _ in target._web.calls
                     if operation == "SongMirrorAmazonAppendTracks"]

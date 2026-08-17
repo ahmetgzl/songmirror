@@ -260,9 +260,43 @@ export interface ProviderPlaylist {
   name: string
   count: number | null
   image: string
+  /** First-party web-player URL for opening this exact playlist. */
+  external_url: string
   /** False for a followed (non-owned) playlist. Only Spotify distinguishes the
    * two today; absent/true elsewhere. Drives the Created/Followed grouping. */
   owned?: boolean
+}
+
+export interface ProviderPlaylistTrack {
+  /** Zero-based position from the provider read; used as an optimistic edit guard. */
+  position: number
+  id: string
+  isrc: string
+  occurrence_id: string
+  name: string
+  artist: string
+  album: string | null
+  duration_ms: number | null
+  image: string
+  added_at: string
+  external_url: string
+}
+
+export interface ProviderPlaylistDetail extends ProviderPlaylist {
+  provider: string
+  description: string
+  editable: boolean
+  tracks: ProviderPlaylistTrack[]
+}
+
+export interface RemovePlaylistTrackRequest {
+  position: number
+  track_id: string
+  occurrence_id?: string
+}
+
+export interface RemovePlaylistTracksRequest {
+  tracks: RemovePlaylistTrackRequest[]
 }
 
 export type LinkDirection = 'oneway' | 'nway'

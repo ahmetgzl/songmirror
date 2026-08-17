@@ -248,6 +248,99 @@ def test_links_crud(tmp_path):
         assert client.get("/api/links").json() == []
 
 
+def test_playlist_browse_failure_is_a_retryable_http_error(tmp_path, monkeypatch):
+    from songmirror.services.playlists import PlaylistBrowseError, PlaylistService
+
+    monkeypatch.setattr(
+        PlaylistService,
+        "browse",
+        lambda self, provider: (_ for _ in ()).throw(
+            PlaylistBrowseError("Spotify could not load playlists right now. Retry.")
+        ),
+    )
+    with TestClient(_app(tmp_path)) as client:
+        response = client.get("/api/playlists?provider=spotify")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Spotify could not load playlists right now. Retry."
+
+
+def test_playlist_detail_and_serialized_remove_routes(tmp_path, monkeypatch):
+    from songmirror.services.playlists import PlaylistService
+
+    detail_calls = []
+
+    def playlist_detail(self, provider, playlist_id, **kwargs):
+        detail_calls.append((provider, playlist_id, kwargs))
+        return {
+            "provider": provider,
+            "id": playlist_id,
+            "name": "Aurora",
+            "tracks": [],
+        }
+
+    monkeypatch.setattr(
+        PlaylistService,
+        "detail",
+        playlist_detail,
+    )
+    seen = []
+
+    def remove(self, provider, playlist_id, *, position, track_id, occurrence_id=""):
+        seen.append((provider, playlist_id, position, track_id, occurrence_id))
+        return {"ok": True}
+
+    monkeypatch.setattr(PlaylistService, "remove_track", remove)
+
+    with TestClient(_app(tmp_path)) as client:
+        detail = client.get(
+            "/api/playlists/spotify/playlist-1?refresh=true&expected_count=12"
+        )
+        removed = client.request(
+            "DELETE",
+            "/api/playlists/spotify/playlist-1/tracks",
+            json={"position": 4, "track_id": "track-5"},
+        )
+
+    assert detail.status_code == 200
+    assert detail.json()["name"] == "Aurora"
+    assert detail_calls == [(
+        "spotify",
+        "playlist-1",
+        {"refresh": True, "expected_count": 12},
+    )]
+    assert removed.json() == {"ok": True}
+    assert seen == [("spotify", "playlist-1", 4, "track-5", "")]
+
+
+def test_playlist_bulk_remove_route(tmp_path, monkeypatch):
+    from songmirror.services.playlists import PlaylistService
+
+    seen = []
+
+    def remove_many(self, provider, playlist_id, *, selections):
+        seen.extend(selections)
+        return {"ok": True, "removed": len(selections)}
+
+    monkeypatch.setattr(PlaylistService, "remove_tracks", remove_many)
+
+    with TestClient(_app(tmp_path)) as client:
+        response = client.request(
+            "DELETE",
+            "/api/playlists/tidal/playlist-1/tracks",
+            json={"tracks": [
+                {"position": 3, "track_id": "track-4", "occurrence_id": "entry-4"},
+                {"position": 7, "track_id": "track-8", "occurrence_id": "entry-8"},
+            ]},
+        )
+
+    assert response.json() == {"ok": True, "removed": 2}
+    assert seen == [
+        {"position": 3, "track_id": "track-4", "occurrence_id": "entry-4"},
+        {"position": 7, "track_id": "track-8", "occurrence_id": "entry-8"},
+    ]
+
+
 def test_syncs_crud(tmp_path):
     # Fresh installs start with NO syncs (no auto-seeded "Default"); jobs are
     # created, merge-updated, and deleted via CRUD.

@@ -7,6 +7,9 @@ The main tables in one file:
               passes match by hard identifier instead of re-searching.
 - sync_state: a playlist's Spotify snapshot_id after a clean pass, so an
               unchanged pair can be skipped wholesale.
+- playlist_cache / playlist_track_cache: the last complete normalized playlist
+              read, so the in-app editor can reopen large playlists without a
+              fresh provider round trip.
 
 SQLite over a pickle blob: incremental writes, crash-safe, and inspectable
 (`sqlite3 song_cache.db "SELECT name, artist, last_seen FROM songs"`).
@@ -129,6 +132,48 @@ CREATE TABLE IF NOT EXISTS playlist_order (
     PRIMARY KEY (playlist, source, captured_at)
 )
 """,
+    # Persistent, inspectable cache for the in-app playlist ledger. Keep the
+    # playlist metadata and ordered physical entries relational rather than in
+    # one opaque JSON blob: this makes provider coverage/order easy to audit and
+    # lets a future migration enrich individual rows without rewriting a large
+    # payload.
+    """
+CREATE TABLE IF NOT EXISTS playlist_cache (
+    provider     TEXT NOT NULL,
+    playlist_id  TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    description  TEXT NOT NULL,
+    count        INTEGER NOT NULL,
+    image        TEXT NOT NULL,
+    owned        INTEGER NOT NULL,
+    editable     INTEGER NOT NULL,
+    external_url TEXT NOT NULL,
+    refreshed_at TEXT NOT NULL,
+    PRIMARY KEY (provider, playlist_id)
+)
+""",
+    """
+CREATE TABLE IF NOT EXISTS playlist_track_cache (
+    provider      TEXT NOT NULL,
+    playlist_id   TEXT NOT NULL,
+    position      INTEGER NOT NULL,
+    track_id      TEXT NOT NULL,
+    isrc          TEXT NOT NULL,
+    occurrence_id TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    artist        TEXT NOT NULL,
+    album         TEXT,
+    duration_ms   INTEGER,
+    image         TEXT NOT NULL,
+    added_at      TEXT NOT NULL,
+    external_url  TEXT NOT NULL,
+    PRIMARY KEY (provider, playlist_id, position)
+)
+""",
+    """
+CREATE INDEX IF NOT EXISTS idx_playlist_track_cache_track
+ON playlist_track_cache (provider, track_id)
+""",
 ]
 
 UPSERT = """
@@ -157,6 +202,17 @@ def connect(path):
         conn.execute("DROP TABLE playlist_state")
     for schema in SCHEMAS:
         conn.execute(schema)
+    cache_cols = [
+        row[1]
+        for row in conn.execute(
+            "PRAGMA table_info(playlist_track_cache)"
+        ).fetchall()
+    ]
+    if cache_cols and "isrc" not in cache_cols:
+        conn.execute(
+            "ALTER TABLE playlist_track_cache "
+            "ADD COLUMN isrc TEXT NOT NULL DEFAULT ''"
+        )
     # Existing non-empty baselines predate playlist_state_meta. Mark them as
     # initialized in place; providers with no rows remain correctly classified
     # as bootstrap peers on their next N-way pass.
@@ -265,6 +321,60 @@ def get_identities(conn, source, track_ids):
     return _in_chunks(
         conn, "SELECT track_id, canonical_id FROM track_identity WHERE source = ? "
               "AND track_id IN ({marks})", [source], track_ids)
+
+
+def get_identity_crosswalk(conn, source, target, source_track_ids):
+    """{source_track_id: target_track_id} joined through a proven hard identity.
+
+    This deliberately reads the current identity table, including tracks last
+    seen in a playlist that has since been deleted. That history is the fastest
+    and most precise way to rebuild a replacement without catalog searches.
+    When one recording has several target catalog ids, prefer the most recently
+    proven one deterministically.
+    """
+    out = {}
+    ids = [track_id for track_id in source_track_ids if track_id]
+    for i in range(0, len(ids), 500):
+        chunk = ids[i : i + 500]
+        marks = ",".join("?" * len(chunk))
+        rows = conn.execute(
+            f"SELECT src.track_id, dst.track_id "
+            f"FROM track_identity AS src "
+            f"JOIN track_identity AS dst ON dst.canonical_id = src.canonical_id "
+            f"WHERE src.source = ? AND dst.source = ? "
+            f"AND src.canonical_id LIKE 'i:%' AND src.track_id IN ({marks}) "
+            f"ORDER BY dst.updated DESC, dst.track_id",
+            [source, target, *chunk],
+        )
+        for source_id, target_id in rows:
+            out.setdefault(source_id, target_id)
+    return out
+
+
+def get_song_history(conn, source):
+    """Provider tracks seen before, newest evidence first, in target-like shape."""
+    rows = conn.execute(
+        "SELECT id, isrc, name, artist, album, duration_ms, meta, last_seen "
+        "FROM songs WHERE source = ? ORDER BY last_seen DESC, id",
+        (source,),
+    )
+    out = []
+    for track_id, isrc, name, artist, album, duration_ms, meta, last_seen in rows:
+        try:
+            track = json.loads(meta) if meta else {}
+        except (TypeError, json.JSONDecodeError):
+            track = {}
+        track.setdefault("id", track_id)
+        track.setdefault("isrc", isrc)
+        track.setdefault("name", name or "")
+        track.setdefault("artist", artist or "")
+        track.setdefault("artists", [artist] if artist else [])
+        track.setdefault("album", album)
+        track.setdefault("duration_ms", duration_ms)
+        track["_archive_id"] = track_id
+        track["_archive_last_seen"] = last_seen
+        out.append(track)
+    return out
 
 
 def get_identity_history(conn, source, track_ids):
@@ -457,4 +567,197 @@ def clear_playlist_state(conn, playlist):
     conn.execute("DELETE FROM playlist_state WHERE playlist = ?", (playlist,))
     conn.execute("DELETE FROM playlist_state_meta WHERE playlist = ?", (playlist,))
     conn.execute("DELETE FROM playlist_pending_removal WHERE playlist = ?", (playlist,))
+    conn.commit()
+
+
+def get_playlist_detail_cache(conn, provider, playlist_id):
+    """Return the last complete normalized playlist read, or ``None``.
+
+    Tracks are always returned in provider playlist order. A header without its
+    declared number of rows is treated as an interrupted/corrupt cache miss.
+    """
+    row = conn.execute(
+        "SELECT name, description, count, image, owned, editable, external_url "
+        "FROM playlist_cache WHERE provider = ? AND playlist_id = ?",
+        (str(provider), str(playlist_id)),
+    ).fetchone()
+    if row is None:
+        return None
+    tracks = conn.execute(
+        "SELECT position, track_id, isrc, occurrence_id, name, artist, album, "
+        "duration_ms, image, added_at, external_url "
+        "FROM playlist_track_cache WHERE provider = ? AND playlist_id = ? "
+        "ORDER BY position",
+        (str(provider), str(playlist_id)),
+    ).fetchall()
+    if len(tracks) != int(row[2]):
+        return None
+    return {
+        "provider": str(provider),
+        "id": str(playlist_id),
+        "name": row[0],
+        "description": row[1],
+        "count": int(row[2]),
+        "image": row[3],
+        "owned": bool(row[4]),
+        "editable": bool(row[5]),
+        "external_url": row[6],
+        "tracks": [
+            {
+                "position": int(track[0]),
+                "id": track[1],
+                "isrc": track[2],
+                "occurrence_id": track[3],
+                "name": track[4],
+                "artist": track[5],
+                "album": track[6],
+                "duration_ms": track[7],
+                "image": track[8],
+                "added_at": track[9],
+                "external_url": track[10],
+            }
+            for track in tracks
+        ],
+    }
+
+
+def set_playlist_detail_cache(conn, detail):
+    """Atomically replace one playlist ledger and archive its provider songs."""
+    provider = str(detail["provider"])
+    playlist_id = str(detail["id"])
+    tracks = list(detail.get("tracks") or [])
+    now = _now()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO playlist_cache VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                provider,
+                playlist_id,
+                str(detail.get("name") or ""),
+                str(detail.get("description") or ""),
+                len(tracks),
+                str(detail.get("image") or ""),
+                int(bool(detail.get("owned", True))),
+                int(bool(detail.get("editable", False))),
+                str(detail.get("external_url") or ""),
+                now,
+            ),
+        )
+        conn.execute(
+            "DELETE FROM playlist_track_cache WHERE provider = ? AND playlist_id = ?",
+            (provider, playlist_id),
+        )
+        conn.executemany(
+            "INSERT INTO playlist_track_cache "
+            "(provider, playlist_id, position, track_id, isrc, occurrence_id, "
+            "name, artist, album, duration_ms, image, added_at, external_url) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    provider,
+                    playlist_id,
+                    int(track["position"]),
+                    str(track["id"]),
+                    str(track.get("isrc") or ""),
+                    str(track.get("occurrence_id") or ""),
+                    str(track.get("name") or "Unknown track"),
+                    str(track.get("artist") or ""),
+                    track.get("album"),
+                    track.get("duration_ms"),
+                    str(track.get("image") or ""),
+                    str(track.get("added_at") or ""),
+                    str(track.get("external_url") or ""),
+                )
+                for track in tracks
+            ],
+        )
+        # A playlist read is also authoritative evidence that these provider
+        # songs exist. Feed the same rows into the durable all-provider archive
+        # instead of maintaining a disconnected UI-only cache.
+        conn.executemany(
+            UPSERT,
+            [
+                (
+                    provider,
+                    str(track["id"]),
+                    track.get("isrc"),
+                    str(track.get("name") or "Unknown track"),
+                    str(track.get("artist") or ""),
+                    track.get("album"),
+                    track.get("duration_ms"),
+                    json.dumps(track, ensure_ascii=False),
+                    now,
+                    now,
+                )
+                for track in tracks
+            ],
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def invalidate_playlist_detail_cache(conn, provider, playlist_id):
+    """Drop one cached ledger before/after a write whose result may be partial."""
+    conn.execute(
+        "DELETE FROM playlist_track_cache WHERE provider = ? AND playlist_id = ?",
+        (str(provider), str(playlist_id)),
+    )
+    conn.execute(
+        "DELETE FROM playlist_cache WHERE provider = ? AND playlist_id = ?",
+        (str(provider), str(playlist_id)),
+    )
+    conn.commit()
+
+
+def prune_playlist_detail_cache(conn, provider, playlist_ids):
+    """Discard cached ledgers for provider playlists that no longer exist."""
+    provider = str(provider)
+    keep = {str(playlist_id) for playlist_id in playlist_ids if playlist_id is not None}
+    cached = {
+        row[0]
+        for row in conn.execute(
+            "SELECT playlist_id FROM playlist_cache WHERE provider = ?", (provider,)
+        ).fetchall()
+    }
+    stale = cached - keep
+    if not stale:
+        return
+    conn.executemany(
+        "DELETE FROM playlist_track_cache WHERE provider = ? AND playlist_id = ?",
+        [(provider, playlist_id) for playlist_id in stale],
+    )
+    conn.executemany(
+        "DELETE FROM playlist_cache WHERE provider = ? AND playlist_id = ?",
+        [(provider, playlist_id) for playlist_id in stale],
+    )
+    conn.commit()
+
+
+def reset_playlist_peer_state(conn, playlist, source):
+    """Forget one provider's state after its physical playlist is recreated.
+
+    Playlist state is keyed by logical pairing so it survives ordinary provider
+    metadata changes. A newly created playlist is the exception: carrying the
+    deleted playlist's baseline forward makes an empty replacement look like a
+    collapsed API read. Clear both N-way membership and the one-way snapshot so
+    the replacement bootstraps from the current source instead of being skipped.
+    """
+    conn.execute(
+        "DELETE FROM playlist_state WHERE playlist = ? AND source = ?",
+        (playlist, source),
+    )
+    conn.execute(
+        "DELETE FROM playlist_state_meta WHERE playlist = ? AND source = ?",
+        (playlist, source),
+    )
+    conn.execute(
+        "DELETE FROM playlist_pending_removal WHERE playlist = ? AND source = ?",
+        (playlist, source),
+    )
+    conn.execute(
+        "DELETE FROM sync_state WHERE pair = ? AND target = ?",
+        (playlist, source),
+    )
     conn.commit()

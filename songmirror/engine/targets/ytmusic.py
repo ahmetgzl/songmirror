@@ -160,6 +160,7 @@ class YTMusicTarget(MirrorTarget):
     name = "YouTube Music"
     tag = "yt"
     source = "ytmusic"
+    stable_occurrence_ids = True
 
     def __init__(self, auth_file, creds):
         self._auth_file = auth_file
@@ -274,10 +275,17 @@ class YTMusicTarget(MirrorTarget):
                 continue
             sn = item.get("snippet", {})
             artist = _artist_from_channel(sn.get("videoOwnerChannelTitle", ""))
+            thumbnails = sn.get("thumbnails") or {}
+            image = next((
+                (thumbnails.get(size) or {}).get("url")
+                for size in ("medium", "high", "default")
+                if (thumbnails.get(size) or {}).get("url")
+            ), "")
             tracks.append({
                 "id": vid, "videoId": vid, "playlistItemId": item.get("id"),
                 "name": sn.get("title", ""), "artist": artist, "artists": [artist] if artist else [""],
                 "album": None, "duration_ms": None,
+                "added_at": sn.get("publishedAt") or "", "image": image,
             })
         return tracks
 
@@ -412,11 +420,15 @@ class YTMusicBrowserTarget(YTMusicTarget):
                                    for x in (t.get("artists") or [])) if a]
             album = t.get("album")
             ds = t.get("duration_seconds")
+            thumbnails = t.get("thumbnails") or []
+            image = next((thumb.get("url") for thumb in reversed(thumbnails)
+                          if isinstance(thumb, dict) and thumb.get("url")), "")
             tracks.append({
                 "id": vid, "videoId": vid, "setVideoId": t.get("setVideoId"),
                 "name": t.get("title", ""), "artist": ", ".join(artists), "artists": artists or [""],
                 "album": album.get("name") if isinstance(album, dict) else None,
                 "duration_ms": ds * 1000 if ds else None,
+                "added_at": t.get("dateAdded") or "", "image": image,
             })
         return tracks
 

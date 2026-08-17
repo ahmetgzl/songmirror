@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 
 import { LinkCard } from '@/components/playlists/LinkCard'
 import { LinkEditorModal } from '@/components/playlists/LinkEditorModal'
+import { PlaylistDetailModal } from '@/components/playlists/PlaylistDetailModal'
 import { ProviderPlaylistsCard } from '@/components/playlists/ProviderPlaylistsCard'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -9,16 +10,20 @@ import { LoadingStatus, Skeleton } from '@/components/ui/Skeleton'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useLinks } from '@/hooks/useLinks'
 import { useProviderPlaylists } from '@/hooks/useProviderPlaylists'
-import type { PlaylistLink } from '@/types'
+import type { Account, PlaylistLink, ProviderPlaylist } from '@/types'
 
 export default function Playlists() {
   const { accounts, loading: accountsLoading, error: accountsError } = useAccounts()
   const connectedAccounts = useMemo(() => accounts?.filter((a) => a.state === 'connected') ?? [], [accounts])
   const connectedIds = useMemo(() => connectedAccounts.map((a) => a.id), [connectedAccounts])
-  const { entries } = useProviderPlaylists(connectedIds)
+  const { entries, refresh: refreshPlaylists } = useProviderPlaylists(connectedIds)
   const { links, loading: linksLoading, error: linksError, refresh: refreshLinks } = useLinks()
 
   const [editorTarget, setEditorTarget] = useState<PlaylistLink | 'new' | null>(null)
+  const [viewerTarget, setViewerTarget] = useState<{
+    account: Account
+    playlist: ProviderPlaylist
+  } | null>(null)
 
   return (
     <div className="flex flex-col gap-8">
@@ -45,7 +50,13 @@ export default function Playlists() {
         ) : accounts && accounts.length > 0 ? (
           <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {accounts.map((account) => (
-              <ProviderPlaylistsCard key={account.id} account={account} entry={entries[account.id]} />
+              <ProviderPlaylistsCard
+                key={account.id}
+                account={account}
+                entry={entries[account.id]}
+                onOpenPlaylist={(playlist) => setViewerTarget({ account, playlist })}
+                onRetry={() => void refreshPlaylists()}
+              />
             ))}
           </div>
         ) : (
@@ -119,6 +130,12 @@ export default function Playlists() {
           setEditorTarget(null)
           void refreshLinks()
         }}
+      />
+      <PlaylistDetailModal
+        account={viewerTarget?.account ?? null}
+        playlist={viewerTarget?.playlist ?? null}
+        onClose={() => setViewerTarget(null)}
+        onChanged={() => void refreshPlaylists()}
       />
     </div>
   )
