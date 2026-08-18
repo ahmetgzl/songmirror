@@ -328,6 +328,27 @@ def get_isrcs(conn, source, ids):
     return {k: v for k, v in got.items() if v}
 
 
+def get_snapshots(conn, source, ids):
+    """{id: last archived snapshot dict} for a source's tracks.
+
+    `meta` holds the provider row exactly as a previous read returned it, so a
+    catalog entry the provider can no longer describe is still identifiable by
+    what it was. Rows without a usable title are dropped: reconcile ignores
+    them anyway, and an unnamed entry cannot carry a canonical identity."""
+    rows = _in_chunks(
+        conn, "SELECT id, meta FROM songs WHERE source = ? AND meta IS NOT NULL "
+              "AND id IN ({marks})", [source], ids)
+    out = {}
+    for song_id, meta in rows.items():
+        try:
+            snapshot = json.loads(meta)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(snapshot, dict) and str(snapshot.get("name") or "").strip():
+            out[song_id] = snapshot
+    return out
+
+
 def get_identities(conn, source, track_ids):
     """{track_id: canonical_id} recorded for this provider's existing tracks."""
     return _in_chunks(

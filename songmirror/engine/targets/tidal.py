@@ -15,7 +15,9 @@ import requests
 from ...browser_session import jwt_expiry
 from ...oauth import merge_refresh, read_token, token_is_live, token_path, write_token
 from ...tidal_web import parse_web_headers
+from .. import archive
 from ..config import REQUEST_TIMEOUT, polite_sleep, required_env
+from ..logs import log_note, log_warn
 from ..matching import normalize_text, romanized, track_key
 from .base import MirrorTarget, TargetAuthError
 from .provider_utils import best_candidate, chunks, iso_duration_ms, source_playlist_details
@@ -32,8 +34,11 @@ class TidalTarget(MirrorTarget):
     source = "tidal"
     stable_occurrence_ids = True
 
-    def __init__(self):
+    def __init__(self, songs=None):
         self.cache_file = os.getenv("TIDAL_CACHE_FILE", "tidal_resolve_cache.json")
+        # The songs archive (sqlite conn) supplies last-known metadata for
+        # catalog entries TIDAL has since delisted (see playlist_tracks).
+        self._songs = songs
         web_headers = (os.getenv("TIDAL_WEB_HEADERS") or "").strip()
         self._browser_mode = bool(web_headers)
         self._token_file = token_path("TIDAL_TOKEN_FILE", DEFAULT_TOKEN_FILE)
@@ -266,6 +271,14 @@ class TidalTarget(MirrorTarget):
             details = self._tracks_by_id(requested_ids)
             missing = [track_id for track_id in requested_ids if track_id not in details]
             if missing:
+                # The relationship listing is the membership authority; /tracks
+                # only hydrates metadata. TIDAL keeps serving a relationship
+                # after the catalog entry behind it disappears, so falling back
+                # to what that id last was keeps the entry a member instead of
+                # turning a delisting into a removal everywhere it is mirrored.
+                details = {**details, **self._archived_details(missing)}
+                missing = [track_id for track_id in missing if track_id not in details]
+            if missing:
                 preview = ", ".join(missing[:5])
                 suffix = "..." if len(missing) > 5 else ""
                 raise RuntimeError(
@@ -278,6 +291,23 @@ class TidalTarget(MirrorTarget):
                 tracks.append({**track, "relationship_id": meta.get("itemId"),
                                "added_at": meta.get("addedAt") or ""})
         return tracks
+
+    def _archived_details(self, ids):
+        """Last-known metadata for track ids the catalog no longer describes."""
+        if self._songs is None:
+            return {}
+        try:
+            found = archive.get_snapshots(self._songs, self.source, ids)
+        except Exception as e:
+            log_warn(f"archive lookup failed for {len(ids)} delisted track(s): {e!r}", tag=self.tag)
+            return {}
+        if found:
+            log_note(
+                f"{len(found)} playlist entr{'y' if len(found) == 1 else 'ies'} no longer in the "
+                "TIDAL catalog; using their last known details",
+                tag=self.tag,
+            )
+        return found
 
     def _tracks_by_id(self, ids):
         out = {}

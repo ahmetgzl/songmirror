@@ -763,6 +763,33 @@ def test_authoritative_group_forwards_only_its_authority_sources(monkeypatch):
     assert entry["name"] == "Authoritative group"
 
 
+def test_authoritative_group_preserves_a_skipped_mirror_read_failure(monkeypatch):
+    peers = [_Peer("spotify"), _Peer("apple"), _Peer("tidal")]
+    monkeypatch.setattr(runner, "build_peers", lambda opts, sp, songs=None: peers)
+    monkeypatch.setattr(runner, "load_cache", lambda path: {})
+    monkeypatch.setattr(runner, "save_cache", lambda path, cache: None)
+    failure = {
+        "playlist": "Aurora",
+        "error": "TIDAL mirror read failed: incomplete relationship 305553517",
+    }
+    monkeypatch.setattr(
+        runner,
+        "reconcile",
+        lambda *args, **kwargs: {"failed": 1, "failures": [failure]},
+    )
+
+    entry = runner._run_authoritative_group(
+        _opts(
+            sync_mode="group", sync_source="spotify",
+            authorities="spotify,apple", providers="spotify,apple,tidal",
+        ),
+        object(), [{"name": "Aurora"}], _FakeSongs(),
+    )[0]
+
+    assert entry["failed"] == 1
+    assert entry["failures"] == [failure]
+
+
 def test_authoritative_group_reports_a_disconnected_authority(monkeypatch):
     monkeypatch.setattr(
         runner, "build_peers", lambda opts, sp, songs=None: [_Peer("spotify")],

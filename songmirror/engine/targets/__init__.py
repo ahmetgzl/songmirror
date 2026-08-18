@@ -35,11 +35,11 @@ def _apple(opts):
         return None
 
 
-def _rest_provider(target_cls, label):
+def _rest_provider(target_cls, label, **kwargs):
     """Build an env-configured REST peer, logging a clean skip when absent."""
     from ..logs import log_note
     try:
-        return target_cls()
+        return target_cls(**kwargs)
     except RuntimeError as e:
         log_note(f"{label} skipped: {e}", tag=target_cls.tag)
         return None
@@ -63,7 +63,8 @@ def _spotify(opts, sp, *, sync_peer=False, songs=None):
 _REGISTRY = {
     "spotify": lambda opts, sp, sync_peer=False, songs=None: _spotify(
         opts, sp, sync_peer=sync_peer, songs=songs),
-    "tidal": lambda opts, sp, sync_peer=False, songs=None: _rest_provider(TidalTarget, "TIDAL"),
+    "tidal": lambda opts, sp, sync_peer=False, songs=None: _rest_provider(
+        TidalTarget, "TIDAL", songs=songs),
     "qobuz": lambda opts, sp, sync_peer=False, songs=None: _rest_provider(QobuzTarget, "Qobuz"),
     "deezer": lambda opts, sp, sync_peer=False, songs=None: _rest_provider(DeezerTarget, "Deezer"),
     "amazon": lambda opts, sp, sync_peer=False, songs=None: _rest_provider(AmazonMusicTarget, "Amazon Music"),
