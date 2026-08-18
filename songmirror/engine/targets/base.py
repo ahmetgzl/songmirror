@@ -761,8 +761,24 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
     present = {}       # source -> set of ALL current target ids (not canonical-deduped)
     key2isrc = {}      # track_key -> ISRC, seeded by every ISRC-bearing provider before canonicalization
     raw_by_source = {}
+    unreadable = {}
     for p in peers:
-        provider_rows = p.playlist_tracks(playlists[p.source])
+        try:
+            provider_rows = p.playlist_tracks(playlists[p.source])
+        except TargetAuthError:
+            raise
+        except Exception as e:
+            # Only a mirror can be skipped. Every N-way peer contributes
+            # membership, as does an authority, so losing one of those reads
+            # loses information the pass needs and must still fail closed.
+            if authorities is None or p.source in authorities:
+                raise
+            unreadable[p.source] = f"{p.name} mirror read failed: {e}"
+            raw_by_source[p.source] = []
+            present[p.source] = set()
+            log_warn(f"{p.name}/{name}: playlist read failed ({e!r}); "
+                     "syncing the other providers without it", tag=p.tag)
+            continue
         raw = [
             track for track in provider_rows
             if isinstance(track, dict) and str(track.get("name") or "").strip()
@@ -848,8 +864,19 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
         for cid, norm in canon[p.source].items():
             repr_.setdefault(cid, norm)
 
-    collapsed = set()
+    collapsed = set(unreadable)
+    read_failures = []
+    for source, reason in unreadable.items():
+        read_anomalies += 1
+        read_failures.append({"playlist": name, "error": reason})
+        diagnostics.append({
+            "category": "mirror_read_failed", "playlist": name,
+            "provider": peer_names.get(source, source), "count": 1,
+            "evidence": "the provider playlist could not be read; changes ignored",
+        })
     for p in peers:
+        if p.source in collapsed:
+            continue
         base = prev.get(p.source, set())
         if base and (not cur[p.source] or len(cur[p.source]) < COLLAPSE_FRACTION * len(base)):
             collapsed.add(p.source)
@@ -977,6 +1004,7 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
              "unconfirmed_absences": awaiting_confirmation,
              "confirmed_absences": confirmed_absence_count,
              "read_anomalies": read_anomalies,
+             "failed": len(read_failures), "failures": read_failures,
              "change_diagnostics": diagnostics}
     baseline_blocked = bool(awaiting_confirmation or authority_bootstrap)
     if authority_bootstrap:

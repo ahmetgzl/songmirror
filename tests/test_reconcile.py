@@ -554,6 +554,87 @@ def test_authoritative_group_bootstrap_is_scoped_and_non_destructive(tmp_path):
     conn.close()
 
 
+def test_authoritative_group_skips_an_unreadable_mirror_without_blocking_authorities(tmp_path):
+    class UnreadableMirror(_P):
+        def playlist_tracks(self, pl):
+            raise RuntimeError("incomplete TIDAL relationship 305553517")
+
+    conn = archive.connect(str(tmp_path / "unreadable-mirror.db"))
+    key = "group:apple,spotify:aurora"
+    baseline = {"i:A"}
+    archive.commit_reconcile_membership(
+        conn,
+        key,
+        {source: baseline for source in ("spotify", "apple", "tidal", "ytmusic")},
+        {source: set() for source in ("spotify", "apple", "tidal", "ytmusic")},
+        {source: source for source in ("spotify", "apple", "tidal", "ytmusic")},
+    )
+    spotify = _P("spotify", ["A"])
+    apple = _P("apple", ["A", "NEW"])
+    tidal = UnreadableMirror("tidal", ["A"])
+    tidal.name = "TIDAL"
+    ytmusic = _P("ytmusic", ["A"])
+    peers = [spotify, apple, tidal, ytmusic]
+
+    stats = reconcile(
+        peers,
+        "Aurora",
+        {p.source: {"id": p.source} for p in peers},
+        _caches(*(p.source for p in peers)),
+        conn,
+        execute=True,
+        max_removals=25,
+        max_adds=200,
+        authority_sources={"spotify", "apple"},
+    )
+
+    assert spotify.added == ["NEW"]
+    assert apple.added == []
+    assert ytmusic.added == ["NEW"]
+    assert tidal.added == []
+    assert stats["added"] == 2
+    assert stats["failed"] == 1
+    assert stats["failures"] == [{
+        "playlist": "Aurora",
+        "error": "TIDAL mirror read failed: incomplete TIDAL relationship 305553517",
+    }]
+    assert "mirror_read_failed" in {
+        diagnostic["category"] for diagnostic in stats["change_diagnostics"]
+    }
+    assert stats["clean"] is False
+    assert archive.get_playlist_state(conn, key, "tidal") == baseline
+    conn.close()
+
+
+def test_authoritative_group_still_fails_closed_when_an_authority_is_unreadable(tmp_path):
+    class UnreadableAuthority(_P):
+        def playlist_tracks(self, pl):
+            raise RuntimeError("Apple Music snapshot unavailable")
+
+    conn = archive.connect(str(tmp_path / "unreadable-authority.db"))
+    spotify = _P("spotify", ["A"])
+    apple = UnreadableAuthority("apple", ["A", "NEW"])
+    mirror = _P("ytmusic", ["A"])
+    peers = [spotify, apple, mirror]
+
+    with pytest.raises(RuntimeError, match="Apple Music snapshot unavailable"):
+        reconcile(
+            peers,
+            "Aurora",
+            {p.source: {"id": p.source} for p in peers},
+            _caches(*(p.source for p in peers)),
+            conn,
+            execute=True,
+            max_removals=25,
+            max_adds=200,
+            authority_sources={"spotify", "apple"},
+        )
+
+    assert spotify.added == []
+    assert mirror.added == []
+    conn.close()
+
+
 def test_authoritative_group_recognizes_a_same_name_recreated_playlist(tmp_path):
     conn = archive.connect(str(tmp_path / "group-recreated.db"))
     key = "group:apple,spotify:aurora"

@@ -135,6 +135,7 @@ export type ChangeDiagnosticCategory =
   | 'unconfirmed_absence'
   | 'confirmed_absence'
   | 'incomplete_read'
+  | 'mirror_read_failed'
   | 'ambiguous_identity'
   | 'replacement_blocked'
   | 'confirmed_removal_disabled'

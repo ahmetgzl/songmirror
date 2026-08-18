@@ -551,6 +551,10 @@ def _run_peer_reconcile(opts, sp, selected, songs, should_continue=None, *,
                     total[k] += stats.get(k, 0)
                 _collect_held(held_detail, stats.get("held_removals", []))
                 _collect_diagnostics(change_diagnostics, stats.get("change_diagnostics", []))
+                # Reconcile reports a skipped mirror itself: it keeps the other
+                # providers in sync, so the pass survives, but the summary must
+                # still name what did not get read.
+                failures.extend(stats.get("failures", [])[:max(0, FAILURE_DETAIL - len(failures))])
             except TargetAuthError:
                 raise
             except Exception as e:

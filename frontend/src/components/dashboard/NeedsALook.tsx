@@ -174,7 +174,7 @@ function buildItems(accounts: Account[] | null, status: SyncStatus | null): Need
     })
   }
 
-  const readAnomalyRows = diagnosticsByCategory(diagnostics, 'incomplete_read', 'ambiguous_identity')
+  const readAnomalyRows = diagnosticsByCategory(diagnostics, 'incomplete_read', 'mirror_read_failed', 'ambiguous_identity')
   const readAnomalyTotal = Math.max(
     diagnosticCount(readAnomalyRows),
     targets.reduce((sum, target) => sum + (target.read_anomalies ?? 0), 0),

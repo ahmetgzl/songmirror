@@ -59,6 +59,7 @@ def test_tidal_playlist_read_fails_closed_when_catalog_detail_is_missing(monkeyp
 
     target = TidalTarget.__new__(TidalTarget)
     target.country = "US"
+    target._songs = None
     page = {
         "data": [
             {"type": "tracks", "id": "t1", "meta": {"itemId": "entry-1"}},
@@ -73,6 +74,56 @@ def test_tidal_playlist_read_fails_closed_when_catalog_detail_is_missing(monkeyp
 
     with pytest.raises(RuntimeError, match=r"incomplete.*t2"):
         target.playlist_tracks({"id": "playlist"})
+
+
+def test_tidal_playlist_read_keeps_a_delisted_entry_from_the_archive(tmp_path):
+    # TIDAL keeps serving a playlist relationship after the catalog entry behind
+    # it disappears. Dropping the entry would read as a user deletion and
+    # propagate everywhere it is mirrored, so the last known details stand in.
+    from songmirror.engine import archive
+    from songmirror.engine.targets.tidal import TidalTarget
+
+    conn = archive.connect(str(tmp_path / "delisted.db"))
+    archive.upsert_many(conn, "tidal", [{
+        "id": "t2", "name": "Delisted", "artist": "Artist", "artists": ["Artist"],
+        "album": "Album", "duration_ms": 2000, "isrc": "TWO", "added_at": "2020",
+    }])
+    target = TidalTarget.__new__(TidalTarget)
+    target.country = "US"
+    target._songs = conn
+    page = {"data": [
+        {"type": "tracks", "id": "t1", "meta": {"itemId": "entry-1", "addedAt": "2026"}},
+        {"type": "tracks", "id": "t2", "meta": {"itemId": "entry-2", "addedAt": "2026"}},
+    ]}
+    target._pages = lambda path, params: iter([page])
+    target._tracks_by_id = lambda ids: {
+        "t1": {"id": "t1", "name": "Available", "artist": "Artist",
+               "artists": ["Artist"], "duration_ms": 1000, "isrc": "ONE"}
+    }
+
+    tracks = target.playlist_tracks({"id": "playlist"})
+
+    assert [t["id"] for t in tracks] == ["t1", "t2"]
+    assert tracks[1]["name"] == "Delisted" and tracks[1]["isrc"] == "TWO"
+    assert tracks[1]["relationship_id"] == "entry-2"   # this pass's entry, not the archived one
+    conn.close()
+
+
+def test_tidal_playlist_read_fails_closed_when_the_archive_cannot_identify_it(tmp_path):
+    from songmirror.engine import archive
+    from songmirror.engine.targets.tidal import TidalTarget
+
+    conn = archive.connect(str(tmp_path / "unknown.db"))
+    target = TidalTarget.__new__(TidalTarget)
+    target.country = "US"
+    target._songs = conn
+    target._pages = lambda path, params: iter(
+        [{"data": [{"type": "tracks", "id": "t9", "meta": {"itemId": "entry-9"}}]}])
+    target._tracks_by_id = lambda ids: {}
+
+    with pytest.raises(RuntimeError, match=r"incomplete.*t9"):
+        target.playlist_tracks({"id": "playlist"})
+    conn.close()
 
 
 def test_tidal_connector_accepts_minimized_browser_headers(tmp_path, monkeypatch):
