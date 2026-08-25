@@ -3,6 +3,7 @@
 import os
 import random
 import time
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 
@@ -198,6 +199,66 @@ class DeezerTarget(MirrorTarget):
             raise RuntimeError(f"Deezer did not return the created playlist id ({result!r})")
         polite_sleep(0.4)
         return self._request("GET", f"playlist/{playlist_id}")
+
+    @staticmethod
+    def playlist_page_reference(playlist_id, expected_count=None):
+        return {
+            "id": str(playlist_id),
+            "title": "",
+            "description": "",
+            "nb_tracks": expected_count,
+            "_owned": True,
+        }
+
+    def playlist_tracks_page(self, playlist, cursor=None):
+        if self._web is not None:
+            try:
+                rows, next_cursor = self._web.playlist_tracks_page(
+                    str(playlist["id"]),
+                    cursor=cursor,
+                    limit=20,
+                )
+            except DeezerWebAuthError as exc:
+                raise TargetAuthError(str(exc)) from exc
+            return [_normalized_track(track) for track in rows], next_cursor
+
+        try:
+            offset = 0 if cursor is None else int(cursor)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Deezer playlist cursor is not a valid offset") from exc
+        if offset < 0:
+            raise RuntimeError("Deezer playlist cursor is not a valid offset")
+        body = self._request(
+            "GET",
+            f"playlist/{playlist['id']}/tracks",
+            params={"limit": 20, "index": offset},
+        )
+        rows = body.get("data") or []
+        next_offset = offset + len(rows)
+        next_cursor = None
+        next_url = body.get("next")
+        if next_url:
+            values = parse_qs(urlsplit(str(next_url)).query).get("index") or []
+            try:
+                advertised = int(values[0]) if values else next_offset
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("Deezer returned an invalid playlist continuation") from exc
+            if not rows or advertised <= offset:
+                raise RuntimeError("Deezer returned a non-advancing playlist cursor")
+            next_cursor = str(advertised)
+        else:
+            total = body.get("total")
+            if total is not None and next_offset < int(total):
+                if not rows:
+                    raise RuntimeError(
+                        f"Deezer playlist read incomplete: stopped at {offset} of {int(total)} tracks"
+                    )
+                next_cursor = str(next_offset)
+        return [
+            _normalized_track(track)
+            for track in rows
+            if track.get("id") is not None
+        ], next_cursor
 
     def playlist_tracks(self, playlist):
         if self._web is not None:

@@ -114,6 +114,22 @@ class SpotifyTarget(MirrorTarget):
                 playlist["id"], require_isrc=False, known_isrc=known)
         return spotify.playlist_tracks(self._sp, playlist["id"])
 
+    @staticmethod
+    def playlist_page_reference(playlist_id, expected_count=None):
+        return {
+            "id": str(playlist_id),
+            "name": "",
+            "description": "",
+            "items": {"total": expected_count},
+            "_owned": True,
+            "_editable": True,
+        }
+
+    def playlist_tracks_page(self, playlist, cursor=None):
+        if spotify_write_backend() == "cookie":
+            return spotify_cookie.playlist_tracks_page(playlist["id"], cursor=cursor)
+        return spotify.playlist_tracks_page(self._sp, playlist["id"], cursor=cursor)
+
     def track_id(self, track):
         return track.get("id")
 

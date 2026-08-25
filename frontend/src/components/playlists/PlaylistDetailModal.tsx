@@ -392,7 +392,7 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
         {loadingMore && detail ? (
           <p aria-live="polite" className="flex items-center gap-2 text-xs text-text-3">
             <Spinner className="size-3.5 shrink-0" aria-hidden="true" />
-            Loaded {detail.tracks.length} of {detail.count} tracks from TIDAL…
+            Loaded {detail.tracks.length} of {detail.count} tracks from {account?.name ?? 'the provider'}…
           </p>
         ) : null}
 

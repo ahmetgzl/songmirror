@@ -350,20 +350,37 @@ class DeezerWebClient:
     def playlist_tracks(self, playlist_id: str) -> list[dict]:
         rows, cursor = [], None
         while True:
-            data = self.execute(
-                "SongMirrorDeezerPlaylistTracks",
-                PLAYLIST_TRACKS_QUERY,
-                {"playlistId": str(playlist_id), "first": 100, "cursor": cursor},
+            page_rows, cursor = self.playlist_tracks_page(
+                playlist_id,
+                cursor=cursor,
+                limit=100,
             )
-            connection = (((data.get("playlist") or {}).get("tracks")) or {})
-            rows.extend(edge.get("node") or {} for edge in connection.get("edges") or [])
-            page = connection.get("pageInfo") or {}
-            if not page.get("hasNextPage"):
+            rows.extend(page_rows)
+            if cursor is None:
                 return rows
-            next_cursor = page.get("endCursor")
-            if not next_cursor or next_cursor == cursor:
-                raise RuntimeError("Deezer returned a non-advancing playlist cursor")
-            cursor = next_cursor
+
+    def playlist_tracks_page(
+        self,
+        playlist_id: str,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> tuple[list[dict], str | None]:
+        data = self.execute(
+            "SongMirrorDeezerPlaylistTracks",
+            PLAYLIST_TRACKS_QUERY,
+            {"playlistId": str(playlist_id), "first": limit, "cursor": cursor},
+        )
+        connection = (((data.get("playlist") or {}).get("tracks")) or {})
+        rows = [edge.get("node") or {} for edge in connection.get("edges") or []]
+        page = connection.get("pageInfo") or {}
+        if not page.get("hasNextPage"):
+            return rows, None
+        next_cursor = page.get("endCursor")
+        if not next_cursor or next_cursor == cursor:
+            raise RuntimeError("Deezer returned a non-advancing playlist cursor")
+        if not rows:
+            raise RuntimeError("Deezer playlist read incomplete: an empty page advertised more tracks")
+        return rows, str(next_cursor)
 
     def create(self, title: str, description: str = "") -> dict:
         create_input = {

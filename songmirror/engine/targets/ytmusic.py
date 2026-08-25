@@ -133,6 +133,66 @@ def _artist_from_channel(channel):
     return _TOPIC_RE.sub("", channel or "").strip()
 
 
+def _normalized_data_api_playlist_item(item):
+    video_id = item.get("contentDetails", {}).get("videoId")
+    if not video_id:
+        return None
+    snippet = item.get("snippet", {})
+    artist = _artist_from_channel(snippet.get("videoOwnerChannelTitle", ""))
+    thumbnails = snippet.get("thumbnails") or {}
+    image = next((
+        (thumbnails.get(size) or {}).get("url")
+        for size in ("medium", "high", "default")
+        if (thumbnails.get(size) or {}).get("url")
+    ), "")
+    return {
+        "id": video_id,
+        "videoId": video_id,
+        "playlistItemId": item.get("id"),
+        "name": snippet.get("title", ""),
+        "artist": artist,
+        "artists": [artist] if artist else [""],
+        "album": None,
+        "duration_ms": None,
+        "added_at": snippet.get("publishedAt") or "",
+        "image": image,
+    }
+
+
+def _normalized_youtubei_playlist_track(track):
+    video_id = track.get("videoId")
+    if not video_id:
+        return None
+    artists = [
+        artist
+        for artist in (
+            _artist_from_channel(value.get("name", ""))
+            for value in (track.get("artists") or [])
+        )
+        if artist
+    ]
+    album = track.get("album")
+    duration_seconds = track.get("duration_seconds")
+    thumbnails = track.get("thumbnails") or []
+    image = next((
+        thumb.get("url")
+        for thumb in reversed(thumbnails)
+        if isinstance(thumb, dict) and thumb.get("url")
+    ), "")
+    return {
+        "id": video_id,
+        "videoId": video_id,
+        "setVideoId": track.get("setVideoId"),
+        "name": track.get("title", ""),
+        "artist": ", ".join(artists),
+        "artists": artists or [""],
+        "album": album.get("name") if isinstance(album, dict) else None,
+        "duration_ms": duration_seconds * 1000 if duration_seconds else None,
+        "added_at": track.get("dateAdded") or "",
+        "image": image,
+    }
+
+
 def _err_reason(response):
     try:
         errors = response.json().get("error", {}).get("errors", [])
@@ -266,28 +326,47 @@ class YTMusicTarget(MirrorTarget):
         polite_sleep(2.0)  # let the new playlist settle before writing to it
         return {"playlistId": pid, "title": name, "count": 0}
 
+    @staticmethod
+    def playlist_page_reference(playlist_id, expected_count=None):
+        return {
+            "playlistId": str(playlist_id),
+            "title": "",
+            "count": expected_count,
+        }
+
+    def playlist_tracks_page(self, playlist, cursor=None):
+        params = {
+            "part": "snippet,contentDetails",
+            "playlistId": playlist["playlistId"],
+            "maxResults": 20,
+        }
+        if cursor:
+            params["pageToken"] = cursor
+        data = self._request("GET", "playlistItems", params=params).json()
+        items = data.get("items") or []
+        next_cursor = data.get("nextPageToken") or None
+        if next_cursor is not None and next_cursor == cursor:
+            raise RuntimeError("YouTube Music returned a non-advancing playlist cursor")
+        if next_cursor is not None and not items:
+            raise RuntimeError(
+                "YouTube Music playlist read incomplete: an empty page advertised more tracks"
+            )
+        return [
+            track
+            for item in items
+            if (track := _normalized_data_api_playlist_item(item)) is not None
+        ], next_cursor
+
     def playlist_tracks(self, playlist):
-        tracks = []
-        for item in self._paged("playlistItems", {
-                "part": "snippet,contentDetails", "playlistId": playlist["playlistId"], "maxResults": 50}):
-            vid = item.get("contentDetails", {}).get("videoId")
-            if not vid:
-                continue
-            sn = item.get("snippet", {})
-            artist = _artist_from_channel(sn.get("videoOwnerChannelTitle", ""))
-            thumbnails = sn.get("thumbnails") or {}
-            image = next((
-                (thumbnails.get(size) or {}).get("url")
-                for size in ("medium", "high", "default")
-                if (thumbnails.get(size) or {}).get("url")
-            ), "")
-            tracks.append({
-                "id": vid, "videoId": vid, "playlistItemId": item.get("id"),
-                "name": sn.get("title", ""), "artist": artist, "artists": [artist] if artist else [""],
-                "album": None, "duration_ms": None,
-                "added_at": sn.get("publishedAt") or "", "image": image,
+        return [
+            track
+            for item in self._paged("playlistItems", {
+                "part": "snippet,contentDetails",
+                "playlistId": playlist["playlistId"],
+                "maxResults": 50,
             })
-        return tracks
+            if (track := _normalized_data_api_playlist_item(item)) is not None
+        ]
 
     def track_id(self, track):
         return track.get("videoId")
@@ -361,6 +440,102 @@ def _expired(fn, what):
                               "re-export the browser cookies (Settings -> YouTube Music).")
 
 
+_YOUTUBEI_COLLABORATIVE_CURSOR_PREFIX = "songmirror:ytmusic:collaborative:"
+
+
+def _youtubei_playlist_page(api, playlist_id, cursor=None):
+    """Read one native youtubei shelf page while retaining its continuation.
+
+    ytmusicapi's public ``get_playlist`` intentionally follows every shelf
+    continuation and discards the token. The inspector needs the lower-level
+    page boundary, so use the same parser/navigation helpers as that method and
+    return the opaque token to the browser. YouTube currently serves up to 100
+    entries in a native page; unlike the Data API, that size is not configurable.
+    """
+    from ytmusicapi.continuations import get_continuation_token
+    from ytmusicapi.navigation import (
+        CONTENT,
+        EDITABLE_PLAYLIST_DETAIL_HEADER,
+        HEADER,
+        RESPONSIVE_HEADER,
+        SECTION,
+        SECTION_LIST_ITEM,
+        TAB_CONTENT,
+        TWO_COLUMN_RENDERER,
+        nav,
+    )
+    from ytmusicapi.parsers.playlists import parse_playlist_header_meta, parse_playlist_items
+
+    native_cursor = cursor
+    is_collaborative = False
+    if cursor and cursor.startswith(_YOUTUBEI_COLLABORATIVE_CURSOR_PREFIX):
+        native_cursor = cursor[len(_YOUTUBEI_COLLABORATIVE_CURSOR_PREFIX):]
+        if not native_cursor:
+            raise RuntimeError("YouTube Music returned an invalid playlist cursor")
+        is_collaborative = True
+
+    if native_cursor:
+        response = api._send_request("browse", {"continuation": native_cursor})
+        items = nav(
+            response,
+            [
+                "onResponseReceivedActions",
+                0,
+                "appendContinuationItemsAction",
+                "continuationItems",
+            ],
+            True,
+        )
+        if not items:
+            raise RuntimeError(
+                "YouTube Music playlist read incomplete: a continuation returned no items"
+            )
+    else:
+        browse_id = str(playlist_id)
+        if not browse_id.startswith("VL"):
+            browse_id = f"VL{browse_id}"
+        response = api._send_request("browse", {"browseId": browse_id}, "")
+        header_data = nav(
+            response,
+            [*TWO_COLUMN_RENDERER, *TAB_CONTENT, *SECTION_LIST_ITEM],
+            True,
+        )
+        is_audio_playlist = str(playlist_id).startswith(("OLA", "VLOLA"))
+        if header_data:
+            if EDITABLE_PLAYLIST_DETAIL_HEADER[0] in header_data:
+                header = nav(
+                    header_data,
+                    [*EDITABLE_PLAYLIST_DETAIL_HEADER, *HEADER, *RESPONSIVE_HEADER],
+                )
+            else:
+                header = nav(header_data, RESPONSIVE_HEADER)
+            is_collaborative = "collaborators" in parse_playlist_header_meta(header)
+        elif not is_audio_playlist:
+            # Logged-out responses are translated by _expired after their
+            # missing shelf raises below. OLA/audio playlists legitimately
+            # omit the normal playlist header, matching ytmusicapi's reader.
+            is_collaborative = False
+        section = nav(
+            response,
+            [*TWO_COLUMN_RENDERER, "secondaryContents", *SECTION],
+        )
+        shelf = nav(
+            section,
+            [*CONTENT, "musicPlaylistShelfRenderer"],
+        )
+        items = shelf.get("contents") or []
+
+    next_native_cursor = get_continuation_token(items) if items else None
+    if next_native_cursor is not None and next_native_cursor == native_cursor:
+        raise RuntimeError("YouTube Music returned a non-advancing playlist cursor")
+    next_cursor = (
+        f"{_YOUTUBEI_COLLABORATIVE_CURSOR_PREFIX}{next_native_cursor}"
+        if is_collaborative and next_native_cursor is not None
+        else next_native_cursor
+    )
+    return parse_playlist_items(items, is_collaborative=is_collaborative), next_cursor
+
+
 class YTMusicBrowserTarget(YTMusicTarget):
     """No-quota YT reads/writes via ytmusicapi's authenticated youtubei API, so a
     large backfill isn't capped at the Data API's ~200 adds/day. Trade-off: the
@@ -411,26 +586,26 @@ class YTMusicBrowserTarget(YTMusicTarget):
     def playlist_tracks(self, playlist):
         data = _expired(lambda: self._api.get_playlist(playlist["playlistId"], limit=None),
                         f"playlist '{playlist.get('title', '')}'") or {}
-        tracks = []
-        for t in data.get("tracks") or []:
-            vid = t.get("videoId")
-            if not vid:
-                continue
-            artists = [a for a in (_artist_from_channel(x.get("name", ""))
-                                   for x in (t.get("artists") or [])) if a]
-            album = t.get("album")
-            ds = t.get("duration_seconds")
-            thumbnails = t.get("thumbnails") or []
-            image = next((thumb.get("url") for thumb in reversed(thumbnails)
-                          if isinstance(thumb, dict) and thumb.get("url")), "")
-            tracks.append({
-                "id": vid, "videoId": vid, "setVideoId": t.get("setVideoId"),
-                "name": t.get("title", ""), "artist": ", ".join(artists), "artists": artists or [""],
-                "album": album.get("name") if isinstance(album, dict) else None,
-                "duration_ms": ds * 1000 if ds else None,
-                "added_at": t.get("dateAdded") or "", "image": image,
-            })
-        return tracks
+        return [
+            track
+            for raw in data.get("tracks") or []
+            if (track := _normalized_youtubei_playlist_track(raw)) is not None
+        ]
+
+    def playlist_tracks_page(self, playlist, cursor=None):
+        rows, next_cursor = _expired(
+            lambda: _youtubei_playlist_page(
+                self._api,
+                playlist["playlistId"],
+                cursor=cursor,
+            ),
+            f"playlist '{playlist.get('title', '')}'",
+        )
+        return [
+            track
+            for raw in rows
+            if (track := _normalized_youtubei_playlist_track(raw)) is not None
+        ], next_cursor
 
     def add(self, playlist, target_ids):
         # YouTube may stamp a whole batch alike and reorder it. Singleton writes

@@ -237,28 +237,40 @@ def add(playlist, track_ids):
         polite_sleep(0.3)
 
 
+def _content_page(playlist, cursor=None, *, limit=20):
+    """One raw web-player page plus a private numeric continuation offset."""
+    try:
+        offset = 0 if cursor is None else int(cursor)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Spotify playlist cursor is not a valid offset") from exc
+    if offset < 0:
+        raise RuntimeError("Spotify playlist cursor is not a valid offset")
+
+    data = _pf(
+        "fetchPlaylistContents",
+        {"uri": _puri(playlist), "offset": offset, "limit": limit},
+    )
+    page = (data.get("playlistV2") or {}).get("content") or {}
+    items = page.get("items") or []
+    raw_total = page.get("totalCount")
+    if raw_total is None:
+        raise RuntimeError("Spotify playlist read incomplete: page did not include totalCount")
+    total = int(raw_total)
+    if not items and offset < total:
+        raise RuntimeError(
+            f"Spotify playlist read incomplete: stopped at {offset} of {total} items"
+        )
+    next_offset = offset + len(items)
+    return items, (str(next_offset) if next_offset < total else None)
+
+
 def _content_items(playlist):
     """Yield every raw playlist item (paginated) from the web-player read."""
-    puri, offset = _puri(playlist), 0
+    cursor = None
     while True:
-        data = _pf("fetchPlaylistContents", {"uri": puri, "offset": offset, "limit": 100})
-        page = (data.get("playlistV2") or {}).get("content") or {}
-        items = page.get("items") or []
-        raw_total = page.get("totalCount")
-        if raw_total is None:
-            raise RuntimeError(
-                "Spotify playlist read incomplete: page did not include totalCount"
-            )
-        total = int(raw_total)
-        if not items:
-            if offset < total:
-                raise RuntimeError(
-                    f"Spotify playlist read incomplete: stopped at {offset} of {total} items"
-                )
-            return
+        items, cursor = _content_page(playlist, cursor, limit=100)
         yield from items
-        offset += len(items)
-        if offset >= total:
+        if cursor is None:
             return
 
 
@@ -497,22 +509,9 @@ def _isrc_singles(ids):
         polite_sleep(0.2)
 
 
-def playlist_tracks(playlist, require_isrc=False, known_isrc=None):
-    """Full track dicts (the shape spotify.playlist_tracks yields) via pathfinder —
-    works for private owned playlists the dev-mode official API 403s, and returns []
-    for a just-created empty playlist. The pathfinder payload carries no ISRC (confirmed
-    absent from the entire web-player surface). N-way reconciliation now seeds
-    missing Spotify identities from every ISRC-bearing peer in the same complete
-    read. ``require_isrc`` remains only for legacy callers that explicitly opt
-    into the developer catalog lookup.
-
-    known_isrc(ids) -> {id: isrc}, when given, supplies already-known ISRCs (the
-    persisted songs-DB cache) so only genuinely-new tracks hit the rate-limited /tracks
-    endpoint — the difference between "fetch every track every pass" (which earns a
-    penalty box) and "fetch each track once, ever". Transfers pass neither flag — a
-    same-provider copy uses the track id directly."""
+def _normalized_content_tracks(items):
     out = []
-    for it in _content_items(playlist):
+    for it in items:
         t = (it.get("itemV2") or {}).get("data") or {}
         uri = t.get("uri") or ""
         if not uri.startswith("spotify:track:"):
@@ -535,6 +534,10 @@ def playlist_tracks(playlist, require_isrc=False, known_isrc=None):
             "added_at": (it.get("addedAt") or {}).get("isoString") or "",
             "image": image,
         })
+    return out
+
+
+def _apply_playlist_isrcs(out, *, require_isrc=False, known_isrc=None):
     # Persisted ISRCs remain valuable in cookie-only mode, but a cache miss is
     # deliberately left blank for reconcile to infer from its ISRC-bearing peers.
     # Only legacy callers that explicitly request a complete ISRC read touch the
@@ -550,6 +553,35 @@ def playlist_tracks(playlist, require_isrc=False, known_isrc=None):
         for t in out:
             t["isrc"] = t.get("isrc") or fetched.get(t["id"])
     return out
+
+
+def playlist_tracks_page(playlist, cursor=None, *, known_isrc=None):
+    """Read one 20-entry pathfinder page for the progressive playlist UI."""
+    items, next_cursor = _content_page(playlist, cursor, limit=20)
+    tracks = _normalized_content_tracks(items)
+    return _apply_playlist_isrcs(tracks, known_isrc=known_isrc), next_cursor
+
+
+def playlist_tracks(playlist, require_isrc=False, known_isrc=None):
+    """Full track dicts (the shape spotify.playlist_tracks yields) via pathfinder —
+    works for private owned playlists the dev-mode official API 403s, and returns []
+    for a just-created empty playlist. The pathfinder payload carries no ISRC (confirmed
+    absent from the entire web-player surface). N-way reconciliation now seeds
+    missing Spotify identities from every ISRC-bearing peer in the same complete
+    read. ``require_isrc`` remains only for legacy callers that explicitly opt
+    into the developer catalog lookup.
+
+    known_isrc(ids) -> {id: isrc}, when given, supplies already-known ISRCs (the
+    persisted songs-DB cache) so only genuinely-new tracks hit the rate-limited /tracks
+    endpoint — the difference between "fetch every track every pass" (which earns a
+    penalty box) and "fetch each track once, ever". Transfers pass neither flag — a
+    same-provider copy uses the track id directly."""
+    tracks = _normalized_content_tracks(_content_items(playlist))
+    return _apply_playlist_isrcs(
+        tracks,
+        require_isrc=require_isrc,
+        known_isrc=known_isrc,
+    )
 
 
 def remove(playlist, track_ids):
