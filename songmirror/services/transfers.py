@@ -12,7 +12,7 @@ import uuid
 
 from ..engine import logs, spotify, spotify_cookie
 from ..engine.config import parse_args, spotify_write_backend
-from ..engine.logs import log_add, log_miss
+from ..engine.logs import log_add, log_miss, log_warn
 from ..engine.matching import spotify_track_keys, track_key, tracks_oldest_first
 from ..engine.runner import load_cache, save_cache
 from ..engine.targets import build_one, is_peer
@@ -21,8 +21,10 @@ from ..engine.targets.base import TargetAuthError, _normalize
 
 def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, on_progress=None, should_continue=None):
     """Copy `src_pl` (on `source`) into `dest_pl` (on `dest`). Returns
-    {added, deferred, not_found: [{name, artist, key}], completed}. `not_found`
-    are tracks that resolved to nothing on the destination — the conflict queue.
+    {added, deferred, unavailable, not_found: [{name, artist, key}], completed}.
+    `not_found` are tracks that resolved to nothing on the destination — the
+    conflict queue. `unavailable` counts hidden source relationships that have
+    no metadata and are safely skipped by this adds-only workflow.
 
     `on_progress(processed, total, added)` (optional) fires after each source
     track is examined, so a caller can surface live progress against the total.
@@ -32,20 +34,48 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, on_prog
     `completed=False`. Adds gathered before the break are still written, so a
     later re-run skips them (its dedup rebuilds from the destination) and resumes.
     """
-    src = [_normalize(t, source.source) for t in source.playlist_tracks(src_pl)]
-    dst = [_normalize(t, dest.source) for t in dest.playlist_tracks(dest_pl)]
+    read_source = getattr(
+        source,
+        "playlist_tracks_for_transfer",
+        source.playlist_tracks,
+    )
+    raw_source = list(read_source(src_pl))
+    unavailable = [track for track in raw_source if track.get("unavailable")]
+    src = [
+        _normalize(track, source.source)
+        for track in raw_source
+        if not track.get("unavailable")
+    ]
+    read_destination = getattr(
+        dest,
+        "playlist_tracks_for_transfer",
+        dest.playlist_tracks,
+    )
+    dst = [
+        _normalize(track, dest.source)
+        for track in read_destination(dest_pl)
+        if not track.get("unavailable")
+    ]
     seen = set().union(*(spotify_track_keys(n) for n in dst)) if dst else set()
 
-    total = len(src)
+    unavailable_count = len(unavailable)
+    total = len(raw_source)
+    if unavailable_count:
+        log_warn(
+            f"skipping {unavailable_count} unavailable source playlist "
+            f"entr{'y' if unavailable_count == 1 else 'ies'}",
+            tag="transfer",
+        )
     if on_progress:
-        on_progress(0, total, 0)  # publish the total once source is read, before matching begins
+        # Hidden entries are already processed: they cannot be matched or added.
+        on_progress(unavailable_count, total, 0)
     # Same-provider copy (e.g. a followed Spotify list into a new owned one): the
     # track's own id is already valid on the destination, so use it directly instead
     # of re-searching for it (which resolve() does for the cross-provider case).
     same_provider = source.source == dest.source
     additions, not_found = [], []
     completed = True
-    for i, norm in enumerate(tracks_oldest_first(src), 1):
+    for i, norm in enumerate(tracks_oldest_first(src), unavailable_count + 1):
         if should_continue and should_continue() != "run":
             completed = False  # paused or stopped — leave the rest for a re-run
             break
@@ -75,7 +105,13 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, on_prog
     additions = additions[:max_adds]
     if execute and additions:
         dest.add(dest_pl, additions)
-    return {"added": len(additions), "deferred": deferred, "not_found": not_found, "completed": completed}
+    return {
+        "added": len(additions),
+        "deferred": deferred,
+        "unavailable": unavailable_count,
+        "not_found": not_found,
+        "completed": completed,
+    }
 
 
 def _friendly_error(e):
@@ -113,7 +149,7 @@ class TransferService:
             "dest": {"provider": spec["dest_provider"],
                      "playlist_id": spec.get("dest_playlist_id"),
                      "playlist_name": spec.get("dest_name", "")},
-            "added": 0, "deferred": 0, "conflicts": [], "error": None,
+            "added": 0, "deferred": 0, "unavailable": 0, "conflicts": [], "error": None,
             "total": 0, "processed": 0,  # live progress: source tracks examined / total
             "_spec": spec,      # kept so resume can re-run the same copy
             "_control": "run",  # "run" | "pause" | "stop" — polled by the running loop
@@ -231,11 +267,17 @@ class TransferService:
             res = await self._sync.run_exclusive(work)
             job["added"] = base_added + res["added"]
             job["deferred"] = res["deferred"]
+            job["unavailable"] = res["unavailable"]
             job["conflicts"] = [{**c, "resolved": False} for c in res["not_found"]]
             if res["completed"]:
                 job["status"] = "done"
-                self._emit("summary", f"transfer done: +{job['added']} ({len(res['not_found'])} unmatched)",
-                           "transfer", {"job_id": job["id"]})
+                self._emit(
+                    "summary",
+                    f"transfer done: +{job['added']} ({len(res['not_found'])} unmatched, "
+                    f"{res['unavailable']} unavailable skipped)",
+                    "transfer",
+                    {"job_id": job["id"]},
+                )
             else:
                 job["status"] = "stopped" if job.get("_control") == "stop" else "paused"
                 self._emit("note", f"transfer {job['status']}: +{job['added']} so far", "transfer")

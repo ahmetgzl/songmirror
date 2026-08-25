@@ -45,6 +45,115 @@ def test_transfer_copies_matches_skips_dupes_reports_conflicts():
     # "Dup" already exists on the destination (same track_key) -> skipped, not re-added
 
 
+def test_transfer_skips_unavailable_tidal_entries_without_aborting():
+    added = []
+    progress = []
+
+    class _TidalSource:
+        source = "tidal"
+
+        def playlist_tracks(self, playlist):
+            raise AssertionError("one-off transfers must use the tolerant source reader")
+
+        def playlist_tracks_for_transfer(self, playlist):
+            return [
+                {
+                    "id": "hidden",
+                    "name": "Unavailable TIDAL track",
+                    "artist": "Catalog ID hidden",
+                    "unavailable": True,
+                },
+                {
+                    "id": "available",
+                    "name": "Available",
+                    "artists": ["Artist"],
+                    "duration_ms": 1000,
+                    "isrc": "USAAA2600001",
+                },
+            ]
+
+    class _Destination:
+        source = "apple"
+
+        def playlist_tracks(self, playlist):
+            return []
+
+        def resolve(self, track, cache):
+            return "apple-track", "isrc"
+
+        def add(self, playlist, ids):
+            added.extend(ids)
+
+    result = transfer(
+        _TidalSource(),
+        _Destination(),
+        {"id": "source"},
+        {"id": "destination"},
+        {"search": {}, "isrc": {}, "dirty": False},
+        execute=True,
+        max_adds=100,
+        on_progress=lambda processed, total, added_count: progress.append(
+            (processed, total, added_count)
+        ),
+    )
+
+    assert result["added"] == 1
+    assert result["unavailable"] == 1
+    assert result["not_found"] == []
+    assert added == ["apple-track"]
+    assert progress == [(1, 2, 0), (2, 2, 1)]
+
+
+def test_transfer_ignores_unavailable_tidal_destination_entries_during_dedup():
+    added = []
+
+    class _Source:
+        source = "apple"
+
+        def playlist_tracks(self, playlist):
+            return [{
+                "id": "source-track",
+                "name": "Available",
+                "artists": ["Artist"],
+                "duration_ms": 1000,
+                "isrc": "USAAA2600001",
+            }]
+
+    class _TidalDestination:
+        source = "tidal"
+
+        def playlist_tracks(self, playlist):
+            raise AssertionError("add-only destination dedup must use the tolerant reader")
+
+        def playlist_tracks_for_transfer(self, playlist):
+            return [{
+                "id": "hidden",
+                "name": "Unavailable TIDAL track",
+                "artist": "Catalog ID hidden",
+                "unavailable": True,
+            }]
+
+        def resolve(self, track, cache):
+            return "tidal-track", "isrc"
+
+        def add(self, playlist, ids):
+            added.extend(ids)
+
+    result = transfer(
+        _Source(),
+        _TidalDestination(),
+        {"id": "source"},
+        {"id": "destination"},
+        {"search": {}, "isrc": {}, "dirty": False},
+        execute=True,
+        max_adds=100,
+    )
+
+    assert result["added"] == 1
+    assert result["unavailable"] == 0
+    assert added == ["tidal-track"]
+
+
 def test_transfer_same_provider_copies_by_id_without_resolving():
     # Spotify -> Spotify (e.g. a followed list into a new owned one): the track's own
     # id is already valid on the destination, so transfer() copies it directly and

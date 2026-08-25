@@ -120,13 +120,22 @@ export const api = {
   getPlaylistDetail: (
     provider: string,
     playlistId: string,
-    options: { refresh?: boolean; expectedCount?: number | null } = {},
+    options: {
+      refresh?: boolean
+      expectedCount?: number | null
+      pageSize?: 20
+      cursor?: string | null
+      offset?: number
+    } = {},
   ) => {
     const params = new URLSearchParams()
     if (options.refresh) params.set('refresh', 'true')
     if (options.expectedCount !== null && options.expectedCount !== undefined) {
       params.set('expected_count', String(options.expectedCount))
     }
+    if (options.pageSize) params.set('page_size', String(options.pageSize))
+    if (options.cursor) params.set('cursor', options.cursor)
+    if (options.offset) params.set('offset', String(options.offset))
     const query = params.size > 0 ? `?${params}` : ''
     return request<ProviderPlaylistDetail>(
       `/api/playlists/${encodeURIComponent(provider)}/${encodeURIComponent(playlistId)}${query}`,

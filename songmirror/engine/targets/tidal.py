@@ -9,6 +9,7 @@ import random
 import re
 import time
 import uuid
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 
@@ -26,6 +27,7 @@ API = "https://openapi.tidal.com/v2"
 TOKEN_URL = "https://auth.tidal.com/v1/oauth2/token"
 DEFAULT_TOKEN_FILE = "data/tidal_oauth.json"
 MAX_ISRC_FILTER_VALUES = 20
+PLAYLIST_ITEM_INCLUDE = ["items", "items.artists", "items.albums", "items.albums.coverArt"]
 
 
 class TidalTarget(MirrorTarget):
@@ -262,35 +264,145 @@ class TidalTarget(MirrorTarget):
         polite_sleep(0.4)
         return playlist
 
-    def playlist_tracks(self, playlist):
-        params = {"countryCode": self.country, "sort": "itemIndex"}
+    def _playlist_track_params(self, cursor=None):
+        # Ask the relationship endpoint to embed each item.  A playlist can
+        # retain a track after the top-level /tracks collection stops returning
+        # that catalog id; TIDAL still exposes its metadata in this context.
+        params = {
+            "countryCode": self.country,
+            "sort": "itemIndex",
+            "include": PLAYLIST_ITEM_INCLUDE,
+        }
+        if cursor:
+            params["page[cursor]"] = cursor
+        return params
+
+    @staticmethod
+    def playlist_page_reference(playlist_id, expected_count=None):
+        """Minimal shape for a cursor continuation already validated on page one."""
+        return {
+            "id": str(playlist_id),
+            "attributes": {
+                "name": "",
+                "description": "",
+                "numberOfItems": expected_count,
+            },
+        }
+
+    @staticmethod
+    def _embedded_track_is_complete(track):
+        """Core identity fields required before embedded metadata is trusted."""
+        return bool(
+            track.get("name")
+            and any(track.get("artists") or [])
+            and track.get("duration_ms") is not None
+            and track.get("isrc")
+        )
+
+    @staticmethod
+    def _unavailable_playlist_track(track_id):
+        return {
+            "id": str(track_id),
+            "name": "Unavailable TIDAL track",
+            "artist": f"Catalog ID {track_id}",
+            "artists": [f"Catalog ID {track_id}"],
+            "album": None,
+            "image": "",
+            "duration_ms": None,
+            "isrc": None,
+            "unavailable": True,
+        }
+
+    def _playlist_tracks_from_body(self, body, *, allow_unavailable=False):
+        identifiers = [item for item in body.get("data") or [] if item.get("type") == "tracks"]
+        requested_ids = [str(item["id"]) for item in identifiers]
+        details = {
+            str(track["id"]): track
+            for track in self._tracks_from_body(body)
+            if self._embedded_track_is_complete(track)
+        }
+        missing = [track_id for track_id in requested_ids if track_id not in details]
+        if missing:
+            details.update(self._tracks_by_id(missing))
+            missing = [track_id for track_id in missing if track_id not in details]
+        if missing:
+            # The relationship listing is the membership authority; /tracks
+            # only hydrates metadata. TIDAL keeps serving a relationship after
+            # the catalog entry behind it disappears, so falling back to what
+            # that id last was keeps the entry a member instead of turning a
+            # delisting into a removal everywhere it is mirrored.
+            details = {**details, **self._archived_details(missing)}
+            missing = [track_id for track_id in missing if track_id not in details]
+        if missing and allow_unavailable:
+            details.update({
+                track_id: self._unavailable_playlist_track(track_id)
+                for track_id in missing
+            })
+            missing = []
+        if missing:
+            preview = ", ".join(missing[:5])
+            suffix = "..." if len(missing) > 5 else ""
+            raise RuntimeError(
+                "TIDAL playlist read incomplete: missing catalog details for "
+                f"{len(missing)} track relationship(s): {preview}{suffix}"
+            )
+
         tracks = []
-        for body in self._pages(f"playlists/{playlist['id']}/relationships/items", params):
-            identifiers = [item for item in body.get("data") or [] if item.get("type") == "tracks"]
-            requested_ids = [str(item["id"]) for item in identifiers]
-            details = self._tracks_by_id(requested_ids)
-            missing = [track_id for track_id in requested_ids if track_id not in details]
-            if missing:
-                # The relationship listing is the membership authority; /tracks
-                # only hydrates metadata. TIDAL keeps serving a relationship
-                # after the catalog entry behind it disappears, so falling back
-                # to what that id last was keeps the entry a member instead of
-                # turning a delisting into a removal everywhere it is mirrored.
-                details = {**details, **self._archived_details(missing)}
-                missing = [track_id for track_id in missing if track_id not in details]
-            if missing:
-                preview = ", ".join(missing[:5])
-                suffix = "..." if len(missing) > 5 else ""
-                raise RuntimeError(
-                    "TIDAL playlist read incomplete: missing catalog details for "
-                    f"{len(missing)} track relationship(s): {preview}{suffix}"
-                )
-            for item in identifiers:
-                track = details[str(item["id"])]
-                meta = item.get("meta") or {}
-                tracks.append({**track, "relationship_id": meta.get("itemId"),
-                               "added_at": meta.get("addedAt") or ""})
+        for item in identifiers:
+            track = details[str(item["id"])]
+            meta = item.get("meta") or {}
+            tracks.append({
+                **track,
+                "relationship_id": meta.get("itemId"),
+                "added_at": meta.get("addedAt") or "",
+            })
         return tracks
+
+    @staticmethod
+    def _playlist_next_cursor(body):
+        link = (body.get("links") or {}).get("next")
+        link = link.get("href") if isinstance(link, dict) else link
+        if not link:
+            return None
+        values = parse_qs(urlsplit(str(link)).query).get("page[cursor]") or []
+        if not values or not values[0]:
+            raise RuntimeError("TIDAL playlist pagination did not provide a next cursor")
+        return values[0]
+
+    def playlist_tracks_page(self, playlist, cursor=None):
+        body = self._request(
+            "GET",
+            f"playlists/{playlist['id']}/relationships/items",
+            params=self._playlist_track_params(cursor),
+        ).json()
+        return (
+            self._playlist_tracks_from_body(body, allow_unavailable=True),
+            self._playlist_next_cursor(body),
+        )
+
+    def _all_playlist_tracks(self, playlist, *, allow_unavailable=False):
+        tracks = []
+        path = f"playlists/{playlist['id']}/relationships/items"
+        for body in self._pages(path, self._playlist_track_params()):
+            tracks.extend(
+                self._playlist_tracks_from_body(
+                    body,
+                    allow_unavailable=allow_unavailable,
+                )
+            )
+        return tracks
+
+    def playlist_tracks(self, playlist):
+        """Strict sync read: incomplete metadata must abort reconciliation."""
+        return self._all_playlist_tracks(playlist)
+
+    def playlist_tracks_for_browse(self, playlist):
+        """Keep hidden entries visible and removable in the playlist inspector."""
+        return self._all_playlist_tracks(playlist, allow_unavailable=True)
+
+    def playlist_tracks_for_transfer(self, playlist):
+        """Return readable tracks plus marked hidden entries for add-only copies."""
+        return self._all_playlist_tracks(playlist, allow_unavailable=True)
 
     def _archived_details(self, ids):
         """Last-known metadata for track ids the catalog no longer describes."""

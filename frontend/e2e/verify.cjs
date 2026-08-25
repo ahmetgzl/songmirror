@@ -313,6 +313,55 @@ const YTMUSIC_PLAYLIST_DETAIL = {
     })),
 }
 
+const TIDAL_PAGED_PLAYLIST = {
+  id: 'pl_tidal_hidden',
+  name: 'Old TIDAL mix',
+  count: 21,
+  image: '',
+}
+
+const TIDAL_PAGE_ONE = {
+  provider: 'tidal',
+  ...TIDAL_PAGED_PLAYLIST,
+  description: '',
+  owned: true,
+  editable: true,
+  external_url: 'https://listen.tidal.com/playlist/pl_tidal_hidden',
+  tracks: Array.from({ length: 20 }, (_, position) => ({
+    position,
+    id: position === 3 ? 'hidden-track' : `tidal-track-${position + 1}`,
+    occurrence_id: `tidal-entry-${position + 1}`,
+    name: position === 3 ? 'Unavailable TIDAL track' : `TIDAL track ${position + 1}`,
+    artist: position === 3 ? 'Catalog ID hidden-track' : 'TIDAL artist',
+    album: position === 3 ? null : 'TIDAL album',
+    duration_ms: position === 3 ? null : 180000,
+    image: '',
+    added_at: '',
+    external_url: position === 3 ? '' : `https://listen.tidal.com/track/tidal-track-${position + 1}`,
+    ...(position === 3 ? { unavailable: true } : {}),
+  })),
+  next_cursor: 'tidal-cursor-2',
+  complete: false,
+}
+
+const TIDAL_PAGE_TWO = {
+  ...TIDAL_PAGE_ONE,
+  tracks: [{
+    position: 20,
+    id: 'tidal-track-21',
+    occurrence_id: 'tidal-entry-21',
+    name: 'TIDAL track 21',
+    artist: 'TIDAL artist',
+    album: 'TIDAL album',
+    duration_ms: 180000,
+    image: '',
+    added_at: '',
+    external_url: 'https://listen.tidal.com/track/tidal-track-21',
+  }],
+  next_cursor: null,
+  complete: true,
+}
+
 // Polished, deterministic data used only for committed README/promo captures.
 // Every provider is connected and every playlist has cover art so the media
 // demonstrates the finished experience without setup errors or empty states.
@@ -797,6 +846,51 @@ async function main() {
       console.log(`${youtubeLatestOk ? 'ok        ' : 'FAIL      '} YouTube Music's undated newest-first response is not reversed (first=${JSON.stringify(firstYoutube?.slice(0, 50))})`)
       if (!youtubeLatestOk) results.push({ label: 'playlist ledger YouTube newest-first order', overflow: true })
       await checkOverflow(page, 'Playlist track ledger @ 1280', results)
+      await context.close()
+    }
+
+    // TIDAL exposes 20 playlist relationships per cursor page. The modal must
+    // render page one immediately, continue in the background, and preserve a
+    // removable placeholder when a relationship has no catalog metadata.
+    {
+      const context = await browser.newContext()
+      await context.addInitScript(() => window.localStorage.setItem('songmirror-theme', 'dark'))
+      const page = await context.newPage()
+      await installMocks(page, {
+        accounts: ACCOUNTS.map((account) => (
+          account.id === 'tidal' ? { ...account, state: 'connected', detail: null } : account
+        )),
+        playlists: { ...PLAYLISTS, tidal: [TIDAL_PAGED_PLAYLIST] },
+      })
+      const pageRequests = []
+      await page.route('**/api/playlists/tidal/pl_tidal_hidden*', async (route) => {
+        const url = new URL(route.request().url())
+        pageRequests.push(Object.fromEntries(url.searchParams))
+        const continuation = url.searchParams.get('cursor') === 'tidal-cursor-2'
+        if (continuation) await new Promise((resolve) => setTimeout(resolve, 350))
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(continuation ? TIDAL_PAGE_TWO : TIDAL_PAGE_ONE),
+        })
+      })
+      await page.setViewportSize({ width: 1280, height: 900 })
+      await page.goto(BASE_URL + '/playlists', { waitUntil: 'networkidle' })
+      await page.getByRole('button', { name: 'Open Old TIDAL mix inside SongMirror' }).click()
+      const dialog = page.getByRole('dialog')
+      await dialog.getByText('Loaded 20 of 21 tracks from TIDAL…').waitFor()
+      const unavailableWarning = await dialog.getByText(/1 entry is no longer available in the TIDAL catalog/).isVisible()
+      const removablePlaceholder = await dialog.getByRole('button', { name: 'Select Unavailable TIDAL track' }).isVisible()
+      await dialog.getByText('Showing 1–21 of 21 tracks · 50 per page').waitFor()
+      const paginationContract = pageRequests.length === 2
+        && pageRequests[0].page_size === '20'
+        && !pageRequests[0].cursor
+        && pageRequests[1].cursor === 'tidal-cursor-2'
+        && pageRequests[1].offset === '20'
+      const tidalProgressiveOk = unavailableWarning && removablePlaceholder && paginationContract
+      console.log(`${tidalProgressiveOk ? 'ok        ' : 'FAIL      '} TIDAL playlist renders page one, appends its cursor page, and keeps unavailable entries removable`)
+      if (!tidalProgressiveOk) results.push({ label: 'TIDAL progressive playlist detail', overflow: true })
+      await checkOverflow(page, 'TIDAL progressive playlist detail @ 1280', results)
       await context.close()
     }
 

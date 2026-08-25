@@ -323,6 +323,136 @@ def test_playlist_detail_reuses_cache_until_explicit_refresh(monkeypatch, tmp_pa
     assert reads == ["playlist-1", "playlist-1"]
 
 
+def test_playlist_detail_page_returns_one_provider_page_with_total_and_offset(monkeypatch, tmp_path):
+    from songmirror.services.playlists import PlaylistService
+    from songmirror.services.settings import SettingsStore
+
+    calls = []
+
+    class Target:
+        def find_playlist(self, playlist_id):
+            raise AssertionError("cursor pages must not rescan the provider playlist library")
+
+        def playlist_page_reference(self, playlist_id, expected_count=None):
+            return {
+                "id": playlist_id,
+                "attributes": {"name": "", "numberOfItems": expected_count},
+            }
+
+        def playlist_tracks_page(self, playlist, cursor=None):
+            calls.append((playlist["id"], cursor))
+            return ([{
+                "id": "track-21",
+                "name": "Next page",
+                "artist": "Artist",
+                "relationship_id": "entry-21",
+            }], "cursor-2")
+
+        def track_id(self, track):
+            return track["id"]
+
+        def occurrence_id(self, track):
+            return track.get("relationship_id")
+
+        def playlist_id(self, playlist):
+            return playlist["id"]
+
+        def playlist_count(self, playlist):
+            return playlist["attributes"]["numberOfItems"]
+
+        def playlist_name(self, playlist):
+            return playlist["attributes"]["name"]
+
+        def playlist_description(self, playlist):
+            return ""
+
+        def is_editable(self, playlist):
+            return True
+
+    service = PlaylistService(SettingsStore(dir=tmp_path))
+    monkeypatch.setattr(service, "_target", lambda provider: Target())
+
+    detail = service.detail_page(
+        "tidal",
+        "playlist-1",
+        cursor="cursor-1",
+        offset=20,
+        expected_count=137,
+    )
+
+    assert calls == [("playlist-1", "cursor-1")]
+    assert detail["count"] == 137
+    assert detail["next_cursor"] == "cursor-2"
+    assert detail["complete"] is False
+    assert detail["tracks"][0]["position"] == 20
+    assert detail["tracks"][0]["occurrence_id"] == "entry-21"
+
+
+def test_playlist_detail_exposes_unavailable_tidal_entries_without_caching_them(monkeypatch, tmp_path):
+    from songmirror.services.playlists import PlaylistService
+    from songmirror.services.settings import SettingsStore
+
+    reads = []
+
+    class Target:
+        def find_playlist(self, playlist_id):
+            return {"id": playlist_id, "attributes": {"name": "Old mix"}}
+
+        def playlist_tracks(self, playlist):
+            raise AssertionError("playlist browsing must use the tolerant reader")
+
+        def playlist_tracks_for_browse(self, playlist):
+            reads.append(playlist["id"])
+            return [{
+                "id": "hidden-1",
+                "name": "Unavailable TIDAL track",
+                "artist": "Catalog ID hidden-1",
+                "relationship_id": "entry-hidden",
+                "unavailable": True,
+            }]
+
+        def track_id(self, track):
+            return track["id"]
+
+        def occurrence_id(self, track):
+            return track.get("relationship_id")
+
+        def playlist_id(self, playlist):
+            return playlist["id"]
+
+        def playlist_name(self, playlist):
+            return playlist["attributes"]["name"]
+
+        def playlist_description(self, playlist):
+            return ""
+
+        def is_editable(self, playlist):
+            return True
+
+    service = PlaylistService(SettingsStore(dir=tmp_path))
+    monkeypatch.setattr(service, "_target", lambda provider: Target())
+
+    first = service.detail("tidal", "playlist-1")
+    second = service.detail("tidal", "playlist-1")
+
+    assert reads == ["playlist-1", "playlist-1"]
+    assert first == second
+    assert first["tracks"] == [{
+        "position": 0,
+        "id": "hidden-1",
+        "isrc": "",
+        "occurrence_id": "entry-hidden",
+        "name": "Unavailable TIDAL track",
+        "artist": "Catalog ID hidden-1",
+        "album": None,
+        "duration_ms": None,
+        "image": "",
+        "added_at": "",
+        "external_url": "",
+        "unavailable": True,
+    }]
+
+
 def test_browse_prunes_cache_for_a_deleted_or_recreated_playlist(monkeypatch, tmp_path):
     from songmirror.engine import archive
     from songmirror.services.playlists import PlaylistService
