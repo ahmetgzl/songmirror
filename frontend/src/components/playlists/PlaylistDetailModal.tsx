@@ -24,6 +24,7 @@ import { FIELD_INPUT_CLASSES } from '../ui/fieldStyles'
 import { FilterSelect } from '../ui/FilterSelect'
 import { Modal } from '../ui/Modal'
 import { LoadingStatus, Skeleton } from '../ui/Skeleton'
+import { Spinner } from '../ui/Spinner'
 
 type TrackOrder = 'latest' | 'playlist'
 
@@ -83,7 +84,7 @@ interface PlaylistDetailModalProps {
 export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: PlaylistDetailModalProps) {
   const provider = account?.id ?? null
   const playlistId = playlist?.id ?? null
-  const { detail, loading, refreshing, error, refresh } = usePlaylistDetail(
+  const { detail, loading, refreshing, loadingMore, error, refresh } = usePlaylistDetail(
     provider,
     playlistId,
     playlist?.count,
@@ -142,6 +143,10 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
   const selectedTracks = useMemo(
     () => detail?.tracks.filter((track) => selectedKeys.has(trackKey(track))) ?? [],
     [detail, selectedKeys],
+  )
+  const unavailableCount = useMemo(
+    () => detail?.tracks.filter((track) => track.unavailable).length ?? 0,
+    [detail],
   )
 
   function changeOrder(value: TrackOrder) {
@@ -296,6 +301,18 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
           </p>
         ) : null}
 
+        {unavailableCount > 0 ? (
+          <div className="flex items-start gap-2.5 rounded-control border border-warning/30 bg-warning-soft px-3.5 py-3 text-xs leading-relaxed text-text-2">
+            <span className="font-mono font-bold text-warning" aria-hidden="true">!</span>
+            <p>
+              {unavailableCount} {unavailableCount === 1 ? 'entry is' : 'entries are'} no longer available in the TIDAL catalog.
+              {detail?.editable
+                ? ' You can select and remove the placeholder entries here; transfers skip them.'
+                : ' Transfers skip these entries.'}
+            </p>
+          </div>
+        ) : null}
+
         {detail && detail.tracks.length > 0 ? (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_12rem]">
             <label className="relative block">
@@ -305,7 +322,7 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
                 type="search"
                 value={query}
                 onChange={(event) => changeQuery(event.target.value)}
-                placeholder={`Search ${detail.tracks.length} tracks`}
+                placeholder={`Search ${detail.tracks.length}${loadingMore ? ' loaded' : ''} tracks`}
                 className={cn(FIELD_INPUT_CLASSES, 'pl-9')}
               />
             </label>
@@ -366,6 +383,19 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
           </p>
         ) : null}
 
+        {error && detail ? (
+          <p role="alert" className="rounded-control bg-danger-soft px-3.5 py-2.5 text-sm text-danger">
+            More tracks could not be loaded: {error}
+          </p>
+        ) : null}
+
+        {loadingMore && detail ? (
+          <p aria-live="polite" className="flex items-center gap-2 text-xs text-text-3">
+            <Spinner className="size-3.5 shrink-0" aria-hidden="true" />
+            Loaded {detail.tracks.length} of {detail.count} tracks from TIDAL…
+          </p>
+        ) : null}
+
         {loading && !detail ? (
           <LoadingStatus label={`Loading ${playlist?.name ?? 'playlist'} tracks…`}>
             <div className="flex flex-col gap-2">
@@ -398,6 +428,7 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
                     className={cn(
                       'playlist-track-row border-b border-border transition-colors last:border-b-0',
                       selected && 'bg-accent-soft/60',
+                      track.unavailable && 'bg-warning-soft/30',
                     )}
                   >
                     <div className="flex min-h-14 items-center gap-3 px-3 py-2 sm:px-4">
@@ -420,7 +451,9 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
                           </span>
                           <CoverArt image={track.image} className="size-10" />
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate text-[13.5px] font-semibold text-text">{track.name}</span>
+                            <span className={cn('block truncate text-[13.5px] font-semibold text-text', track.unavailable && 'text-warning')}>
+                              {track.name}
+                            </span>
                             <span className="block truncate text-xs text-text-3">
                               {[track.artist, track.album, dateAdded].filter(Boolean).join(' · ') || 'Unknown artist'}
                             </span>
@@ -430,7 +463,9 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
                         <div className="flex min-w-0 flex-1 items-center gap-3">
                           <CoverArt image={track.image} className="size-10" />
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-[13.5px] font-semibold text-text">{track.name}</p>
+                            <p className={cn('truncate text-[13.5px] font-semibold text-text', track.unavailable && 'text-warning')}>
+                              {track.name}
+                            </p>
                             <p className="truncate text-xs text-text-3">
                               {[track.artist, track.album, dateAdded].filter(Boolean).join(' · ') || 'Unknown artist'}
                             </p>
@@ -482,7 +517,8 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
             </ol>
             <div className="flex flex-col gap-2 px-0.5 text-xs text-text-3 sm:flex-row sm:items-center sm:justify-between">
               <p aria-live="polite">
-                Showing {pageStart + 1}–{pageStart + pageTracks.length} of {orderedTracks.length} tracks · {PAGE_SIZE} per page
+                Showing {pageStart + 1}–{pageStart + pageTracks.length} of {orderedTracks.length}
+                {loadingMore ? ` loaded · ${detail.count} total` : ' tracks'} · {PAGE_SIZE} per page
               </p>
               {pageCount > 1 ? (
                 <div className="flex items-center gap-1.5">

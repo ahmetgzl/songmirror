@@ -26,8 +26,34 @@ def playlist_detail(
     playlist_id: str,
     refresh: bool = False,
     expected_count: int | None = None,
+    page_size: int | None = None,
+    cursor: str | None = None,
+    offset: int = 0,
 ):
+    if page_size is not None and page_size != 20:
+        raise HTTPException(status_code=422, detail="page_size must be 20")
+    if offset < 0:
+        raise HTTPException(status_code=422, detail="offset must be non-negative")
+    if cursor is not None and not cursor.strip():
+        raise HTTPException(status_code=422, detail="cursor must not be blank")
+    if cursor is not None and page_size is None:
+        raise HTTPException(status_code=422, detail="cursor requires page_size")
+    if offset != 0 and (page_size is None or cursor is None):
+        raise HTTPException(status_code=422, detail="offset requires page_size and cursor")
+    if cursor is not None and offset == 0:
+        raise HTTPException(status_code=422, detail="cursor requires a positive offset")
+    if cursor is not None and len(cursor) > 2048:
+        raise HTTPException(status_code=422, detail="cursor is too long")
     try:
+        if page_size is not None:
+            return PlaylistService(request.app.state.settings).detail_page(
+                provider,
+                playlist_id,
+                cursor=cursor or None,
+                offset=offset,
+                refresh=refresh,
+                expected_count=expected_count,
+            )
         return PlaylistService(request.app.state.settings).detail(
             provider,
             playlist_id,

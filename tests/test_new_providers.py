@@ -54,6 +54,114 @@ def test_tidal_jsonapi_track_shape_carries_isrc_artist_and_entry_id():
     }
 
 
+def test_tidal_playlist_read_uses_embedded_items_when_catalog_lookup_omits_track(monkeypatch):
+    """Playlist relationships retain metadata for catalog entries /tracks omits."""
+    from songmirror.engine.targets.tidal import TidalTarget
+
+    target = TidalTarget.__new__(TidalTarget)
+    target.country = "US"
+    target._songs = None
+    calls = []
+    page = {
+        "data": [{
+            "type": "tracks",
+            "id": "delisted",
+            "meta": {"itemId": "entry-1", "addedAt": "2026-08-14T16:20:58Z"},
+        }],
+        "included": [
+            {
+                "type": "tracks",
+                "id": "delisted",
+                "attributes": {
+                    "title": "Still in the playlist",
+                    "duration": "PT3M2S",
+                    "isrc": "USAAA2600001",
+                },
+                "relationships": {
+                    "artists": {"data": [{"type": "artists", "id": "artist-1"}]},
+                    "albums": {"data": [{"type": "albums", "id": "album-1"}]},
+                },
+            },
+            {"type": "artists", "id": "artist-1", "attributes": {"name": "Artist"}},
+            {"type": "albums", "id": "album-1", "attributes": {"title": "Album"}},
+        ],
+    }
+
+    def pages(path, params):
+        calls.append((path, params))
+        return iter([page])
+
+    monkeypatch.setattr(target, "_pages", pages)
+    monkeypatch.setattr(
+        target,
+        "_tracks_by_id",
+        lambda ids: pytest.fail("embedded playlist metadata must be used before /tracks"),
+    )
+
+    tracks = target.playlist_tracks({"id": "playlist"})
+
+    assert calls == [(
+        "playlists/playlist/relationships/items",
+        {
+            "countryCode": "US",
+            "sort": "itemIndex",
+            "include": ["items", "items.artists", "items.albums", "items.albums.coverArt"],
+        },
+    )]
+    assert tracks == [{
+        "id": "delisted",
+        "relationship_id": "entry-1",
+        "name": "Still in the playlist",
+        "artist": "Artist",
+        "artists": ["Artist"],
+        "album": "Album",
+        "image": "",
+        "duration_ms": 182000,
+        "isrc": "USAAA2600001",
+        "added_at": "2026-08-14T16:20:58Z",
+    }]
+
+
+def test_tidal_playlist_read_enriches_partial_embedded_metadata(monkeypatch):
+    from songmirror.engine.targets.tidal import TidalTarget
+
+    target = TidalTarget.__new__(TidalTarget)
+    target.country = "US"
+    target._songs = None
+    page = {
+        "data": [{"type": "tracks", "id": "track-1", "meta": {"itemId": "entry-1"}}],
+        "included": [{
+            "type": "tracks",
+            "id": "track-1",
+            "attributes": {"title": "Partial"},
+        }],
+    }
+    looked_up = []
+    monkeypatch.setattr(target, "_pages", lambda path, params: iter([page]))
+
+    def tracks_by_id(ids):
+        looked_up.extend(ids)
+        return {"track-1": {
+            "id": "track-1",
+            "name": "Complete",
+            "artist": "Artist",
+            "artists": ["Artist"],
+            "album": "Album",
+            "image": "",
+            "duration_ms": 182000,
+            "isrc": "USAAA2600001",
+        }}
+
+    monkeypatch.setattr(target, "_tracks_by_id", tracks_by_id)
+
+    tracks = target.playlist_tracks({"id": "playlist"})
+
+    assert looked_up == ["track-1"]
+    assert tracks[0]["name"] == "Complete"
+    assert tracks[0]["artist"] == "Artist"
+    assert tracks[0]["relationship_id"] == "entry-1"
+
+
 def test_tidal_playlist_read_fails_closed_when_catalog_detail_is_missing(monkeypatch):
     from songmirror.engine.targets.tidal import TidalTarget
 
@@ -124,6 +232,38 @@ def test_tidal_playlist_read_fails_closed_when_the_archive_cannot_identify_it(tm
     with pytest.raises(RuntimeError, match=r"incomplete.*t9"):
         target.playlist_tracks({"id": "playlist"})
     conn.close()
+
+
+def test_tidal_browse_read_keeps_unknown_entry_as_removable_placeholder():
+    from songmirror.engine.targets.tidal import TidalTarget
+
+    target = TidalTarget.__new__(TidalTarget)
+    target.country = "US"
+    target._songs = None
+    target._pages = lambda path, params: iter([{
+        "data": [{
+            "type": "tracks",
+            "id": "hidden-1",
+            "meta": {"itemId": "entry-hidden", "addedAt": "2020-01-01"},
+        }],
+    }])
+    target._tracks_by_id = lambda ids: {}
+
+    tracks = target.playlist_tracks_for_browse({"id": "playlist"})
+
+    assert tracks == [{
+        "id": "hidden-1",
+        "name": "Unavailable TIDAL track",
+        "artist": "Catalog ID hidden-1",
+        "artists": ["Catalog ID hidden-1"],
+        "album": None,
+        "image": "",
+        "duration_ms": None,
+        "isrc": None,
+        "unavailable": True,
+        "relationship_id": "entry-hidden",
+        "added_at": "2020-01-01",
+    }]
 
 
 def test_tidal_connector_accepts_minimized_browser_headers(tmp_path, monkeypatch):

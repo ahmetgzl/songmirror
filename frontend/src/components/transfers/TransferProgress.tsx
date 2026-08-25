@@ -181,6 +181,7 @@ export function TransferProgress({
   const isActive = isRunning || isPaused
   const isDone = job.status === 'done'
   const isStopped = job.status === 'stopped'
+  const unavailable = job.unavailable ?? 0
   // `total` is 0 until the source playlist finishes reading; only then can the
   // bar go determinate. `processed` counts source tracks examined, not tracks
   // added (misses and already-present tracks still advance the scan).
@@ -237,6 +238,13 @@ export function TransferProgress({
 
       {job.error && <p className="rounded-control bg-danger-soft px-3 py-2 text-sm text-danger">{job.error}</p>}
 
+      {unavailable > 0 && (
+        <p className="rounded-control bg-warning-soft px-3 py-2 text-sm text-text-2">
+          Skipped {unavailable} unavailable TIDAL {unavailable === 1 ? 'entry' : 'entries'}. You can remove the hidden
+          {unavailable === 1 ? ' entry' : ' entries'} from the source playlist in the playlist inspector.
+        </p>
+      )}
+
       {isActive ? (
         <div className="flex flex-wrap items-end gap-4">
           {job.added > 0 || isPaused ? (
@@ -275,6 +283,7 @@ export function TransferProgress({
         <p className="text-sm text-text-2">
           <span className="font-semibold text-success">Done</span>
           <span className="font-mono"> · {job.added} added</span>
+          {unavailable > 0 && <span className="font-mono"> · {unavailable} unavailable skipped</span>}
           {job.deferred > 0 && <span className="font-mono"> · {job.deferred} deferred</span>}
           {unresolvedConflicts > 0 && <span className="font-mono"> · {unresolvedConflicts} need review</span>}
         </p>
@@ -282,12 +291,14 @@ export function TransferProgress({
         <p className="text-sm text-text-2">
           <span className="font-semibold text-text-2">Stopped</span>
           <span className="font-mono"> · {job.added} added</span>
+          {unavailable > 0 && <span className="font-mono"> · {unavailable} unavailable skipped</span>}
           {job.deferred > 0 && <span className="font-mono"> · {job.deferred} deferred</span>}
           {unresolvedConflicts > 0 && <span className="font-mono"> · {unresolvedConflicts} need review</span>}
         </p>
       ) : (
         <div className="flex flex-wrap gap-2">
           <CountChip tone="success" sign="+" value={job.added} />
+          {unavailable > 0 && <CountChip tone="warning" value={unavailable} />}
           {job.deferred > 0 && <CountChip tone="warning" value={job.deferred} />}
           {unresolvedConflicts > 0 && (
             <span className="inline-flex h-6 items-center rounded-chip bg-warning-soft px-2 font-mono text-xs font-semibold text-warning">

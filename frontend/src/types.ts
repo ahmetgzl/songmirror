@@ -288,6 +288,8 @@ export interface ProviderPlaylistTrack {
   image: string
   added_at: string
   external_url: string
+  /** TIDAL relationship retained after its catalog metadata disappeared. */
+  unavailable?: boolean
 }
 
 export interface ProviderPlaylistDetail extends ProviderPlaylist {
@@ -295,6 +297,9 @@ export interface ProviderPlaylistDetail extends ProviderPlaylist {
   description: string
   editable: boolean
   tracks: ProviderPlaylistTrack[]
+  /** Opaque provider cursor while a large playlist is loading progressively. */
+  next_cursor?: string | null
+  complete?: boolean
 }
 
 export interface RemovePlaylistTrackRequest {
@@ -361,6 +366,8 @@ export interface TransferJob {
   dest: TransferEndpoint
   added: number
   deferred: number
+  /** Hidden source relationships skipped because the provider exposes no metadata. */
+  unavailable?: number
   /** Total source tracks to examine, or 0 before the source playlist has been
    * read (the progress bar stays indeterminate until then). */
   total: number

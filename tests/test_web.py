@@ -1,5 +1,7 @@
 """Web layer smoke tests (FastAPI TestClient)."""
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from songmirror.services.settings import SettingsStore
@@ -311,6 +313,63 @@ def test_playlist_detail_and_serialized_remove_routes(tmp_path, monkeypatch):
     )]
     assert removed.json() == {"ok": True}
     assert seen == [("spotify", "playlist-1", 4, "track-5", "")]
+
+
+def test_playlist_detail_route_forwards_page_cursor(tmp_path, monkeypatch):
+    from songmirror.services.playlists import PlaylistService
+
+    calls = []
+
+    def detail_page(self, provider, playlist_id, **kwargs):
+        calls.append((provider, playlist_id, kwargs))
+        return {
+            "provider": provider,
+            "id": playlist_id,
+            "name": "Party",
+            "count": 137,
+            "tracks": [],
+            "next_cursor": "cursor-2",
+            "complete": False,
+        }
+
+    monkeypatch.setattr(PlaylistService, "detail_page", detail_page, raising=False)
+    monkeypatch.setattr(
+        PlaylistService,
+        "detail",
+        lambda *args, **kwargs: pytest.fail("paged reads must not load the full playlist"),
+    )
+
+    with TestClient(_app(tmp_path)) as client:
+        response = client.get(
+            "/api/playlists/tidal/playlist-1",
+            params={
+                "page_size": 20,
+                "cursor": "cursor-1",
+                "offset": 20,
+                "expected_count": 137,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["next_cursor"] == "cursor-2"
+    assert calls == [(
+        "tidal",
+        "playlist-1",
+        {"cursor": "cursor-1", "offset": 20, "refresh": False, "expected_count": 137},
+    )]
+
+
+@pytest.mark.parametrize("query", [
+    "offset=20",
+    "page_size=20&offset=20",
+    "page_size=20&cursor=cursor-1",
+    "page_size=20&cursor=%20&offset=20",
+])
+def test_playlist_detail_route_rejects_incomplete_page_coordinates(tmp_path, query):
+    with TestClient(_app(tmp_path)) as client:
+        response = client.get(f"/api/playlists/tidal/playlist-1?{query}")
+
+    assert response.status_code == 422
 
 
 def test_playlist_bulk_remove_route(tmp_path, monkeypatch):

@@ -296,6 +296,57 @@ class PlaylistService:
         self._prune_details(provider_id, [row["id"] for row in rows])
         return sorted(rows, key=lambda r: (r["name"] or "").casefold())
 
+    @staticmethod
+    def _normalize_tracks(provider_id, target, tracks, *, offset=0):
+        normalized = []
+        occurrence_id_getter = getattr(target, "occurrence_id", lambda track: None)
+        for position, track in enumerate(tracks, start=offset):
+            track_id = target.track_id(track)
+            if track_id is None:
+                continue
+            row = {
+                "position": position,
+                "id": str(track_id),
+                "isrc": str(track.get("isrc") or ""),
+                "occurrence_id": str(occurrence_id_getter(track) or ""),
+                "name": str(track.get("name") or track.get("title") or "Unknown track"),
+                "artist": _track_artist(track),
+                "album": track.get("album") or track.get("albumName"),
+                "duration_ms": track.get("duration_ms") or track.get("durationInMillis"),
+                "image": str(track.get("image") or _pl_image(track) or ""),
+                "added_at": str(
+                    track.get("added_at")
+                    or track.get("addedAt")
+                    or (track.get("attributes") or {}).get("dateAdded")
+                    or ""
+                ),
+                "external_url": (
+                    "" if track.get("unavailable")
+                    else _external_url(provider_id, "track", track_id)
+                ),
+            }
+            if track.get("unavailable"):
+                row["unavailable"] = True
+            normalized.append(row)
+        return normalized
+
+    @staticmethod
+    def _detail_payload(provider_id, playlist_id, target, playlist, tracks, *, count=None):
+        playlist_id_getter = getattr(target, "playlist_id", _pl_id)
+        playlist_id = str(playlist_id_getter(playlist) or playlist_id)
+        return {
+            "provider": provider_id,
+            "id": playlist_id,
+            "name": target.playlist_name(playlist),
+            "description": _plain_text(target.playlist_description(playlist)),
+            "count": len(tracks) if count is None else count,
+            "image": _pl_image(playlist),
+            "owned": bool(playlist.get("_owned", True)),
+            "editable": bool(target.is_editable(playlist)),
+            "external_url": _external_url(provider_id, "playlist", playlist_id),
+            "tracks": tracks,
+        }
+
     def detail(self, provider_id, playlist_id, *, refresh=False, expected_count=None):
         cached = self._cached_detail(provider_id, playlist_id)
         if (
@@ -316,53 +367,108 @@ class PlaylistService:
                 raise PlaylistNotFoundError(
                     f"That {_PROVIDER_NAMES.get(provider_id, provider_id)} playlist no longer exists. Refresh Browse."
                 )
-            tracks = target.playlist_tracks(playlist)
+            read_tracks = getattr(
+                target,
+                "playlist_tracks_for_browse",
+                target.playlist_tracks,
+            )
+            tracks = read_tracks(playlist)
         except PlaylistServiceError:
             raise
         except Exception as exc:
             self._failure(provider_id, "open that playlist", exc)
 
-        normalized = []
-        occurrence_id_getter = getattr(target, "occurrence_id", lambda track: None)
-        for position, track in enumerate(tracks):
-            track_id = target.track_id(track)
-            if track_id is None:
-                continue
-            normalized.append({
-                "position": position,
-                "id": str(track_id),
-                "isrc": str(track.get("isrc") or ""),
-                "occurrence_id": str(occurrence_id_getter(track) or ""),
-                "name": str(track.get("name") or track.get("title") or "Unknown track"),
-                "artist": _track_artist(track),
-                "album": track.get("album") or track.get("albumName"),
-                "duration_ms": track.get("duration_ms") or track.get("durationInMillis"),
-                "image": str(track.get("image") or _pl_image(track) or ""),
-                "added_at": str(
-                    track.get("added_at")
-                    or track.get("addedAt")
-                    or (track.get("attributes") or {}).get("dateAdded")
-                    or ""
-                ),
-                "external_url": _external_url(provider_id, "track", track_id),
-            })
-
-        playlist_id_getter = getattr(target, "playlist_id", _pl_id)
-        playlist_id = str(playlist_id_getter(playlist) or playlist_id)
-        detail = {
-            "provider": provider_id,
-            "id": playlist_id,
-            "name": target.playlist_name(playlist),
-            "description": _plain_text(target.playlist_description(playlist)),
-            "count": len(normalized),
-            "image": _pl_image(playlist),
-            "owned": bool(playlist.get("_owned", True)),
-            "editable": bool(target.is_editable(playlist)),
-            "external_url": _external_url(provider_id, "playlist", playlist_id),
-            "tracks": normalized,
-        }
-        self._cache_detail(detail)
+        normalized = self._normalize_tracks(provider_id, target, tracks)
+        detail = self._detail_payload(
+            provider_id,
+            playlist_id,
+            target,
+            playlist,
+            normalized,
+        )
+        # Hidden TIDAL relationships are useful in the inspector but are not
+        # authoritative song metadata. Avoid persisting placeholders into the
+        # archive, where a later strict sync read could mistake them for truth.
+        if not any(track.get("unavailable", False) for track in normalized):
+            self._cache_detail(detail)
         return detail
+
+    def detail_page(
+        self,
+        provider_id,
+        playlist_id,
+        *,
+        cursor=None,
+        offset=0,
+        refresh=False,
+        expected_count=None,
+    ):
+        """Return one provider-native track page for progressive playlist UI."""
+        if cursor is None:
+            cached = self._cached_detail(provider_id, playlist_id)
+            if (
+                cached is not None
+                and not refresh
+                and (expected_count is None or cached["count"] == expected_count)
+            ):
+                return {**cached, "next_cursor": None, "complete": True}
+            if refresh:
+                self._invalidate_detail(provider_id, playlist_id)
+
+        target = self._target(provider_id)
+        page_reader = getattr(target, "playlist_tracks_page", None)
+        if page_reader is None:
+            return {
+                **self.detail(
+                    provider_id,
+                    playlist_id,
+                    refresh=refresh,
+                    expected_count=expected_count,
+                ),
+                "next_cursor": None,
+                "complete": True,
+            }
+        try:
+            page_reference = getattr(target, "playlist_page_reference", None)
+            playlist = (
+                page_reference(str(playlist_id), expected_count)
+                if cursor is not None and page_reference is not None
+                else target.find_playlist(str(playlist_id))
+            )
+            if playlist is None:
+                self._invalidate_detail(provider_id, playlist_id)
+                raise PlaylistNotFoundError(
+                    f"That {_PROVIDER_NAMES.get(provider_id, provider_id)} playlist no longer exists. Refresh Browse."
+                )
+            tracks, next_cursor = page_reader(playlist, cursor=cursor)
+        except PlaylistServiceError:
+            raise
+        except Exception as exc:
+            self._failure(provider_id, "open that playlist", exc)
+
+        normalized = self._normalize_tracks(
+            provider_id,
+            target,
+            tracks,
+            offset=offset,
+        )
+        count = target.playlist_count(playlist)
+        if count is None:
+            count = expected_count
+        if count is None:
+            count = offset + len(normalized)
+        return {
+            **self._detail_payload(
+                provider_id,
+                playlist_id,
+                target,
+                playlist,
+                normalized,
+                count=count,
+            ),
+            "next_cursor": next_cursor,
+            "complete": next_cursor is None,
+        }
 
     def remove_track(self, provider_id, playlist_id, *, position, track_id, occurrence_id=""):
         self.remove_tracks(provider_id, playlist_id, selections=[{
