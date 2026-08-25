@@ -408,6 +408,77 @@ def test_one_way_mirror_defers_the_ordered_suffix_after_a_transient_resolve(tmp_
     songs.close()
 
 
+def test_one_way_mirror_counts_only_provider_confirmed_adds(tmp_path):
+    from songmirror.engine.targets.base import mirror_pair
+
+    songs = archive.connect(str(tmp_path / "provider-rejection-one-way.db"))
+    archive.set_links(songs, "apple", {
+        "source-blocked": "blocked",
+        "source-blocked-alias": "blocked",
+    })
+
+    class Target:
+        name, tag, source = "Apple Music", "apple", "apple"
+
+        def playlist_tracks(self, playlist):
+            return [{
+                "catalog_id": "obsolete",
+                "name": "Obsolete",
+                "artist": "Other Artist",
+                "duration_ms": 1,
+            }]
+
+        def track_id(self, track):
+            return track.get("catalog_id")
+
+        def expected_ids(self, tracks, links, cache):
+            return {}
+
+        def prefetch(self, tracks, cache):
+            pass
+
+        def resolve(self, track, cache):
+            return track["name"].casefold(), "search"
+
+        def add(self, playlist, ids):
+            self.requested = list(ids)
+            return ["later"]
+
+        def remove(self, playlist, track):
+            self.removed.append(track["catalog_id"])
+
+    target = Target()
+    target.removed = []
+    source_tracks = [
+        {"id": "source-blocked", "name": "Blocked", "artists": ["Artist"], "duration_ms": 1},
+        {"id": "source-blocked-alias", "name": "Blocked Alias", "artists": ["Artist"], "duration_ms": 1},
+        {"id": "source-later", "name": "Later", "artists": ["Artist"], "duration_ms": 1},
+    ]
+
+    stats = mirror_pair(
+        target,
+        source_tracks,
+        {"name": "Aurora"},
+        {"id": "apple-aurora"},
+        {"isrc": {}, "search": {}, "dirty": False},
+        songs,
+        execute=True,
+        max_removals=200,
+        max_adds=200,
+    )
+
+    assert target.requested == ["blocked", "later"]
+    assert stats["added"] == 1
+    assert stats["missing"] == 2
+    assert stats["held"] == 1
+    assert stats["clean"] is False
+    assert target.removed == []
+    assert archive.get_links(
+        songs, "apple", ["source-blocked", "source-blocked-alias", "source-later"]
+    ) == {"source-later": "later"}
+    songs.close()
+
+
 def test_one_way_unresolved_track_keeps_snapshot_retryable(tmp_path):
     from songmirror.engine.targets.base import mirror_pair
 

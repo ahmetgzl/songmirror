@@ -342,6 +342,11 @@ def test_apple_add_repairs_a_stale_catalog_id_before_continuing(monkeypatch):
         if catalog_id == "1848462301":
             response = requests.Response()
             response.status_code = 500
+            response.headers["Content-Type"] = "application/json"
+            response._content = (
+                b'{"errors":[{"code":"50001","title":"Upstream Service Error",'
+                b'"detail":"Unable to update tracks"}]}'
+            )
             raise requests.HTTPError("500 Server Error", response=response)
         landed.append(catalog_id)
         return object()
@@ -363,6 +368,209 @@ def test_apple_add_repairs_a_stale_catalog_id_before_continuing(monkeypatch):
     assert target.added_id("1848462301") == "6791344492"
     assert cache["isrc"]["QZEQU2502334"][0]["id"] == "6791344492"
     assert cache["dirty"] is True
+
+
+def test_apple_add_quarantines_an_unwritable_50001_and_continues(monkeypatch):
+    """A catalog-specific rejection must not pin every later track forever."""
+    import json
+    import requests
+
+    from songmirror.engine.targets import apple
+
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    target._write_not_before = 0.0
+    target._public_search_not_before = 0.0
+    target._resolved_catalog_context = {}
+    target._added_catalog_ids = {}
+    cache = {
+        "isrc": {"USAAA2600001": [{"id": "bad-id"}]},
+        "search": {"blocked song|artist": "bad-id"},
+        "dirty": False,
+    }
+    target._remember_resolution({
+        "id": "source-bad",
+        "isrc": "USAAA2600001",
+        "name": "Blocked Song",
+        "artists": ["Artist"],
+        "duration_ms": 180000,
+    }, "bad-id", cache)
+
+    calls, landed, warnings = [], [], []
+
+    def fake_request(method, url, *, json_body=None, **kwargs):
+        catalog_id = json_body["data"][0]["id"]
+        calls.append(catalog_id)
+        if catalog_id == "bad-id":
+            response = requests.Response()
+            response.status_code = 500
+            response.headers["Content-Type"] = "application/json"
+            response._content = json.dumps({"errors": [{
+                "code": "50001",
+                "title": "Upstream Service Error",
+                "detail": "Unable to update tracks",
+            }]}).encode()
+            raise requests.HTTPError("500 Server Error", response=response)
+        landed.append(catalog_id)
+        return object()
+
+    target._request = fake_request
+    target.playlist_tracks = lambda _playlist: [
+        {"catalog_id": catalog_id} for catalog_id in landed
+    ]
+    target._rebuild_session = lambda: None
+    target._public_search_once = lambda *_args: "bad-id"
+    monkeypatch.setattr(apple, "polite_sleep", lambda _seconds: None)
+    monkeypatch.setattr(apple.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(apple.random, "uniform", lambda *_args: 0)
+    monkeypatch.setattr(apple, "log_warn", lambda message, **_kwargs: warnings.append(message))
+
+    added = target.add({"id": "aurora"}, ["bad-id", "newest"])
+
+    assert added == ["newest"]
+    assert calls == ["bad-id", "newest"]
+    assert landed == ["newest"]
+    assert "USAAA2600001" not in cache["isrc"]
+    assert cache["search"] == {}
+    assert cache["dirty"] is True
+    assert any("'Blocked Song' by Artist (catalog id bad-id)" in warning for warning in warnings)
+
+
+def test_apple_add_evicts_a_rejected_replacement_before_continuing(monkeypatch):
+    """A repaired id that Apple also rejects must not be retried next pass."""
+    import json
+    import requests
+
+    from songmirror.engine.targets import apple
+
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    target._write_not_before = 0.0
+    target._public_search_not_before = 0.0
+    target._resolved_catalog_context = {}
+    target._added_catalog_ids = {}
+    cache = {
+        "isrc": {"USAAA2600001": [{"id": "bad-id"}]},
+        "search": {"blocked song|artist": "bad-id"},
+        "dirty": False,
+    }
+    target._remember_resolution({
+        "id": "source-bad",
+        "isrc": "USAAA2600001",
+        "name": "Blocked Song",
+        "artists": ["Artist"],
+        "duration_ms": 180000,
+    }, "bad-id", cache)
+
+    calls, landed = [], []
+
+    def fake_request(method, url, *, json_body=None, **kwargs):
+        catalog_id = json_body["data"][0]["id"]
+        calls.append(catalog_id)
+        if catalog_id in {"bad-id", "replacement-id"}:
+            response = requests.Response()
+            response.status_code = 500
+            response.headers["Content-Type"] = "application/json"
+            response._content = json.dumps({"errors": [{
+                "code": "50001",
+                "title": "Upstream Service Error",
+                "detail": "Unable to update tracks",
+            }]}).encode()
+            raise requests.HTTPError("500 Server Error", response=response)
+        landed.append(catalog_id)
+        return object()
+
+    target._request = fake_request
+    target.playlist_tracks = lambda _playlist: [
+        {"catalog_id": catalog_id} for catalog_id in landed
+    ]
+    target._rebuild_session = lambda: None
+    target._public_search_once = lambda *_args: "replacement-id"
+    monkeypatch.setattr(apple, "polite_sleep", lambda _seconds: None)
+    monkeypatch.setattr(apple.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(apple.random, "uniform", lambda *_args: 0)
+
+    added = target.add({"id": "aurora"}, ["bad-id", "newest"])
+
+    assert added == ["newest"]
+    assert calls == ["bad-id", "replacement-id", "newest"]
+    assert "USAAA2600001" not in cache["isrc"]
+    assert cache["search"] == {}
+    assert cache["dirty"] is True
+    assert target._resolved_catalog_context == {}
+
+
+def test_apple_add_keeps_generic_500_failures_ordered_for_a_later_retry(monkeypatch):
+    """Only Apple's proven per-track rejection may let a later song pass."""
+    import json
+    import requests
+
+    from songmirror.engine.targets import apple
+
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    target._write_not_before = 0.0
+    target._resolved_catalog_context = {}
+    calls = []
+
+    def fake_request(method, url, *, json_body=None, **kwargs):
+        catalog_id = json_body["data"][0]["id"]
+        calls.append(catalog_id)
+        response = requests.Response()
+        response.status_code = 500
+        response.headers["Content-Type"] = "application/json"
+        response._content = json.dumps({"errors": [{
+            "code": "50000",
+            "title": "Internal Server Error",
+            "detail": "Please try again later",
+        }]}).encode()
+        raise requests.HTTPError("500 Server Error", response=response)
+
+    target._request = fake_request
+    target.playlist_tracks = lambda _playlist: []
+    target._rebuild_session = lambda: None
+    monkeypatch.setattr(apple.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(apple.random, "uniform", lambda *_args: 0)
+
+    with pytest.raises(RuntimeError, match=r"after 6 attempts;.*ordered queue"):
+        target.add({"id": "aurora"}, ["retry-later", "must-not-overtake"])
+
+    assert calls == ["retry-later"] * 6
+
+
+@pytest.mark.parametrize("status_code", [408, 502])
+def test_apple_add_does_not_quarantine_non_500_responses(monkeypatch, status_code):
+    """The 50001 payload is safe to skip only on Apple's exact HTTP 500."""
+    import json
+    import requests
+
+    from songmirror.engine.targets import apple
+
+    target = AppleMusicTarget.__new__(AppleMusicTarget)
+    target._write_not_before = 0.0
+    target._resolved_catalog_context = {}
+    calls = []
+
+    def fake_request(method, url, *, json_body=None, **kwargs):
+        catalog_id = json_body["data"][0]["id"]
+        calls.append(catalog_id)
+        response = requests.Response()
+        response.status_code = status_code
+        response.headers["Content-Type"] = "application/json"
+        response._content = json.dumps({"errors": [{
+            "code": "50001",
+            "title": "Upstream Service Error",
+            "detail": "Unable to update tracks",
+        }]}).encode()
+        raise requests.HTTPError(f"{status_code} Server Error", response=response)
+
+    target._request = fake_request
+    target.playlist_tracks = lambda _playlist: []
+    target._rebuild_session = lambda: None
+    monkeypatch.setattr(apple.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(apple.random, "uniform", lambda *_args: 0)
+
+    with pytest.raises(RuntimeError, match=r"after 6 attempts;.*ordered queue"):
+        target.add({"id": "aurora"}, ["retry-later", "must-not-overtake"])
+
+    assert calls == ["retry-later"] * 6
 
 
 def test_apple_current_isrc_candidate_outranks_an_archived_link():

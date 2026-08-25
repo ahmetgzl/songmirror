@@ -287,6 +287,20 @@ def set_links(conn, target, mapping):
         conn.commit()
 
 
+def delete_links(conn, target, spotify_ids):
+    """Forget proven-bad Spotify mappings so the next pass resolves again."""
+    ids = [spotify_id for spotify_id in spotify_ids if spotify_id]
+    for i in range(0, len(ids), 500):
+        chunk = ids[i : i + 500]
+        marks = ",".join("?" * len(chunk))
+        conn.execute(
+            f"DELETE FROM links WHERE target = ? AND spotify_id IN ({marks})",
+            [target, *chunk],
+        )
+    if ids:
+        conn.commit()
+
+
 def get_state(conn, pair, target):
     return conn.execute(
         "SELECT snapshot_id, target_count FROM sync_state WHERE pair = ? AND target = ?", (pair, target)

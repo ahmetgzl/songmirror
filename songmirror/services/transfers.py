@@ -16,7 +16,7 @@ from ..engine.logs import log_add, log_miss, log_warn
 from ..engine.matching import spotify_track_keys, track_key, tracks_oldest_first
 from ..engine.runner import load_cache, save_cache
 from ..engine.targets import build_one, is_peer
-from ..engine.targets.base import TargetAuthError, _normalize
+from ..engine.targets.base import TargetAuthError, _normalize, _split_add_results
 
 
 def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, on_progress=None, should_continue=None):
@@ -91,7 +91,7 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, on_prog
                 except Exception:
                     tid = None
             if tid:
-                additions.append(tid)
+                additions.append((tid, norm))
                 seen |= keys
                 log_add(f"{norm['name']} - {norm['artist']}", dry=not execute, tag="transfer")
             else:
@@ -104,7 +104,16 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, on_prog
     deferred = max(0, len(additions) - max_adds)
     additions = additions[:max_adds]
     if execute and additions:
-        dest.add(dest_pl, additions)
+        result = dest.add(dest_pl, [target_id for target_id, _norm in additions])
+        additions, rejected = _split_add_results(additions, result, lambda item: item[0])
+        for _target_id, norm in rejected:
+            not_found.append({"name": norm["name"], "artist": norm["artist"],
+                              "key": track_key(norm["name"], norm["artist"])})
+            log_warn(
+                f"{getattr(dest, 'name', dest.source)} rejected its catalog match for "
+                f"{norm['name']} - {norm['artist']}; moved it to Needs review and continued",
+                tag="transfer",
+            )
     return {
         "added": len(additions),
         "deferred": deferred,

@@ -792,6 +792,47 @@ def test_reconcile_stops_ordered_adds_at_a_transient_resolution_error(tmp_path):
     conn.close()
 
 
+def test_reconcile_counts_only_provider_confirmed_adds(tmp_path):
+    class RejectingPeer(_P):
+        def add(self, playlist, ids):
+            self.requested = list(ids)
+            confirmed = [target_id for target_id in ids if not target_id.endswith("-B")]
+            for target_id in confirmed:
+                isrc = target_id.split("-", 1)[1]
+                self.added.append(isrc)
+                self._isrcs.append(isrc)
+            return confirmed
+
+    conn = archive.connect(str(tmp_path / "provider-rejection-nway.db"))
+    archive.set_links(conn, "apple", {"spotify-B": "apple-B"})
+    for source in ("spotify", "apple"):
+        archive.set_playlist_state(conn, "mix", source, set())
+    spotify = _P("spotify", ["A", "B", "C"])
+    apple = RejectingPeer("apple", [])
+
+    stats = reconcile(
+        [spotify, apple],
+        "Mix",
+        {"spotify": {"id": "s"}, "apple": {"id": "a"}},
+        _caches("spotify", "apple"),
+        conn,
+        execute=True,
+        max_removals=0,
+        max_adds=200,
+    )
+
+    assert apple.requested == ["apple-A", "apple-B", "apple-C"]
+    assert apple.added == ["A", "C"]
+    assert stats["added"] == 2
+    assert stats["missing"] == 1
+    assert stats["clean"] is False
+    assert archive.get_links(conn, "apple", ["spotify-A", "spotify-B", "spotify-C"]) == {
+        "spotify-A": "apple-A",
+        "spotify-C": "apple-C",
+    }
+    conn.close()
+
+
 def test_nonempty_pagination_collapse_never_plans_mass_removal(tmp_path):
     # A truncated provider read is often non-empty (for example 55 -> 5), so the
     # collapse guard must not only protect the zero-track case.

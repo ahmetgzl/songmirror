@@ -10,6 +10,7 @@ all live here once.
 """
 
 import time
+from collections import Counter
 
 from .. import archive
 from ..logs import (
@@ -154,7 +155,12 @@ class MirrorTarget:
         return target_id, "link"
 
     def add(self, playlist, target_ids):
-        """Append target_ids IN ORDER, one request per id (never batch)."""
+        """Append target_ids IN ORDER, one request per id (never batch).
+
+        Return ``None`` when every requested id was written. A provider that
+        can prove and quarantine a permanent per-track rejection may instead
+        return the requested ids that were actually written, in order.
+        """
         raise NotImplementedError
 
     def added_id(self, target_id):
@@ -181,6 +187,27 @@ class MirrorTarget:
         the library song, taking every copy with it)."""
         for _, raw in positioned:
             self.remove(playlist, raw)
+
+
+def _split_add_results(additions, result, id_at):
+    """Partition queued rows using an optional provider add-result sequence.
+
+    ``None`` is the long-standing all-succeeded contract. A concrete sequence
+    is a multiset of requested ids confirmed by a provider that deliberately
+    skipped a proven permanent rejection.
+    """
+    if result is None:
+        return list(additions), []
+    confirmed_counts = Counter(str(target_id) for target_id in result)
+    confirmed, rejected = [], []
+    for addition in additions:
+        key = str(id_at(addition))
+        if confirmed_counts[key] > 0:
+            confirmed.append(addition)
+            confirmed_counts[key] -= 1
+        else:
+            rejected.append(addition)
+    return confirmed, rejected
 
 
 def held_removals(target_name, playlist, tracks, max_removals, reason=None, *,
@@ -302,6 +329,7 @@ def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, e
     # Resolve additions to target ids, preserving the oldest-first order.
     present = {target.track_id(t) for t in tgt_tracks if target.track_id(t)}
     additions, not_found, new_links, methods = [], [], {}, {}
+    rejected_link_ids = set()
     stopped_early = False
     deferred = 0
     for i, track in enumerate(to_add, 1):
@@ -345,7 +373,7 @@ def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, e
             new_links[track["id"]] = tid
         if tid not in present:
             method = method or "search"
-            additions.append((tid, label, method))
+            additions.append((tid, label, method, track))
             present.add(tid)
             methods[method] = methods.get(method, 0) + 1
     # A provider miss can be provisional (catalog throttling, regional indexing,
@@ -379,15 +407,6 @@ def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, e
             held_back = held_removals(target.name, name, removals, max_removals)
             removals_skipped, removals, guard = len(removals), [], True
 
-    for _, label, method in additions:
-        log_add(f"{label}  {paint('(' + method + ')', 'grey')}", dry=not execute, tag=tag)
-    for track in removals:
-        log_remove(f"{track['name']} - {track['artist']}", dry=not execute, tag=tag)
-    for track in held:
-        log_hold(f"kept (no {target.name} match for its Spotify twin): {track['name']} - {track['artist']}", tag=tag)
-    for track in not_found:
-        log_miss(f"not on {target.name}: {track['name']} - {', '.join(track['artists'])}", tag=tag)
-
     if execute:
         if additions or removals:
             # Invalidate before the first provider write: a batched/ordered add
@@ -401,9 +420,48 @@ def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, e
                     songs, target.source, playlist_id
                 )
         if additions:
-            target.add(tgt_playlist, [tid for tid, _, _ in additions])
+            result = target.add(tgt_playlist, [tid for tid, _, _, _ in additions])
+            additions, rejected = _split_add_results(additions, result, lambda item: item[0])
+            if rejected:
+                rejected_tracks = [track for _tid, _label, _method, track in rejected]
+                rejected_target_ids = {str(tid) for tid, _label, _method, _track in rejected}
+                rejected_source_ids = {
+                    source_id for source_id, target_id in new_links.items()
+                    if str(target_id) in rejected_target_ids
+                }
+                rejected_track_ids = {
+                    track.get("id") for track in rejected_tracks if track.get("id")
+                }
+                not_found.extend(rejected_tracks)
+                not_found.extend(
+                    track for track in to_add
+                    if track.get("id") in rejected_source_ids
+                    and track.get("id") not in rejected_track_ids
+                )
+                guard = True
+                for source_id in rejected_source_ids:
+                    new_links.pop(source_id, None)
+                    rejected_link_ids.add(source_id)
+                if removals:
+                    held.extend(removals)
+                    removals = []
+                methods = {}
+                for _tid, _label, method, _track in additions:
+                    methods[method] = methods.get(method, 0) + 1
+
+    for _, label, method, _track in additions:
+        log_add(f"{label}  {paint('(' + method + ')', 'grey')}", dry=not execute, tag=tag)
+    for track in removals:
+        log_remove(f"{track['name']} - {track['artist']}", dry=not execute, tag=tag)
+    for track in held:
+        log_hold(f"kept (no {target.name} match for its Spotify twin): {track['name']} - {track['artist']}", tag=tag)
+    for track in not_found:
+        log_miss(f"not on {target.name}: {track['name']} - {', '.join(track['artists'])}", tag=tag)
+
+    if execute:
         if source_key == "spotify":
             actual_id = getattr(target, "added_id", lambda target_id: target_id)
+            archive.delete_links(songs, target.source, rejected_link_ids)
             archive.set_links(
                 songs,
                 target.source,
@@ -1061,6 +1119,7 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
         )
     interrupted = False       # a Pause/Stop mid-pass -> freeze the baseline too (partial advance is unsafe)
     new_links = {p.source: {} for p in peers}
+    rejected_link_ids = {p.source: set() for p in peers}
     new_state = {}   # source -> canonical membership to persist (only when the baseline is safe)
     applied_removals = {}  # source -> canonical ids this pass itself removed successfully
     for p in peers:
@@ -1175,6 +1234,20 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
                      f"deferring {cap_deferred}", tag=p.tag)
             additions = additions[:max_adds]
             add_blockers.add("replacement additions exceeded the add cap")
+        if execute and additions:
+            result = p.add(
+                playlists[p.source],
+                [target_id for _cid, target_id, _method, _norm in additions],
+            )
+            additions, rejected = _split_add_results(additions, result, lambda item: item[1])
+            if rejected:
+                rejected_norms = [norm for _cid, _tid, _method, norm in rejected]
+                not_found.extend(rejected_norms)
+                add_blockers.add("the provider rejected one or more catalog matches")
+                rejected_link_ids[p.source].update(
+                    norm["_raw"]["id"] for norm in rejected_norms
+                    if norm["_source"] == "spotify" and norm["_raw"].get("id")
+                )
         for _, tid, _, norm in additions:
             if norm["_source"] == "spotify" and norm["_raw"].get("id"):
                 new_links[p.source][norm["_raw"]["id"]] = tid
@@ -1316,8 +1389,6 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
             log_miss(f"not on {p.name}: {norm['name']} - {', '.join(norm['artists'])}", tag=p.tag)
 
         if execute:
-            if additions:
-                p.add(playlists[p.source], [tid for _, tid, _, _ in additions])
             for norm in safe:
                 p.remove(playlists[p.source], norm["_raw"])
             if removed_cids:
@@ -1337,6 +1408,7 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
 
     if execute:
         for p in peers:
+            archive.delete_links(songs, p.source, rejected_link_ids[p.source])
             archive.set_links(songs, p.source, new_links[p.source])
         # Advance every baseline when reads were trusted and no membership
         # change was held. When additions are incomplete or a removal is capped,
