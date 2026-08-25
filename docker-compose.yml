@@ -2,6 +2,9 @@ name: songmirror   # compose project (group) name
 
 services:
   web:
+    # Pull the official image by default; `docker compose up --build` still
+    # builds this checkout locally and tags it with the same image name.
+    image: "${SONGMIRROR_IMAGE:-ghcr.io/ahnafnafee/songmirror:latest}"
     build: .
     container_name: songmirror
     # A .env is OPTIONAL — every service is configured in the browser and saved

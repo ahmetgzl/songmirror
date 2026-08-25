@@ -133,7 +133,7 @@ SongMirror keeps your playlists identical everywhere without manual re-adding, o
 
 ## 🚀 Quick Start
 
-The fastest way to run it is Docker — the container serves the web UI and runs your syncs on schedule.
+The fastest way to run it is Docker — Compose pulls the published image, serves the web UI, and runs your syncs on schedule.
 
 ```bash
 git clone https://github.com/ahnafnafee/songmirror.git
@@ -160,13 +160,15 @@ uv run uvicorn songmirror.web:app --host 0.0.0.0 --port 8080   # then open http:
 
 ## 🐳 Always running: Docker
 
-The Docker container is the recommended deployment: it serves the web UI, runs your syncs on their schedules, and restarts with the host. It runs as **`songmirror`** and persists all auth + caches in `./data`.
+The Docker container is the recommended deployment: it serves the web UI, runs your syncs on their schedules, and restarts with the host. Compose pulls **`ghcr.io/ahnafnafee/songmirror:latest`**, runs it as **`songmirror`**, and persists all auth + caches in `./data`.
 
 ```bash
-docker compose up -d --build     # build + start in the background
+docker compose up -d             # pull the published image + start in the background
 # open http://<host>:8888 and connect your services + create syncs in the browser
 docker compose logs -f           # watch it work
 ```
+
+To update, run `docker compose up -d --pull always`. To build the current checkout instead, run `docker compose up -d --build`. See the **[container image guide](docs/docker-image.md)** for tags, digest pinning, direct pulls, verification, updates, and rollback.
 
 **No `.env` is needed to start** — everything is configured in the browser and saved under `./data`. OAuth, partner-token, and API-key setup all live on the Accounts page; each wizard explains the service-specific prerequisites and exact callback URI. Then build your syncs on the Sync page.
 
@@ -183,6 +185,7 @@ SongMirror will then advertise `https://music.example.com/oauth/spotify/callback
 
 | | |
 | --- | --- |
+| **Image** | `ghcr.io/ahnafnafee/songmirror:latest` supports AMD64 and ARM64. Each build is also published with a commit-specific `sha-...` tag; Git tags such as `v1.2.3` additionally publish `1.2.3`, `1.2`, and `1`. Use the [container image guide](docs/docker-image.md) to pin an immutable digest. |
 | **Port** | The UI is published on host **8888** (the `8888:8080` mapping in `docker-compose.yml`; change the host side if it clashes). **LAN-only** — don't port-forward it to the internet; the UI has no login yet. |
 | **Persistence** | `./data` holds credentials, tokens, caches, and the song archive. Back it up to keep your setup across rebuilds. |
 | **Downloads** | Set `DOWNLOAD_DIR` (in `.env` or your shell) to your host music dir (e.g. `F:\Torrent\Music`); compose bind-mounts it to `/music`. From Docker, set `JELLYFIN_URL` to `http://host.docker.internal:8096`. |
@@ -480,7 +483,7 @@ This project is [MIT](./LICENSE) licensed.
 [python-shield]: https://img.shields.io/badge/python-3.13%2B-F2601A?labelColor=black&logo=python&logoColor=white&style=flat-square
 [python-link]: https://www.python.org/
 [docker-shield]: https://img.shields.io/badge/docker-ready-F2601A?labelColor=black&logo=docker&logoColor=white&style=flat-square
-[docker-link]: https://github.com/ahnafnafee/songmirror/blob/main/docker-compose.yml
+[docker-link]: https://github.com/ahnafnafee/songmirror/pkgs/container/songmirror
 [stars-shield]: https://img.shields.io/github/stars/ahnafnafee/songmirror?color=F2601A&labelColor=black&logo=github&logoColor=white&style=flat-square
 [stars-link]: https://github.com/ahnafnafee/songmirror/stargazers
 [forks-shield]: https://img.shields.io/github/forks/ahnafnafee/songmirror?color=F2601A&labelColor=black&logo=github&logoColor=white&style=flat-square
