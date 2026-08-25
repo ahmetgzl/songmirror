@@ -41,6 +41,23 @@ def _headers():
     }
 
 
+def _normalized_playlist_track(track):
+    attrs = track.get("attributes", {})
+    play_params = attrs.get("playParams", {})
+    artwork = attrs.get("artwork") or {}
+    image = str(artwork.get("url") or "").replace("{w}", "128").replace("{h}", "128")
+    return {
+        "relationship_id": track.get("id"),
+        "catalog_id": play_params.get("catalogId") or play_params.get("id"),
+        "name": attrs.get("name", ""),
+        "artist": attrs.get("artistName", ""),
+        "album": attrs.get("albumName"),
+        "duration_ms": attrs.get("durationInMillis"),
+        "added_at": attrs.get("dateAdded") or "",
+        "image": image,
+    }
+
+
 class AppleMusicTarget(MirrorTarget):
     name = "Apple Music"
     tag = "apple"
@@ -162,6 +179,49 @@ class AppleMusicTarget(MirrorTarget):
         r = self._request("POST", f"{AMP}/me/library/playlists", json_body={"attributes": attributes})
         return r.json()["data"][0]
 
+    @staticmethod
+    def playlist_page_reference(playlist_id, expected_count=None):
+        return {
+            "id": str(playlist_id),
+            "attributes": {
+                "name": "",
+                "description": {},
+                "canEdit": True,
+            },
+            "_page_count": expected_count,
+        }
+
+    def playlist_tracks_page(self, playlist, cursor=None):
+        try:
+            offset = 0 if cursor is None else int(cursor)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Apple Music playlist cursor is not a valid offset") from exc
+        if offset < 0:
+            raise RuntimeError("Apple Music playlist cursor is not a valid offset")
+
+        response = self._request(
+            "GET",
+            f"{AMP}/me/library/playlists/{playlist['id']}/tracks",
+            params={"limit": 20, "offset": offset},
+            ok404=True,
+        )
+        if response is None:
+            if offset:
+                raise RuntimeError("Apple Music playlist read incomplete: a later page returned 404")
+            playlist["_page_count"] = 0
+            return [], None
+        data = response.json()
+        rows = data.get("data") or []
+        total = (data.get("meta") or {}).get("total")
+        if total is not None:
+            playlist["_page_count"] = int(total)
+        if data.get("next") and not rows:
+            raise RuntimeError(
+                "Apple Music playlist read incomplete: next page was advertised but no rows were returned"
+            )
+        next_cursor = str(offset + len(rows)) if data.get("next") else None
+        return [_normalized_playlist_track(track) for track in rows], next_cursor
+
     def playlist_tracks(self, playlist):
         tracks, offset = [], 0
         while True:
@@ -175,21 +235,7 @@ class AppleMusicTarget(MirrorTarget):
                 return tracks
             data = r.json()
             rows = data.get("data") or []
-            for t in rows:
-                attrs = t.get("attributes", {})
-                pp = attrs.get("playParams", {})
-                artwork = attrs.get("artwork") or {}
-                image = str(artwork.get("url") or "").replace("{w}", "128").replace("{h}", "128")
-                tracks.append({
-                    "relationship_id": t.get("id"),
-                    "catalog_id": pp.get("catalogId") or pp.get("id"),
-                    "name": attrs.get("name", ""),
-                    "artist": attrs.get("artistName", ""),
-                    "album": attrs.get("albumName"),
-                    "duration_ms": attrs.get("durationInMillis"),
-                    "added_at": attrs.get("dateAdded") or "",
-                    "image": image,
-                })
+            tracks.extend(_normalized_playlist_track(track) for track in rows)
             if not data.get("next"):
                 return tracks
             if not rows:
@@ -205,6 +251,8 @@ class AppleMusicTarget(MirrorTarget):
         # Library-playlist attributes carry no trackCount, so read it from the
         # tracks endpoint's meta.total (one light limit=1 call). Cached against
         # the playlist's lastModifiedDate so it's recomputed only when it changes.
+        if playlist.get("_page_count") is not None:
+            return int(playlist["_page_count"])
         pid = playlist.get("id")
         mod = playlist.get("attributes", {}).get("lastModifiedDate")
         hit = _COUNT_CACHE.get(pid)

@@ -788,6 +788,13 @@ async function main() {
       const context = await browser.newContext()
       await context.addInitScript(() => window.localStorage.setItem('songmirror-theme', 'dark'))
       const page = await context.newPage()
+      const spotifyDetailRequests = []
+      page.on('request', (request) => {
+        const url = new URL(request.url())
+        if (url.pathname === '/api/playlists/spotify/pl_spotify_1') {
+          spotifyDetailRequests.push(Object.fromEntries(url.searchParams))
+        }
+      })
       await installMocks(page)
       await page.route('**/api/accounts', async (route) => {
         await route.fulfill({
@@ -808,6 +815,10 @@ async function main() {
       const secondLatest = await dialog.locator('ol > li').nth(1).textContent()
       const firstPageRows = await dialog.locator('ol > li').count()
       const firstPageCovers = await dialog.locator('ol > li img').count()
+      const progressiveRequestOk = spotifyDetailRequests.length === 1
+        && spotifyDetailRequests[0].page_size === '20'
+      console.log(`${progressiveRequestOk ? 'ok        ' : 'FAIL      '} Spotify playlist detail opts into progressive provider pages`)
+      if (!progressiveRequestOk) results.push({ label: 'Spotify progressive playlist request', overflow: true })
       const latestOk = firstLatest?.includes('Track 117')
         && secondLatest?.includes('Track 118')
         && firstPageRows === 50

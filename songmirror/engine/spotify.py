@@ -263,6 +263,32 @@ def playlist_item_track(item):
     return track
 
 
+def _playlist_item_tracks(items):
+    tracks = []
+    for item in items:
+        track = playlist_item_track(item)
+        if not track:
+            continue
+        artists = [a.get("name", "") for a in track.get("artists", []) if a.get("name")]
+        album = track.get("album") or {}
+        images = [image for image in album.get("images") or [] if image and image.get("url")]
+        image = min(
+            images,
+            key=lambda candidate: abs(int(candidate.get("width") or 96) - 96),
+        )["url"] if images else ""
+        tracks.append({
+            "id": track.get("id"),
+            "isrc": (track.get("external_ids") or {}).get("isrc"),
+            "name": track.get("name", ""),
+            "artists": artists or [""],
+            "album": album.get("name"),
+            "duration_ms": track.get("duration_ms"),
+            "added_at": item.get("added_at") or "",
+            "image": image,
+        })
+    return tracks
+
+
 def _playlist_tracks_api(sp, playlist_id):
     tracks = []
     results = _retry(
@@ -270,30 +296,60 @@ def _playlist_tracks_api(sp, playlist_id):
         "playlist_items",
     )
     while results:
-        for item in results.get("items", []):
-            track = playlist_item_track(item)
-            if not track:
-                continue
-            artists = [a.get("name", "") for a in track.get("artists", []) if a.get("name")]
-            album = track.get("album") or {}
-            images = [image for image in album.get("images") or [] if image and image.get("url")]
-            image = min(
-                images,
-                key=lambda candidate: abs(int(candidate.get("width") or 96) - 96),
-            )["url"] if images else ""
-            tracks.append({
-                "id": track.get("id"),
-                "isrc": (track.get("external_ids") or {}).get("isrc"),
-                "name": track.get("name", ""),
-                "artists": artists or [""],
-                "album": album.get("name"),
-                "duration_ms": track.get("duration_ms"),
-                "added_at": item.get("added_at") or "",
-                "image": image,
-            })
+        tracks.extend(_playlist_item_tracks(results.get("items", [])))
         page = results
         results = _retry(lambda: sp.next(page), "tracks page") if results.get("next") else None
     return tracks
+
+
+def _playlist_page_offset(cursor):
+    if cursor is None:
+        return 0
+    try:
+        offset = int(cursor)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Spotify playlist cursor is not a valid offset") from exc
+    if offset < 0:
+        raise RuntimeError("Spotify playlist cursor is not a valid offset")
+    return offset
+
+
+def playlist_tracks_page(sp, playlist_id, cursor=None):
+    """Read one 20-entry Web API page for the progressive playlist UI."""
+    offset = _playlist_page_offset(cursor)
+    try:
+        results = _retry(
+            lambda: sp.playlist_items(
+                playlist_id,
+                market="from_token",
+                additional_types=("track",),
+                limit=20,
+                offset=offset,
+            ),
+            "playlist_items",
+        )
+    except spotipy.SpotifyException as exc:
+        # Development-mode apps cannot read followed playlists. The scraper has
+        # no offset primitive, so only a first-page rejection can safely fall
+        # back to its complete read without appending duplicates.
+        if cursor is None and exc.http_status == 403 and spotify_web.enabled():
+            log_note(f"{playlist_id}: official read forbidden (403); trying web-player fallback", tag="spotify")
+            try:
+                tracks = spotify_web.playlist_tracks(playlist_id)
+                log_note(f"{playlist_id}: web-player fallback read {len(tracks)} tracks", tag="spotify")
+                return tracks, None
+            except Exception as web_exc:
+                log_warn(f"{playlist_id}: web-player fallback failed ({web_exc!r})", tag="spotify")
+                raise exc
+        raise
+
+    items = results.get("items") or []
+    if results.get("next") and not items:
+        raise RuntimeError(
+            f"Spotify playlist read incomplete: stopped at {offset} with another page advertised"
+        )
+    next_cursor = str(offset + len(items)) if results.get("next") else None
+    return _playlist_item_tracks(items), next_cursor
 
 
 def playlist_tracks(sp, playlist_id):

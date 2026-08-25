@@ -4,16 +4,16 @@ import useSWR from 'swr'
 import { api, errorMessage } from '@/api'
 import type { ProviderPlaylistDetail } from '@/types'
 
-const TIDAL_PAGE_SIZE = 20 as const
+const PROGRESSIVE_PAGE_SIZE = 20 as const
 
-/** On-demand playlist contents. Cached reads remain immediate; uncached TIDAL
- * reads reveal the first provider page and append later cursor pages in place. */
+/** On-demand playlist contents. Cached reads remain immediate; uncached reads
+ * reveal the first provider page and append later cursor pages in place. */
 export function usePlaylistDetail(
   provider: string | null,
   playlistId: string | null,
   expectedCount?: number | null,
 ) {
-  const paged = provider === 'tidal'
+  const paged = provider !== null && provider !== 'jellyfin'
   const key = provider && playlistId
     ? ['playlist-detail', provider, playlistId, expectedCount]
     : null
@@ -21,7 +21,7 @@ export function usePlaylistDetail(
     key,
     () => api.getPlaylistDetail(provider as string, playlistId as string, {
       expectedCount,
-      pageSize: paged ? TIDAL_PAGE_SIZE : undefined,
+      pageSize: paged ? PROGRESSIVE_PAGE_SIZE : undefined,
     }),
     {
       revalidateOnFocus: false,
@@ -59,19 +59,24 @@ export function usePlaylistDetail(
       const seen = new Set<string>()
 
       while (cursor && generation.current === currentGeneration) {
-        if (seen.has(cursor)) throw new Error('TIDAL returned a repeated playlist cursor')
+        if (seen.has(cursor)) throw new Error('The provider returned a repeated playlist cursor')
         seen.add(cursor)
         const page = await api.getPlaylistDetail(provider, playlistId, {
           expectedCount,
-          pageSize: TIDAL_PAGE_SIZE,
+          pageSize: PROGRESSIVE_PAGE_SIZE,
           cursor,
           offset: combined.tracks.length,
         })
         if (generation.current !== currentGeneration) return
+        const tracks = [...combined.tracks, ...page.tracks]
         combined = {
           ...combined,
-          count: page.count ?? combined.count,
-          tracks: [...combined.tracks, ...page.tracks],
+          // A continuation built from a minimal provider reference may not
+          // know the catalog total. Never let its partial count shrink the
+          // authoritative first-page total; unknown totals can still grow as
+          // pages arrive.
+          count: Math.max(combined.count ?? 0, page.count ?? 0, tracks.length),
+          tracks,
           next_cursor: page.next_cursor,
           complete: page.complete,
         }
@@ -101,7 +106,7 @@ export function usePlaylistDetail(
       const refreshed = await api.getPlaylistDetail(provider as string, playlistId as string, {
         refresh: true,
         expectedCount,
-        pageSize: paged ? TIDAL_PAGE_SIZE : undefined,
+        pageSize: paged ? PROGRESSIVE_PAGE_SIZE : undefined,
       })
       if (generation.current === currentGeneration) {
         await mutate(refreshed, { revalidate: false })

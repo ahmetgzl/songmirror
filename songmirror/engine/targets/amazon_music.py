@@ -355,6 +355,72 @@ class AmazonMusicTarget(MirrorTarget):
                     details[str(track["id"])] = track
         return details
 
+    @staticmethod
+    def playlist_page_reference(playlist_id, expected_count=None):
+        return {
+            "id": str(playlist_id),
+            "title": "",
+            "description": "",
+            "trackCount": expected_count,
+        }
+
+    @staticmethod
+    def _playlist_edges_tracks(edges, details=None):
+        if any((edge.get("node") or {}).get("id") is None for edge in edges):
+            raise RuntimeError(
+                "Amazon Music playlist read incomplete: a relationship entry has no track id"
+            )
+        details = details or {}
+        tracks = []
+        for edge in edges:
+            node = edge.get("node") or {}
+            track_id = str(node["id"])
+            cursor_value = str(edge.get("cursor") or "")
+            entry_id = edge.get("itemId")
+            if not entry_id:
+                entry_id = cursor_value.split(":", 1)[1] if ":" in cursor_value else cursor_value or None
+            tracks.append(_normalized_track({**node, **details.get(track_id, {})}, entry_id))
+        return tracks
+
+    def playlist_tracks_page(self, playlist, cursor=None):
+        if getattr(self, "_web", None) is not None:
+            data = self._graphql(
+                "SongMirrorAmazonPlaylistTracks",
+                WEB_PLAYLIST_TRACKS_QUERY,
+                {"id": str(playlist["id"]), "cursor": cursor, "limit": 20},
+            )
+            connection = (((data.get("playlist") or {}).get("tracks")) or {})
+            edges = connection.get("edges") or []
+            next_cursor = _next_cursor(
+                connection.get("pageInfo") or {},
+                cursor,
+                "playlist track",
+            )
+            if next_cursor is not None and not edges:
+                raise RuntimeError(
+                    "Amazon Music playlist read incomplete: an empty page advertised more tracks"
+                )
+            return self._playlist_edges_tracks(edges), next_cursor
+
+        params = {"limit": 20}
+        if cursor:
+            params["cursor"] = cursor
+        body = self._request("GET", f"playlists/{playlist['id']}/tracks", params=params)
+        connection = self._connection(body, "data", "playlist", "tracks")
+        edges = connection.get("edges") or []
+        next_cursor = _next_cursor(
+            connection.get("pageInfo") or {},
+            cursor,
+            "playlist track",
+        )
+        if next_cursor is not None and not edges:
+            raise RuntimeError(
+                "Amazon Music playlist read incomplete: an empty page advertised more tracks"
+            )
+        ids = [str((edge.get("node") or {}).get("id")) for edge in edges
+               if (edge.get("node") or {}).get("id") is not None]
+        return self._playlist_edges_tracks(edges, self._track_details(ids)), next_cursor
+
     def playlist_tracks(self, playlist):
         if getattr(self, "_web", None) is not None:
             tracks, cursor = [], None

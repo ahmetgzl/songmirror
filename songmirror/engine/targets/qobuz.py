@@ -158,6 +158,52 @@ class QobuzTarget(MirrorTarget):
         polite_sleep(0.4)
         return playlist
 
+    @staticmethod
+    def playlist_page_reference(playlist_id, expected_count=None):
+        return {
+            "id": str(playlist_id),
+            "name": "",
+            "description": "",
+            "tracks_count": expected_count,
+        }
+
+    def playlist_tracks_page(self, playlist, cursor=None):
+        try:
+            offset = 0 if cursor is None else int(cursor)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Qobuz playlist cursor is not a valid offset") from exc
+        if offset < 0:
+            raise RuntimeError("Qobuz playlist cursor is not a valid offset")
+
+        body = self._request(
+            "GET",
+            "playlist/get",
+            params={
+                "playlist_id": playlist["id"],
+                "extra": "tracks",
+                "limit": 20,
+                "offset": offset,
+            },
+        )
+        container = body.get("tracks") or {}
+        items = container.get("items") or []
+        if any(track.get("id") is None for track in items):
+            raise RuntimeError(
+                "Qobuz playlist read incomplete: a playlist item is missing its track id"
+            )
+        next_offset = offset + len(items)
+        total = container.get("total")
+        if total is not None:
+            total = int(total)
+            if not items and next_offset < total:
+                raise RuntimeError(
+                    f"Qobuz playlist read incomplete: stopped at {offset} of {total} tracks"
+                )
+            next_cursor = str(next_offset) if next_offset < total else None
+        else:
+            next_cursor = str(next_offset) if len(items) == 20 else None
+        return [_normalized_track(track) for track in items], next_cursor
+
     def playlist_tracks(self, playlist):
         tracks, offset = [], 0
         while True:
