@@ -45,6 +45,48 @@ def test_transfer_copies_matches_skips_dupes_reports_conflicts():
     # "Dup" already exists on the destination (same track_key) -> skipped, not re-added
 
 
+def test_transfer_reports_a_provider_rejected_match_and_keeps_copying():
+    written = []
+
+    class _Source:
+        source = "spotify"
+
+        def playlist_tracks(self, playlist):
+            return [
+                {"id": "blocked", "name": "Blocked", "artists": ["Artist"],
+                 "duration_ms": 1000, "isrc": "I1", "added_at": "2020"},
+                {"id": "later", "name": "Later", "artists": ["Artist"],
+                 "duration_ms": 1000, "isrc": "I2", "added_at": "2021"},
+            ]
+
+    class _Destination:
+        source = "apple"
+
+        def playlist_tracks(self, playlist):
+            return []
+
+        def resolve(self, track, cache):
+            return f"dest-{track['name'].casefold()}", "search"
+
+        def add(self, playlist, ids):
+            written.append("dest-later")
+            return ["dest-later"]
+
+    result = transfer(
+        _Source(),
+        _Destination(),
+        {"id": "source"},
+        {"id": "destination"},
+        {"search": {}, "isrc": {}, "dirty": False},
+        execute=True,
+        max_adds=100,
+    )
+
+    assert written == ["dest-later"]
+    assert result["added"] == 1
+    assert [conflict["name"] for conflict in result["not_found"]] == ["Blocked"]
+
+
 def test_transfer_skips_unavailable_tidal_entries_without_aborting():
     added = []
     progress = []

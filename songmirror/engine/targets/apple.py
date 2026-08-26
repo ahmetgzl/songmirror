@@ -545,14 +545,21 @@ class AppleMusicTarget(MirrorTarget):
             return float(fallback)
 
     @staticmethod
-    def _error_detail(exc):
-        """A short credential-free Apple error description for diagnostics."""
+    def _error_payload(exc):
         response = getattr(exc, "response", None)
         if response is None:
-            return ""
+            return {}
         try:
             error = (response.json().get("errors") or [])[0]
         except (AttributeError, IndexError, TypeError, ValueError):
+            return {}
+        return error if isinstance(error, dict) else {}
+
+    @classmethod
+    def _error_detail(cls, exc):
+        """A short credential-free Apple error description for diagnostics."""
+        error = cls._error_payload(exc)
+        if not error:
             return ""
         code = error.get("code")
         message = " — ".join(
@@ -562,6 +569,17 @@ class AppleMusicTarget(MirrorTarget):
         if code:
             return f" (code {code})"
         return f" ({message})" if message else ""
+
+    @classmethod
+    def _is_unwritable_track_error(cls, exc):
+        """The track-specific 500 Apple uses for a catalog id it cannot add."""
+        if cls._error_status(exc) != 500:
+            return False
+        error = cls._error_payload(exc)
+        message = " ".join(
+            str(part) for part in (error.get("title"), error.get("detail")) if part
+        ).casefold()
+        return str(error.get("code") or "") == "50001" and "unable to update tracks" in message
 
     def _wait_for_write_window(self):
         deadline = getattr(self, "_write_not_before", 0.0)
@@ -591,23 +609,7 @@ class AppleMusicTarget(MirrorTarget):
             # especially important for fuzzy public-search hits: the next pass
             # must search again under the current stricter recording-version
             # rules instead of retrying a bad mapping forever.
-            isrc = track.get("isrc") or ""
-            candidates = cache.get("isrc", {}).get(isrc, [])
-            if candidates:
-                survivors = [
-                    candidate for candidate in candidates
-                    if str(candidate.get("id")) != str(catalog_id)
-                ]
-                if survivors:
-                    cache["isrc"][isrc] = survivors
-                else:
-                    cache["isrc"].pop(isrc, None)
-            search = cache.setdefault("search", {})
-            for key, value in list(search.items()):
-                if str(value) == str(catalog_id):
-                    del search[key]
-            cache["dirty"] = True
-            self._resolved_catalog_context.pop(str(catalog_id), None)
+            self._evict_catalog_id(catalog_id)
             return None
 
         replacement = str(replacement)
@@ -620,8 +622,33 @@ class AppleMusicTarget(MirrorTarget):
             f"{track.get('name', '')}|{primary}".casefold()
         ] = replacement
         cache["dirty"] = True
+        self._resolved_catalog_context.pop(str(catalog_id), None)
         self._resolved_catalog_context[replacement] = (track, cache)
         return replacement
+
+    def _evict_catalog_id(self, catalog_id):
+        """Remove one rejected catalog id from every resolution cache."""
+        context = getattr(self, "_resolved_catalog_context", {}).get(str(catalog_id))
+        if not context:
+            return
+        track, cache = context
+        isrc = track.get("isrc") or ""
+        candidates = cache.get("isrc", {}).get(isrc, [])
+        if candidates:
+            survivors = [
+                candidate for candidate in candidates
+                if str(candidate.get("id")) != str(catalog_id)
+            ]
+            if survivors:
+                cache["isrc"][isrc] = survivors
+            else:
+                cache["isrc"].pop(isrc, None)
+        search = cache.setdefault("search", {})
+        for key, value in list(search.items()):
+            if str(value) == str(catalog_id):
+                del search[key]
+        cache["dirty"] = True
+        self._resolved_catalog_context.pop(str(catalog_id), None)
 
     def _verify_add_landed(self, playlist, catalog_id, before_count):
         """True/False when a post-error read proves the outcome, None if reads fail.
@@ -648,6 +675,16 @@ class AppleMusicTarget(MirrorTarget):
             if check < 2:
                 time.sleep(1 + check)
         return False
+
+    def _catalog_track_label(self, catalog_id):
+        context = getattr(self, "_resolved_catalog_context", {}).get(str(catalog_id))
+        if not context:
+            return f"catalog id {catalog_id}"
+        track, _cache = context
+        name = (track.get("name") or "").strip()
+        artists = [artist for artist in (track.get("artists") or []) if artist]
+        credit = f" by {', '.join(artists)}" if artists else ""
+        return f"'{name}'{credit} (catalog id {catalog_id})" if name else f"catalog id {catalog_id}"
 
     def _add_one(self, playlist, catalog_id, before_count):
         url = f"{AMP}/me/library/playlists/{playlist['id']}/tracks"
@@ -712,6 +749,7 @@ class AppleMusicTarget(MirrorTarget):
                         f"Apple add {catalog_id} had an ambiguous outcome and the playlist "
                         "could not be verified; stopping this ordered queue until the next pass"
                     ) from e
+                track_label = self._catalog_track_label(catalog_id)
                 if not repaired:
                     replacement = self._repair_catalog_id(catalog_id)
                     repaired = True
@@ -723,6 +761,14 @@ class AppleMusicTarget(MirrorTarget):
                         catalog_id = replacement
                         before_count = 0
                         continue
+                if self._is_unwritable_track_error(e):
+                    self._evict_catalog_id(catalog_id)
+                    log_warn(
+                        f"Apple cannot add {track_label}; "
+                        "quarantining this catalog match and continuing with later tracks",
+                        tag=self.tag,
+                    )
+                    return None
 
         raise RuntimeError(
             f"Apple kept rejecting add {catalog_id} after 6 attempts; "
@@ -736,14 +782,19 @@ class AppleMusicTarget(MirrorTarget):
         confirmed_counts = {}
         added_catalog_ids = getattr(self, "_added_catalog_ids", {})
         self._added_catalog_ids = added_catalog_ids
+        added_requested_ids = []
         for catalog_id in target_ids:
             requested_id = catalog_id
             catalog_id = self.added_id(requested_id)
             before_count = confirmed_counts.get(catalog_id, 0)
             actual_id = self._add_one(playlist, catalog_id, before_count)
+            if actual_id is None:
+                continue
             added_catalog_ids[str(requested_id)] = str(actual_id)
             confirmed_counts[str(actual_id)] = before_count + 1
+            added_requested_ids.append(requested_id)
             polite_sleep(1.0)
+        return added_requested_ids
 
     def added_id(self, target_id):
         return getattr(self, "_added_catalog_ids", {}).get(str(target_id), target_id)
