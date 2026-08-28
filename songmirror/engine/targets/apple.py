@@ -52,7 +52,9 @@ def _normalized_playlist_track(track):
         "name": attrs.get("name", ""),
         "artist": attrs.get("artistName", ""),
         "album": attrs.get("albumName"),
+        "album_position": attrs.get("trackNumber"),
         "duration_ms": attrs.get("durationInMillis"),
+        "isrc": attrs.get("isrc"),
         "added_at": attrs.get("dateAdded") or "",
         "image": image,
     }

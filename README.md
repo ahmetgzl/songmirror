@@ -55,6 +55,7 @@ A free, open-source, **self-hosted alternative to Soundiiz, TuneMyMusic, and Fre
   - [Matching](#matching)
   - [Authoritative groups](#authoritative-groups)
   - [Bidirectional (N-way) sync](#bidirectional-n-way-sync)
+- [📦 Playlist metadata backups](#-playlist-metadata-backups)
 - [💿 Local download mirror (Jellyfin)](#-local-download-mirror-jellyfin)
 - [🔌 Connecting each service](#-connecting-each-service)
   - [Credential renewal](#credential-renewal)
@@ -89,6 +90,7 @@ SongMirror keeps your playlists identical everywhere without manual re-adding, o
 - 🎛️ **Multiple named syncs** — set up as many independent syncs as you like, each with its own services, playlists, schedule, and safety caps.
 - ↪️ **One-off transfers** — copy any playlist from one service to another with a live progress bar; **pause, resume, or stop** mid-copy, and manually resolve unmatched tracks.
 - 🌐 **Followed playlists** — sync and transfer playlists you follow but don't own, not just ones you created.
+- 📦 **Portable metadata backups** — download one playlist or a service's entire library as ordered, versioned JSON/XML; single playlists also export as import-ready Soundiiz JSON.
 - 💿 **Local download mirror** — keep offline audio, one folder per playlist in **Jellyfin's** `AlbumArtist/Album` layout, with covers and an auto-updated `.m3u8`.
 - 🛡️ **Safety rails** — dry-run by default, per-pass add/removal caps, net-loss protection, empty-snapshot guard, fail-closed on expired tokens.
 - 🗃️ **Ever-growing song archive** — every track ever seen is recorded in a local SQLite database (name, artist, album, ISRC, raw metadata, first/last seen).
@@ -248,6 +250,22 @@ Bidirectional sync is impossible statelessly, so each logical playlist's canonic
 - **Removals are opt-in** — `MAX_REMOVALS` defaults to 0, so a track that disappears from one provider (deleted there, or silently pulled by licensing) is kept on the others and only logged. Set a cap (or the UI's "Mirror removals" toggle) to propagate deletions.
 
 > **Always dry-run first.** Run without `--execute` (or use **Preview** in the UI) and read the plan — it prints every proposed add/remove on every provider before anything is written.
+
+<div align="right">
+
+[![][back-to-top]](#readme-top)
+
+</div>
+
+## 📦 Playlist metadata backups
+
+The **Playlists** page can download a fresh snapshot without requiring a second provider or a sync job:
+
+- Use **Local backup** on a service card to save every playlist from that service in one versioned JSON or XML file.
+- Open a playlist to export only that playlist. Its **Soundiiz** option follows [Soundiiz's documented JSON import shape](https://soundiiz.com/data/fileExamples/playlistExport.json), so the downloaded track list can be uploaded through Soundiiz's **Import Playlist → From File** flow.
+- SongMirror JSON/XML preserves playlist order and names plus provider track/occurrence IDs, available ISRCs, artists, albums, album track positions, durations, added dates, artwork links, and unavailable-entry markers. ID-less catalog ghosts remain in the backup instead of disappearing. Files contain no cookies, tokens, request headers, previews, or streaming-file URLs.
+
+Exports are downloaded by the browser to the device running the UI; SongMirror does not need write access to a host backup directory. The `schema_version` field lets future releases evolve the lossless format without making old snapshots ambiguous.
 
 <div align="right">
 

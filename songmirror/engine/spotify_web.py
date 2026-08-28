@@ -68,6 +68,7 @@ def playlist_tracks(playlist_id):
             "name": getattr(t, "name", "") or "",
             "artists": artists or [""],
             "album": getattr(album, "name", None),
+            "album_position": getattr(t, "track_number", None),
             "duration_ms": getattr(t, "duration_ms", None),
             # ISO-8601 string like the official API (the diff sorts oldest-first on it).
             "added_at": added.isoformat() if hasattr(added, "isoformat") else (added or ""),

@@ -282,6 +282,7 @@ def _playlist_item_tracks(items):
             "name": track.get("name", ""),
             "artists": artists or [""],
             "album": album.get("name"),
+            "album_position": track.get("track_number"),
             "duration_ms": track.get("duration_ms"),
             "added_at": item.get("added_at") or "",
             "image": image,

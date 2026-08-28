@@ -524,6 +524,18 @@ async function installMocks(page, opts = {}) {
       return json({ ok: true })
     }
 
+    if (/^\/api\/playlists\/[^/]+(?:\/[^/]+)?\/export$/.test(p) && method === 'GET') {
+      const format = url.searchParams.get('format') ?? 'json'
+      const soundiiz = format === 'soundiiz'
+      return route.fulfill({
+        status: 200,
+        contentType: format === 'xml' ? 'application/xml' : 'application/json',
+        headers: {
+          'Content-Disposition': `attachment; filename="songmirror-test.${soundiiz ? 'soundiiz.json' : format}"`,
+        },
+        body: format === 'xml' ? '<songmirror-playlist-backup />' : soundiiz ? '[]' : '{"kind":"songmirror-playlist-backup"}',
+      })
+    }
     if (p === '/api/playlists/spotify/pl_spotify_1' && method === 'GET') {
       return json(PLAYLIST_DETAIL)
     }
@@ -825,6 +837,62 @@ async function main() {
         && firstPageCovers === 50
       console.log(`${latestOk ? 'ok        ' : 'FAIL      '} playlist ledger understands Unix date-added values and falls back to reverse append order with 50 covered rows (first=${JSON.stringify(firstLatest?.slice(0, 40))}, rows=${firstPageRows}, covers=${firstPageCovers})`)
       if (!latestOk) results.push({ label: 'playlist ledger latest/page/covers', overflow: true })
+
+      const exportMenuButton = dialog.getByRole('button', { name: 'Export this playlist', exact: true })
+      const exportButtonCount = await exportMenuButton.count()
+      const portableButtonStateBefore = await exportMenuButton.evaluate((element) => {
+        const rect = element.getBoundingClientRect()
+        return {
+          height: rect.height,
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+        }
+      })
+      await exportMenuButton.click()
+      const exportMenu = page.getByRole('menu', { name: 'Export this playlist', exact: true })
+      await exportMenu.waitFor()
+      const soundiizExport = exportMenu.getByRole('menuitem', { name: 'Export this playlist as Soundiiz' })
+      const portableMenuOk = exportButtonCount === 1
+        && await exportMenu.getByRole('menuitem').count() === 3
+        && await exportMenu.getByRole('menuitem', { name: 'Export this playlist as JSON' }).count() === 1
+        && await exportMenu.getByRole('menuitem', { name: 'Export this playlist as XML' }).count() === 1
+        && await soundiizExport.count() === 1
+      console.log(`${portableMenuOk ? 'ok        ' : 'FAIL      '} playlist export uses one menu button with JSON, XML, and Soundiiz actions`)
+      if (!portableMenuOk) results.push({ label: 'playlist export format menu', overflow: true })
+
+      await page.keyboard.press('Escape')
+      const exportMenuEscapeOk = await exportMenu.count() === 0 && await dialog.isVisible()
+      await exportMenuButton.press('ArrowDown')
+      await exportMenu.waitFor()
+      const exportMenuKeyboardOk = exportMenuEscapeOk
+        && await exportMenuButton.getAttribute('aria-expanded') === 'true'
+        && (await exportMenu.getAttribute('aria-activedescendant'))?.endsWith('-item-0')
+      console.log(`${exportMenuKeyboardOk ? 'ok        ' : 'FAIL      '} export menu supports keyboard open/close without dismissing the playlist dialog`)
+      if (!exportMenuKeyboardOk) results.push({ label: 'playlist export menu keyboard behavior', overflow: true })
+
+      const [portableDownload] = await Promise.all([
+        page.waitForEvent('download'),
+        soundiizExport.click(),
+      ])
+      await exportMenu.waitFor({ state: 'detached' })
+      await dialog.locator('[role="status"]').filter({ hasText: 'Soundiiz backup downloaded' }).waitFor()
+      const portableExportOk = portableDownload.suggestedFilename() === 'songmirror-test.soundiiz.json'
+      console.log(`${portableExportOk ? 'ok        ' : 'FAIL      '} playlist ledger downloads Soundiiz-compatible JSON (${portableDownload.suggestedFilename()})`)
+      if (!portableExportOk) results.push({ label: 'playlist Soundiiz export', overflow: true })
+
+      const portableButtonStateAfter = await exportMenuButton.evaluate((element) => {
+        const rect = element.getBoundingClientRect()
+        return { height: rect.height, left: rect.left, top: rect.top, width: rect.width }
+      })
+      const portableLayoutStable = Math.abs(portableButtonStateAfter.left - portableButtonStateBefore.left) < 0.5
+        && Math.abs(portableButtonStateAfter.top - portableButtonStateBefore.top) < 0.5
+        && Math.abs(portableButtonStateAfter.width - portableButtonStateBefore.width) < 0.5
+        && Math.abs(portableButtonStateAfter.height - portableButtonStateBefore.height) < 0.5
+      const completedExportStyled = (await exportMenuButton.getAttribute('class'))?.includes('border-success')
+      const portableFeedbackOk = portableLayoutStable && completedExportStyled
+      console.log(`${portableFeedbackOk ? 'ok        ' : 'FAIL      '} completed menu export is acknowledged without shifting the trigger`)
+      if (!portableFeedbackOk) results.push({ label: 'playlist export stable feedback', overflow: true })
 
       await dialog.getByRole('button', { name: 'Next' }).click()
       await dialog.getByText('Showing 51–100 of 118 tracks · 50 per page').waitFor()

@@ -25,6 +25,7 @@ import { FilterSelect } from '../ui/FilterSelect'
 import { Modal } from '../ui/Modal'
 import { LoadingStatus, Skeleton } from '../ui/Skeleton'
 import { Spinner } from '../ui/Spinner'
+import { PlaylistExportActions } from './PlaylistExportActions'
 
 type TrackOrder = 'latest' | 'playlist'
 
@@ -285,6 +286,25 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
             ) : null}
           </div>
         </div>
+
+        {detail && provider && playlistId && account ? (
+          <div className="flex flex-col gap-3 rounded-control border border-border bg-inset px-3.5 py-3 sm:flex-row sm:items-center">
+            <div className="min-w-0 flex-1">
+              <p className="font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-text-3">
+                Portable snapshot
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-text-2">
+                JSON and XML retain SongMirror metadata. Soundiiz creates an import-ready track list.
+              </p>
+            </div>
+            <PlaylistExportActions
+              provider={provider}
+              providerName={account.name}
+              playlistId={playlistId}
+              className="shrink-0 sm:max-w-sm"
+            />
+          </div>
+        ) : null}
 
         {detail?.editable ? (
           <div className="flex items-start gap-2.5 rounded-control border border-warning/30 bg-warning-soft px-3.5 py-3 text-xs leading-relaxed text-text-2">

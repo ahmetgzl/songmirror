@@ -530,6 +530,7 @@ def _normalized_content_tracks(items):
             "name": t.get("name", "") or "",
             "artists": [a for a in artists if a] or [""],
             "album": album.get("name"),
+            "album_position": t.get("trackNumber"),
             "duration_ms": (t.get("trackDuration") or {}).get("totalMilliseconds"),
             "added_at": (it.get("addedAt") or {}).get("isoString") or "",
             "image": image,

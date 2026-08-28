@@ -7,6 +7,7 @@ import { serviceHomeUrl, serviceLogoId, tagText } from '@/lib/constants'
 import { formatTrackCount } from '@/lib/format'
 import type { Account, ProviderPlaylist } from '@/types'
 
+import { PlaylistExportActions } from './PlaylistExportActions'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { CoverArt } from '../ui/CoverArt'
@@ -139,6 +140,22 @@ export function ProviderPlaylistsCard({
           action={<Button variant="secondary" size="sm" onClick={onRetry}>Refresh</Button>}
         />
       )}
+
+      {connected && account.transferable && entry && entry.playlists.length > 0 ? (
+        <div className="border-t border-border pt-3">
+          <p className="font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-text-3">
+            Local backup
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-text-3">
+            Export every playlist with its ordered track metadata.
+          </p>
+          <PlaylistExportActions
+            provider={account.id}
+            providerName={account.name}
+            className="mt-2"
+          />
+        </div>
+      ) : null}
     </Card>
   )
 }
