@@ -209,6 +209,7 @@ class TidalTarget(MirrorTarget):
                     "artist": ", ".join(artists),
                     "artists": artists or [""],
                     "album": album or None,
+                    "album_position": attrs.get("trackNumber"),
                     "image": image,
                     "duration_ms": iso_duration_ms(attrs.get("duration")),
                     "isrc": attrs.get("isrc"),

@@ -45,6 +45,7 @@ def _normalized_track(track):
         "artist": artist,
         "artists": [artist] if artist else [""],
         "album": album.get("title"),
+        "album_position": track.get("track_number"),
         "duration_ms": int(duration * 1000) if isinstance(duration, (int, float)) else None,
         "isrc": track.get("isrc"),
         "added_at": str(track.get("created_at") or ""),

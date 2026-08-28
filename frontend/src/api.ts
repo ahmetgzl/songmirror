@@ -7,6 +7,7 @@ import type {
   LinkUpsertRequest,
   OkResponse,
   PlaylistLink,
+  PlaylistExportFormat,
   PollResponse,
   ProviderPlaylist,
   ProviderPlaylistDetail,
@@ -35,7 +36,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function fetchResponse(path: string, init?: RequestInit): Promise<Response> {
   let res: Response
   try {
     res = await fetch(path, {
@@ -46,6 +47,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(0, 'Could not reach the server. Check that it is running and reachable.')
   }
 
+  return res
+}
+
+async function requireOk(res: Response): Promise<void> {
   if (!res.ok) {
     let detail = res.statusText || `HTTP ${res.status}`
     try {
@@ -58,11 +63,44 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(res.status, detail)
   }
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetchResponse(path, init)
+  await requireOk(res)
 
   if (res.status === 204) return undefined as T
   const text = await res.text()
   if (!text) return undefined as T
   return JSON.parse(text) as T
+}
+
+async function download(path: string, fallbackFilename: string): Promise<void> {
+  const res = await fetchResponse(path)
+  await requireOk(res)
+
+  const disposition = res.headers.get('Content-Disposition') ?? ''
+  const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  const plainName = disposition.match(/filename="([^"]+)"/i)?.[1]
+  let filename = plainName || fallbackFilename
+  if (encodedName) {
+    try {
+      filename = decodeURIComponent(encodedName)
+    } catch {
+      // Keep the safe fallback when a proxy mangles the response header.
+    }
+  }
+
+  const objectUrl = URL.createObjectURL(await res.blob())
+  const anchor = document.createElement('a')
+  anchor.href = objectUrl
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  // Safari can begin consuming the object URL after the click task finishes.
+  // Keep it alive briefly, then release the in-memory file.
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000)
 }
 
 const json = (body: unknown): RequestInit => ({ method: 'POST', body: JSON.stringify(body) })
@@ -114,7 +152,7 @@ export const api = {
   stopSyncJob: (id: string) => request<OkResponse>(`/api/syncs/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
   resumeSyncJob: (id: string) => request<OkResponse>(`/api/syncs/${encodeURIComponent(id)}/resume`, { method: 'POST' }),
 
-  // Playlists (browse)
+  // Playlists (browse, export, edit)
   getPlaylists: (provider: string) =>
     request<ProviderPlaylist[]>(`/api/playlists?provider=${encodeURIComponent(provider)}`),
   getPlaylistDetail: (
@@ -139,6 +177,18 @@ export const api = {
     const query = params.size > 0 ? `?${params}` : ''
     return request<ProviderPlaylistDetail>(
       `/api/playlists/${encodeURIComponent(provider)}/${encodeURIComponent(playlistId)}${query}`,
+    )
+  },
+  exportPlaylists: (
+    provider: string,
+    format: PlaylistExportFormat,
+    playlistId?: string,
+  ) => {
+    const scope = playlistId ? `/${encodeURIComponent(playlistId)}` : ''
+    const suffix = format === 'soundiiz' ? 'soundiiz.json' : format
+    return download(
+      `/api/playlists/${encodeURIComponent(provider)}${scope}/export?format=${format}`,
+      `songmirror-${provider}-playlists.${suffix}`,
     )
   },
   removePlaylistTrack: (provider: string, playlistId: string, body: RemovePlaylistTrackRequest) =>

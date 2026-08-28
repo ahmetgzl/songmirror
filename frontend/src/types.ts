@@ -302,6 +302,10 @@ export interface ProviderPlaylistDetail extends ProviderPlaylist {
   complete?: boolean
 }
 
+/** Lossless SongMirror backups use json/xml. The playlist-scoped Soundiiz
+ * option follows Soundiiz's documented importable JSON array shape. */
+export type PlaylistExportFormat = 'json' | 'xml' | 'soundiiz'
+
 export interface RemovePlaylistTrackRequest {
   position: number
   track_id: string

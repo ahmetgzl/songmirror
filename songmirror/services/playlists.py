@@ -1,4 +1,4 @@
-"""Playlist browsing + explicit cross-service pairing.
+"""Playlist browsing, portable metadata export, and cross-service pairing.
 
 Browse reuses each provider's existing list_playlists; pairing lets the user link
 differently-named playlists and set a per-pair direction, overriding the default
@@ -17,6 +17,7 @@ from ..engine import archive, spotify, spotify_cookie
 from ..engine.config import parse_args, spotify_write_backend
 from ..engine.logs import log_warn
 from ..engine.targets import build_one
+from .playlist_exports import render_backup
 from .settings import _open_private
 
 
@@ -297,16 +298,24 @@ class PlaylistService:
         return sorted(rows, key=lambda r: (r["name"] or "").casefold())
 
     @staticmethod
-    def _normalize_tracks(provider_id, target, tracks, *, offset=0):
+    def _normalize_tracks(
+        provider_id,
+        target,
+        tracks,
+        *,
+        offset=0,
+        retain_idless=False,
+    ):
         normalized = []
         occurrence_id_getter = getattr(target, "occurrence_id", lambda track: None)
         for position, track in enumerate(tracks, start=offset):
             track_id = target.track_id(track)
-            if track_id is None:
+            if track_id is None and not retain_idless:
                 continue
+            unavailable = bool(track.get("unavailable")) or track_id is None
             row = {
                 "position": position,
-                "id": str(track_id),
+                "id": "" if track_id is None else str(track_id),
                 "isrc": str(track.get("isrc") or ""),
                 "occurrence_id": str(occurrence_id_getter(track) or ""),
                 "name": str(track.get("name") or track.get("title") or "Unknown track"),
@@ -321,11 +330,17 @@ class PlaylistService:
                     or ""
                 ),
                 "external_url": (
-                    "" if track.get("unavailable")
+                    "" if unavailable
                     else _external_url(provider_id, "track", track_id)
                 ),
             }
-            if track.get("unavailable"):
+            try:
+                album_position = int(track.get("album_position"))
+            except (TypeError, ValueError):
+                album_position = None
+            if album_position is not None and album_position > 0:
+                row["album_position"] = album_position
+            if unavailable:
                 row["unavailable"] = True
             normalized.append(row)
         return normalized
@@ -347,6 +362,42 @@ class PlaylistService:
             "tracks": tracks,
         }
 
+    def _read_detail(
+        self,
+        provider_id,
+        playlist_id,
+        target,
+        playlist,
+        *,
+        retain_idless=False,
+    ):
+        read_tracks = getattr(
+            target,
+            "playlist_tracks_for_browse",
+            target.playlist_tracks,
+        )
+        tracks = read_tracks(playlist)
+        normalized = self._normalize_tracks(
+            provider_id,
+            target,
+            tracks,
+            retain_idless=retain_idless,
+        )
+        detail = self._detail_payload(
+            provider_id,
+            playlist_id,
+            target,
+            playlist,
+            normalized,
+        )
+        # Hidden TIDAL relationships are useful in the inspector and in an
+        # explicit export, but they are not authoritative song metadata. Avoid
+        # persisting placeholders into the archive, where a later strict sync
+        # read could mistake them for truth.
+        if not any(track.get("unavailable", False) for track in normalized):
+            self._cache_detail(detail)
+        return detail
+
     def detail(self, provider_id, playlist_id, *, refresh=False, expected_count=None):
         cached = self._cached_detail(provider_id, playlist_id)
         if (
@@ -367,31 +418,72 @@ class PlaylistService:
                 raise PlaylistNotFoundError(
                     f"That {_PROVIDER_NAMES.get(provider_id, provider_id)} playlist no longer exists. Refresh Browse."
                 )
-            read_tracks = getattr(
+            return self._read_detail(
+                provider_id,
+                playlist_id,
                 target,
-                "playlist_tracks_for_browse",
-                target.playlist_tracks,
+                playlist,
             )
-            tracks = read_tracks(playlist)
         except PlaylistServiceError:
             raise
         except Exception as exc:
             self._failure(provider_id, "open that playlist", exc)
 
-        normalized = self._normalize_tracks(provider_id, target, tracks)
-        detail = self._detail_payload(
-            provider_id,
-            playlist_id,
-            target,
-            playlist,
-            normalized,
-        )
-        # Hidden TIDAL relationships are useful in the inspector but are not
-        # authoritative song metadata. Avoid persisting placeholders into the
-        # archive, where a later strict sync read could mistake them for truth.
-        if not any(track.get("unavailable", False) for track in normalized):
-            self._cache_detail(detail)
-        return detail
+    def export(self, provider_id, export_format, *, playlist_id=None):
+        """Read fresh provider metadata and return a browser-download payload.
+
+        A provider-wide JSON/XML export uses one target instance and one library
+        read, then snapshots every playlist. Soundiiz's documented JSON shape is
+        playlist-scoped, so that interoperability format requires playlist_id.
+        """
+        export_format = str(export_format).casefold()
+        if provider_id == "jellyfin":
+            raise PlaylistReadOnlyError(
+                "Jellyfin playlist tracks are managed in Jellyfin and cannot be exported here."
+            )
+        if export_format == "soundiiz" and playlist_id is None:
+            raise PlaylistServiceError(
+                "Soundiiz JSON exports contain one playlist. Open a playlist and export it there."
+            )
+
+        target = self._target(provider_id)
+        try:
+            if playlist_id is not None:
+                playlist = target.find_playlist(str(playlist_id))
+                if playlist is None:
+                    self._invalidate_detail(provider_id, playlist_id)
+                    raise PlaylistNotFoundError(
+                        f"That {_PROVIDER_NAMES.get(provider_id, provider_id)} playlist no longer exists. Refresh Browse."
+                    )
+                playlists = [playlist]
+            else:
+                playlists = list(target.browse_playlists())
+
+            details = [
+                self._read_detail(
+                    provider_id,
+                    target.playlist_id(playlist) or _pl_id(playlist),
+                    target,
+                    playlist,
+                    retain_idless=True,
+                )
+                for playlist in playlists
+            ]
+            details.sort(key=lambda detail: (detail["name"].casefold(), detail["id"]))
+            return render_backup(
+                provider_id,
+                _PROVIDER_NAMES.get(provider_id, getattr(target, "name", provider_id)),
+                details,
+                export_format,
+                filename_scope="all-playlists" if playlist_id is None else None,
+            )
+        except PlaylistServiceError:
+            raise
+        except ValueError as exc:
+            raise PlaylistServiceError(str(exc)) from exc
+        except Exception as exc:
+            action = "export that playlist" if playlist_id is not None else "export playlists"
+            self._failure(provider_id, action, exc)
 
     def detail_page(
         self,

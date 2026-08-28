@@ -18,6 +18,46 @@ def test_health(tmp_path):
         assert client.get("/health").json() == {"ok": True}
 
 
+def test_playlist_export_routes_return_downloads(tmp_path, monkeypatch):
+    from songmirror.services.playlist_exports import PlaylistExport
+    from songmirror.services.playlists import PlaylistService
+
+    calls = []
+
+    def export(self, provider, format, *, playlist_id=None):
+        calls.append((provider, format, playlist_id))
+        return PlaylistExport(
+            content=b'{"backup": true}\n',
+            media_type="application/json",
+            filename="songmirror-test.json",
+        )
+
+    monkeypatch.setattr(PlaylistService, "export", export)
+    with TestClient(_app(tmp_path)) as client:
+        all_playlists = client.get("/api/playlists/spotify/export?format=json")
+        one_playlist = client.get(
+            "/api/playlists/apple/playlist-1/export?format=soundiiz"
+        )
+
+    assert all_playlists.content == b'{"backup": true}\n'
+    assert all_playlists.headers["content-disposition"] == (
+        'attachment; filename="songmirror-test.json"'
+    )
+    assert all_playlists.headers["cache-control"] == "no-store"
+    assert all_playlists.headers["x-content-type-options"] == "nosniff"
+    assert calls == [
+        ("spotify", "json", None),
+        ("apple", "soundiiz", "playlist-1"),
+    ]
+
+
+def test_playlist_export_routes_reject_unknown_formats(tmp_path):
+    with TestClient(_app(tmp_path)) as client:
+        response = client.get("/api/playlists/spotify/export?format=csv")
+
+    assert response.status_code == 422
+
+
 def test_accounts_list_all_unconfigured(tmp_path):
     with TestClient(_app(tmp_path)) as client:
         accounts = client.get("/api/accounts").json()

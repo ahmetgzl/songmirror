@@ -1,8 +1,10 @@
-"""Playlist browsing + pairing-link CRUD."""
+"""Playlist browsing/editing, metadata downloads, and pairing-link CRUD."""
 
 from dataclasses import asdict
+from typing import Literal
 
 from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi.responses import Response
 
 from ...services.playlists import (
     PlaylistLink, PlaylistService, PlaylistServiceError,
@@ -15,6 +17,51 @@ router = APIRouter()
 def playlists(request: Request, provider: str):
     try:
         return PlaylistService(request.app.state.settings).browse(provider)
+    except PlaylistServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+def _export_response(result):
+    return Response(
+        content=result.content,
+        media_type=result.media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{result.filename}"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.get("/api/playlists/{provider}/export")
+def export_provider_playlists(
+    request: Request,
+    provider: str,
+    format: Literal["json", "xml"] = "json",
+):
+    """Download every current playlist on one provider as a single backup."""
+    try:
+        result = PlaylistService(request.app.state.settings).export(provider, format)
+        return _export_response(result)
+    except PlaylistServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.get("/api/playlists/{provider}/{playlist_id}/export")
+def export_playlist(
+    request: Request,
+    provider: str,
+    playlist_id: str,
+    format: Literal["json", "xml", "soundiiz"] = "json",
+):
+    """Download one fresh playlist snapshot, optionally as Soundiiz JSON."""
+    try:
+        result = PlaylistService(request.app.state.settings).export(
+            provider,
+            format,
+            playlist_id=playlist_id,
+        )
+        return _export_response(result)
     except PlaylistServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 

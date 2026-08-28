@@ -49,6 +49,7 @@ export function Modal({ open, onClose, title, description, children, footer, wid
     dialog?.focus()
 
     function onKeyDown(e: KeyboardEvent) {
+      if (e.defaultPrevented) return
       if (e.key === 'Escape') {
         onCloseRef.current()
         return

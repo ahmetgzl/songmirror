@@ -16,7 +16,12 @@ def test_tidal_jsonapi_track_shape_carries_isrc_artist_and_entry_id():
             {
                 "type": "tracks",
                 "id": "t1",
-                "attributes": {"title": "Song", "duration": "PT3M2.5S", "isrc": "USAAA2600001"},
+                "attributes": {
+                    "title": "Song",
+                    "duration": "PT3M2.5S",
+                    "isrc": "USAAA2600001",
+                    "trackNumber": 6,
+                },
                 "relationships": {
                     "artists": {"data": [{"type": "artists", "id": "a1"}]},
                     "albums": {"data": [{"type": "albums", "id": "al1"}]},
@@ -47,6 +52,7 @@ def test_tidal_jsonapi_track_shape_carries_isrc_artist_and_entry_id():
         "artist": "Artist",
         "artists": ["Artist"],
         "album": "Album",
+        "album_position": 6,
         "image": "https://tidal/160.jpg",
         "duration_ms": 182500,
         "isrc": "USAAA2600001",
@@ -115,6 +121,7 @@ def test_tidal_playlist_read_uses_embedded_items_when_catalog_lookup_omits_track
         "artist": "Artist",
         "artists": ["Artist"],
         "album": "Album",
+        "album_position": None,
         "image": "",
         "duration_ms": 182000,
         "isrc": "USAAA2600001",
