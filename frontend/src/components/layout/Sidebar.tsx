@@ -219,7 +219,7 @@ function ProjectLinks({ stacked = false }: { stacked?: boolean }) {
     <div
       role="group"
       aria-label="Project links"
-      className={cn('flex items-center gap-1', stacked && 'flex-col')}
+      className={cn('flex items-center justify-center gap-1', stacked && 'flex-col')}
     >
       {PROJECT_LINKS.map((item) => (
         <a
