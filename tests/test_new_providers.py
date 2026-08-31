@@ -1170,13 +1170,81 @@ def test_deezer_web_adds_tracks_one_at_a_time_in_order(monkeypatch):
     })()
     monkeypatch.setattr(deezer, "polite_sleep", lambda _: None)
 
-    target.add({"id": "playlist-1"}, ["12", "34", "56"])
+    target.add(
+        {"id": "playlist-1"},
+        ["12", "https://www.deezer.com/tr/track/34", "56"],
+    )
 
     assert calls == [
         ("playlist-1", ["12"]),
         ("playlist-1", ["34"]),
         ("playlist-1", ["56"]),
     ]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("4160591112", "4160591112"),
+        ("https://www.deezer.com/tr/track/4160591112", "4160591112"),
+        ("https://www.deezer.com/track/4160591112?utm_source=deezer", "4160591112"),
+    ],
+)
+def test_deezer_normalizes_manually_pasted_track_ids(value, expected):
+    from songmirror.engine.targets.deezer import DeezerTarget
+
+    assert DeezerTarget.normalize_manual_track_id(value) == expected
+
+
+def test_deezer_resolves_opaque_share_link_before_normalizing(monkeypatch):
+    from songmirror.engine.config import REQUEST_TIMEOUT
+    from songmirror.engine.targets import deezer
+    from songmirror.engine.targets.deezer import DeezerTarget
+
+    share_url = "https://link.deezer.com/s/329PNcTc3WAXFmFAcVm1m"
+    calls = []
+
+    class Response:
+        headers = {
+            "Location": (
+                "https://link.deezer.com/?dest=https%3A%2F%2Fwww.deezer.com%2Ftrack%2F"
+                "3347649401%3Futm_source%3Duser_sharing"
+            )
+        }
+
+        @staticmethod
+        def raise_for_status():
+            pass
+
+    def head(url, **kwargs):
+        calls.append((url, kwargs))
+        return Response()
+
+    monkeypatch.setattr(deezer.requests, "head", head)
+
+    assert DeezerTarget.normalize_manual_track_id(share_url) == "3347649401"
+    assert calls == [
+        (share_url, {"allow_redirects": False, "timeout": REQUEST_TIMEOUT}),
+    ]
+
+
+def test_deezer_normalizes_legacy_manual_url_from_resolve_cache():
+    from songmirror.engine.targets.deezer import DeezerTarget
+    from songmirror.engine.matching import track_key
+
+    key = track_key("Song", "Artist")
+    cache = {
+        "isrc": {},
+        "search": {key: "https://www.deezer.com/tr/track/4160591112"},
+    }
+
+    target = DeezerTarget.__new__(DeezerTarget)
+    assert target.resolve({"name": "Song", "artists": ["Artist"]}, cache) == (
+        "4160591112",
+        "search",
+    )
+    assert cache["search"][key] == "4160591112"
+    assert cache["dirty"] is True
 
 
 def test_new_provider_create_helpers_accept_non_spotify_shapes():

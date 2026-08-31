@@ -18,6 +18,25 @@ def test_health(tmp_path):
         assert client.get("/health").json() == {"ok": True}
 
 
+def test_transfer_conflict_resolution_returns_manual_id_validation_error(tmp_path):
+    app = _app(tmp_path)
+
+    def reject_manual_id(*_args):
+        raise ValueError("Paste a numeric Deezer track ID or a Deezer track URL.")
+
+    app.state.transfers.resolve = reject_manual_id
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/transfers/job-1/resolve",
+            json={"key": "song artist", "dest_id": "not-a-track"},
+        )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": "Paste a numeric Deezer track ID or a Deezer track URL.",
+    }
+
+
 def test_playlist_export_routes_return_downloads(tmp_path, monkeypatch):
     from songmirror.services.playlist_exports import PlaylistExport
     from songmirror.services.playlists import PlaylistService

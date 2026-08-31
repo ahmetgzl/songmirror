@@ -1,6 +1,6 @@
 """One-off playlist transfers + conflict resolution."""
 
-from fastapi import APIRouter, Body, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 router = APIRouter()
@@ -38,7 +38,11 @@ def transfer_status(job_id: str, request: Request):
 def resolve_conflict(job_id: str, request: Request, body: dict = Body(...)):
     # Declared before the generic /{action} route below so it isn't shadowed
     # (FastAPI matches routes in declaration order).
-    return {"ok": request.app.state.transfers.resolve(job_id, body["key"], body["dest_id"])}
+    try:
+        resolved = request.app.state.transfers.resolve(job_id, body["key"], body["dest_id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"ok": resolved}
 
 
 @router.post("/api/transfers/{job_id}/{action}")

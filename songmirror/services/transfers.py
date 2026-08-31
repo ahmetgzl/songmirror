@@ -16,7 +16,7 @@ from ..engine.logs import log_add, log_miss, log_warn
 from ..engine.matching import spotify_track_keys, track_key, tracks_oldest_first
 from ..engine.runner import load_cache, save_cache
 from ..engine.targets import build_one, is_peer
-from ..engine.targets.base import TargetAuthError, _normalize, _split_add_results
+from ..engine.targets.base import MirrorTarget, TargetAuthError, _normalize, _split_add_results
 
 
 def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, on_progress=None, should_continue=None):
@@ -219,6 +219,9 @@ class TransferService:
         job = self._jobs.get(job_id)
         if not job:
             return False
+        normalizer = job.get("_dest_id_normalizer")
+        if normalizer:
+            dest_id = normalizer(dest_id)
         cache_file = job.get("_dest_cache_file")
         if cache_file:
             cache = load_cache(cache_file)
@@ -250,6 +253,11 @@ class TransferService:
             self._emit("warn", f"transfer: {job['error']}", "transfer")
             return
         job["_dest_cache_file"] = dst.cache_file
+        job["_dest_id_normalizer"] = getattr(
+            dst,
+            "normalize_manual_track_id",
+            MirrorTarget.normalize_manual_track_id,
+        )
         # Adds already on the destination from an earlier (paused) run — this
         # run's transfer() skips them via dedup, so keep the counter cumulative.
         base_added = job["added"]
