@@ -13,6 +13,7 @@ import {
   LuSettings2,
   LuX,
 } from 'react-icons/lu'
+import { SiGithubsponsors, SiKofi } from 'react-icons/si'
 import type { IconType } from 'react-icons'
 
 import songmirrorMark from '@/assets/brand/songmirror-mark.png'
@@ -20,6 +21,8 @@ import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed'
 import { cn } from '@/lib/cn'
 
 const REPO_URL = 'https://github.com/ahnafnafee/songmirror'
+const GITHUB_SPONSORS_URL = 'https://github.com/sponsors/ahnafnafee'
+const KOFI_URL = 'https://ko-fi.com/ahnafnafee'
 
 const NAV_ITEMS: Array<{ to: string; label: string; end: boolean; icon: IconType }> = [
   { to: '/', label: 'Dashboard', end: true, icon: LuLayoutDashboard },
@@ -28,6 +31,12 @@ const NAV_ITEMS: Array<{ to: string; label: string; end: boolean; icon: IconType
   { to: '/sync', label: 'Sync', end: false, icon: LuRefreshCw },
   { to: '/transfers', label: 'Transfers', end: false, icon: LuArrowLeftRight },
   { to: '/settings', label: 'Settings', end: false, icon: LuSettings2 },
+]
+
+const PROJECT_LINKS: Array<{ href: string; label: string; icon: IconType }> = [
+  { href: REPO_URL, label: 'SongMirror on GitHub', icon: LuGithub },
+  { href: GITHUB_SPONSORS_URL, label: 'Sponsor on GitHub', icon: SiGithubsponsors },
+  { href: KOFI_URL, label: 'Support on Ko-fi', icon: SiKofi },
 ]
 
 /** 240px persistent rail from `lg` (1024px) up — collapsible to a 68px
@@ -143,7 +152,7 @@ export function Sidebar() {
 
         {/* The nav above takes flex-1, so this sits on the rail's bottom edge. */}
         <div className="shrink-0 border-t border-border p-3">
-          <RepoLink />
+          <ProjectLinks stacked={collapsed} />
         </div>
         </div>
       </aside>
@@ -195,7 +204,7 @@ export function Sidebar() {
             </NavLink>
           ))}
           <div className="mt-2 border-t border-border pt-3">
-            <RepoLink />
+            <ProjectLinks />
           </div>
         </nav>
       )}
@@ -203,21 +212,28 @@ export function Sidebar() {
   )
 }
 
-/** Source link, centered on the sidebar's bottom edge. Icon-only in both rail
- * widths, so collapsing the rail doesn't change it. */
-function RepoLink() {
+/** Project and support links share a quiet footer dock. The collapsed rail
+ * stacks them so each action keeps a full-size keyboard and pointer target. */
+function ProjectLinks({ stacked = false }: { stacked?: boolean }) {
   return (
-    <div className="flex items-center justify-center">
-      <a
-        href={REPO_URL}
-        target="_blank"
-        rel="noreferrer"
-        title="SongMirror on GitHub"
-        aria-label="SongMirror on GitHub"
-        className="flex size-9 items-center justify-center rounded-control text-text-3 transition-colors duration-fast hover:bg-surface-2 hover:text-text"
-      >
-        <LuGithub className="size-[18px]" aria-hidden="true" />
-      </a>
+    <div
+      role="group"
+      aria-label="Project links"
+      className={cn('flex items-center gap-1', stacked && 'flex-col')}
+    >
+      {PROJECT_LINKS.map((item) => (
+        <a
+          key={item.href}
+          href={item.href}
+          target="_blank"
+          rel="noreferrer"
+          title={item.label}
+          aria-label={item.label}
+          className="flex size-9 items-center justify-center rounded-control text-text-3 transition-colors duration-fast hover:bg-accent-soft hover:text-accent"
+        >
+          <item.icon className="size-[18px]" aria-hidden="true" />
+        </a>
+      ))}
     </div>
   )
 }

@@ -1166,12 +1166,31 @@ async function main() {
       console.log(`${faviconOk ? 'ok        ' : 'FAIL      '} favicon mark is proportional and fills the tile (ratio=${faviconGeometry.markRatio.toFixed(3)} coverage=${faviconGeometry.coverage.toFixed(3)})`)
       if (!faviconOk) results.push({ label: 'favicon mark geometry', overflow: true })
 
+      const projectLinks = [
+        ['SongMirror on GitHub', 'https://github.com/ahnafnafee/songmirror'],
+        ['Sponsor on GitHub', 'https://github.com/sponsors/ahnafnafee'],
+        ['Support on Ko-fi', 'https://ko-fi.com/ahnafnafee'],
+      ]
+
+      async function checkProjectLinks(scope, state) {
+        const group = scope.getByRole('group', { name: 'Project links', exact: true })
+        let linksOk = await group.isVisible() && await group.getByRole('link').count() === projectLinks.length
+        for (const [label, expectedHref] of projectLinks) {
+          const link = group.getByRole('link', { name: label, exact: true })
+          linksOk = linksOk && await link.isVisible() && await link.getAttribute('href') === expectedHref
+        }
+        console.log(`${linksOk ? 'ok        ' : 'FAIL      '} ${state} exposes all project and support links`)
+        if (!linksOk) results.push({ label: `${state} project links`, overflow: true })
+      }
+
+      await checkProjectLinks(page.locator('aside'), 'expanded sidebar')
       await checkOverflow(page, 'Sidebar expanded (default) @ 1280', results)
       await shot(page, 'sidebar-expanded-1280')
 
       // Collapse — rail shrinks to icon-only, tooltip labels via title attr.
       await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
       await page.waitForTimeout(250) // width transition
+      await checkProjectLinks(page.locator('aside'), 'collapsed sidebar')
       await checkOverflow(page, 'Sidebar collapsed @ 1280', results)
       await shot(page, 'sidebar-collapsed-1280')
       const storedAfterCollapse = await page.evaluate(() => window.localStorage.getItem('songmirror-sidebar-collapsed'))
@@ -1197,6 +1216,7 @@ async function main() {
       await page.waitForSelector('text=Next check')
       await page.getByRole('button', { name: 'Open menu', exact: true }).click()
       await page.waitForSelector('#mobile-nav')
+      await checkProjectLinks(page.locator('#mobile-nav'), 'mobile drawer')
       await checkOverflow(page, 'Mobile drawer open @ 375', results)
       await shot(page, 'sidebar-mobile-drawer-375')
 
