@@ -1237,6 +1237,71 @@ async function main() {
     }
 
     // -----------------------------------------------------------------
+    // A destination auth failure is a partial one-way outcome, not a lost
+    // pass. The dashboard names the skipped service from per_target even if
+    // the separately refreshed account snapshot has not expired it yet.
+    // -----------------------------------------------------------------
+    {
+      const context = await browser.newContext()
+      await context.addInitScript(() => window.localStorage.setItem('songmirror-theme', 'light'))
+      const page = await context.newPage()
+      await installMocks(page)
+      await page.route('**/api/accounts', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(ACCOUNTS.map((account) => ({ ...account, state: 'connected', detail: null }))),
+        })
+      })
+      await page.route('**/api/sync/status', async (route) => {
+        const partial = syncStatusFixture(initialSyncs())
+        partial.last.per_target = [
+          { name: 'Apple Music', added: 2, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0 },
+          {
+            name: 'Amazon Music', added: 0, removed: 0, missing: 0, held: 0, deferred: 0, created: 0, skipped: 0,
+            auth_error: true,
+            error: 'Amazon Music /pandaToken did not return an access token; reconnect after signing in.',
+          },
+        ]
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(partial) })
+      })
+      await page.setViewportSize({ width: 1280, height: 900 })
+      await page.goto(BASE_URL + '/', { waitUntil: 'networkidle' })
+      await page.waitForTimeout(200)
+
+      const text = await page.locator('body').innerText()
+      const targetAuthReported = text.includes('Amazon Music was skipped')
+        && text.includes('/pandaToken did not return an access token')
+        && text.includes('Other destinations and post-sync work continued.')
+        && !text.includes('The last pass failed')
+      console.log(`${targetAuthReported ? 'ok        ' : 'FAIL      '} one-way target auth failure is reported as an isolated partial outcome`)
+      if (!targetAuthReported) results.push({ label: 'one-way target auth failure reporting', overflow: true })
+      await checkOverflow(page, 'Dashboard with isolated target auth failure @ 1280', results)
+
+      await page.route('**/api/accounts', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(ACCOUNTS.map((account) => (
+            account.id === 'amazon'
+              ? { ...account, state: 'expired', detail: 'Amazon Music session expired.' }
+              : { ...account, state: 'connected', detail: null }
+          ))),
+        })
+      })
+      await page.reload({ waitUntil: 'networkidle' })
+      await page.waitForTimeout(200)
+      const dedupText = await page.locator('body').innerText()
+      const amazonAlerts = await page.getByRole('button', { name: /Dismiss: Amazon Music/ }).count()
+      const targetAuthDeduped = amazonAlerts === 1
+        && dedupText.includes('Amazon Music sign-in expired')
+        && !dedupText.includes('Amazon Music was skipped')
+      console.log(`${targetAuthDeduped ? 'ok        ' : 'FAIL      '} account status deduplicates the matching per-target auth alert`)
+      if (!targetAuthDeduped) results.push({ label: 'one-way target auth alert deduplication', overflow: true })
+      await context.close()
+    }
+
+    // -----------------------------------------------------------------
     // "Needs a look" alerts are dismissable: one X per card, the count chip
     // follows, dismissals survive a reload, and a dismissal is FORGOTTEN once
     // that exact situation changes (a different held-count is a new problem,

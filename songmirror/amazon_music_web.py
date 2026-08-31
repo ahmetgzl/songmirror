@@ -370,7 +370,7 @@ class AmazonMusicWebClient:
         except (ValueError, TypeError, json.JSONDecodeError):
             return {}
 
-    def _renew(self) -> None:
+    def _renew(self, *, persist: bool = True, require_panda_token: bool = False) -> None:
         if not self.renewal_cookies:
             raise AmazonMusicWebAuthError(
                 "Amazon Music access token expired; reconnect once with a signed-in config.json or "
@@ -419,7 +419,15 @@ class AmazonMusicWebClient:
         token = self._response_json(token_response, "token renewal")
         self._merge_response_cookies(token_response)
 
-        access_token = str(token.get("accessToken") or config.get("accessToken") or "").strip()
+        panda_access_token = str(
+            token.get("accessToken") or token.get("access_token") or ""
+        ).strip()
+        config_access_token = str(config.get("accessToken") or "").strip()
+        access_token = (
+            panda_access_token
+            if require_panda_token
+            else panda_access_token or config_access_token
+        )
         current = self._authorization_context(self.headers)
         device_id = str(
             config.get("deviceId") or self.headers.get("device-id") or current.get("deviceId") or ""
@@ -444,7 +452,8 @@ class AmazonMusicWebClient:
         self.headers = parse_web_headers(json.dumps(refreshed_config))
         expires_in = self._number(token.get("expiresIn") or token.get("expires_in"))
         self._expires_at = time.time() + expires_in if expires_in > 0 else 0
-        self._persist_session()
+        if persist:
+            self._persist_session()
 
     def _ensure_access(self) -> bool:
         if not self.headers or (self._expires_at and self._expires_at <= time.time() + 90):
@@ -479,11 +488,20 @@ class AmazonMusicWebClient:
             )
         )
 
-    def execute(self, operation_name: str, query: str, variables=None, *, mutation=False):
+    def execute(
+        self,
+        operation_name: str,
+        query: str,
+        variables=None,
+        *,
+        mutation=False,
+        allow_renewal=True,
+    ):
         """Execute one operation and refresh/retry once on auth rejection."""
 
-        attempts = (2 if self.renewal_cookies else 1) if mutation else 5
-        refreshed = self._ensure_access()
+        can_renew = allow_renewal and bool(self.renewal_cookies)
+        attempts = (2 if can_renew else 1) if mutation else 5
+        refreshed = self._ensure_access() if allow_renewal else False
         for attempt in range(attempts):
             headers = {
                 **self.headers,
@@ -510,7 +528,7 @@ class AmazonMusicWebClient:
                 raise
 
             if response.status_code in (401, 403):
-                if self.renewal_cookies and not refreshed:
+                if can_renew and not refreshed:
                     self._renew()
                     refreshed = True
                     continue
@@ -537,7 +555,7 @@ class AmazonMusicWebClient:
                     str((error.get("extensions") or {}).get("code", "")) for error in errors
                 )
                 if self._auth_error(f"{messages} {codes}"):
-                    if self.renewal_cookies and not refreshed:
+                    if can_renew and not refreshed:
                         self._renew()
                         refreshed = True
                         continue
@@ -549,9 +567,25 @@ class AmazonMusicWebClient:
             return body.get("data") or {}
         raise RuntimeError("Amazon Music web request retry budget exhausted")
 
-    def validate(self) -> None:
-        data = self.execute("SongMirrorAmazonSession", SESSION_QUERY)
+    def validate(self, *, require_renewal: bool = False) -> None:
+        if require_renewal:
+            # A fresh config.json response proves only that its one-hour
+            # bootstrap token works. Exercise the cookie-authenticated renewal
+            # route before accepting a newly pasted session so "connected"
+            # also means SongMirror can survive that bootstrap expiring.
+            # Keep the candidate session off disk until both the panda-token
+            # response and the signed-in GraphQL identity have been proven.
+            # Disabling execute's normal retry also prevents a hidden second
+            # renewal from persisting before that identity check completes.
+            self._renew(persist=False, require_panda_token=True)
+        data = self.execute(
+            "SongMirrorAmazonSession",
+            SESSION_QUERY,
+            allow_renewal=not require_renewal,
+        )
         if not (data.get("user") or {}).get("id"):
             raise AmazonMusicWebAuthError(
                 "Amazon Music did not recognize a signed-in user; reconnect from a signed-in web player."
             )
+        if require_renewal:
+            self._persist_session()

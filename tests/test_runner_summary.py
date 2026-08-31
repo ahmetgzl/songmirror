@@ -2,6 +2,8 @@
 
 import threading
 
+import pytest
+
 from songmirror.engine import archive
 import songmirror.engine.runner as runner
 from songmirror.engine.config import Options
@@ -173,6 +175,161 @@ def test_oneway_target_workers_have_independent_archive_connections(monkeypatch,
 
     assert len(connection_ids) == len(targets)
     assert all(result["failed"] == 0 for result in summary["per_target"])
+
+
+def test_oneway_isolates_a_target_auth_error_and_keeps_sibling_results(monkeypatch, tmp_path):
+    from songmirror.engine.targets.base import TargetAuthError
+
+    class Source:
+        source, name = "spotify", "Spotify"
+
+        @staticmethod
+        def list_playlists():
+            return {"drive": {"id": "source-drive", "name": "Drive"}}
+
+        @staticmethod
+        def playlist_name(playlist):
+            return playlist["name"]
+
+        @staticmethod
+        def playlist_id(playlist):
+            return playlist["id"]
+
+        @staticmethod
+        def playlist_tracks(_playlist):
+            return [{"id": "source-track", "name": "Track", "artist": "Artist"}]
+
+    class Target:
+        def __init__(self, source, name):
+            self.source = self.tag = source
+            self.name = name
+            self.cache_file = str(tmp_path / f"{source}.json")
+
+        def list_playlists(self):
+            if self.tag == "amazon":
+                return {}
+            return {"drive": {"id": "apple-drive", "name": "Drive"}}
+
+        @staticmethod
+        def playlist_id(playlist):
+            return playlist["id"]
+
+        @staticmethod
+        def playlist_count(_playlist):
+            return 0
+
+        @staticmethod
+        def is_editable(_playlist):
+            return True
+
+        def create(self, _playlist):
+            raise TargetAuthError(
+                "Amazon Music /pandaToken did not return an access token; reconnect after signing in."
+            )
+
+    targets = [Target("apple", "Apple Music"), Target("amazon", "Amazon Music")]
+    post_sync_calls = []
+
+    def fake_mirror_pair(target, *args, **kwargs):
+        assert target.tag == "apple"
+        return {
+            "clean": True,
+            "added": 2,
+            "removed": 0,
+            "missing": 0,
+            "held": 0,
+            "deferred": 0,
+            "removals_skipped": 0,
+            "held_removals": [],
+            "target_count": 2,
+        }
+
+    monkeypatch.setattr(runner.spotify, "client", lambda writable=False: object())
+    monkeypatch.setattr(runner, "build_one", lambda *args, **kwargs: Source())
+    monkeypatch.setattr(runner, "build_targets", lambda *args, **kwargs: targets)
+    monkeypatch.setattr(runner.archive, "connect", lambda path: _FakeSongs())
+    monkeypatch.setattr(runner, "_load_links", lambda: [])
+    monkeypatch.setattr(runner, "mirror_pair", fake_mirror_pair)
+    monkeypatch.setattr(runner, "_post_sync", lambda *args, **kwargs: post_sync_calls.append(True))
+
+    summary = runner.run_pass(
+        _opts(
+            execute=True,
+            sync_source="spotify",
+            providers="spotify,apple,amazon",
+            playlists="Drive",
+        )
+    )
+
+    assert summary["ok"] is True
+    assert summary["error"] is None
+    by_name = {entry["name"]: entry for entry in summary["per_target"]}
+    assert by_name["Apple Music"]["added"] == 2
+    assert by_name["Apple Music"].get("error") is None
+    assert by_name["Amazon Music"]["auth_error"] is True
+    assert by_name["Amazon Music"]["error"] == (
+        "Amazon Music /pandaToken did not return an access token; reconnect after signing in."
+    )
+    assert post_sync_calls == [True]
+
+
+def test_oneway_source_auth_error_remains_fatal(monkeypatch, tmp_path):
+    from songmirror.engine.targets.base import TargetAuthError
+
+    class Source:
+        source, name = "spotify", "Spotify"
+
+        @staticmethod
+        def list_playlists():
+            return {"drive": {"id": "source-drive", "name": "Drive"}}
+
+        @staticmethod
+        def playlist_name(playlist):
+            return playlist["name"]
+
+        @staticmethod
+        def playlist_id(playlist):
+            return playlist["id"]
+
+        @staticmethod
+        def playlist_tracks(_playlist):
+            raise TargetAuthError("Spotify source session expired")
+
+    class Target:
+        source, tag, name = "apple", "apple", "Apple Music"
+        cache_file = str(tmp_path / "apple.json")
+
+        @staticmethod
+        def list_playlists():
+            return {"drive": {"id": "apple-drive", "name": "Drive"}}
+
+        @staticmethod
+        def playlist_id(playlist):
+            return playlist["id"]
+
+        @staticmethod
+        def is_editable(_playlist):
+            return True
+
+    post_sync_calls = []
+    monkeypatch.setattr(runner.spotify, "client", lambda writable=False: object())
+    monkeypatch.setattr(runner, "build_one", lambda *args, **kwargs: Source())
+    monkeypatch.setattr(runner, "build_targets", lambda *args, **kwargs: [Target()])
+    monkeypatch.setattr(runner.archive, "connect", lambda path: _FakeSongs())
+    monkeypatch.setattr(runner, "_load_links", lambda: [])
+    monkeypatch.setattr(runner, "_post_sync", lambda *args, **kwargs: post_sync_calls.append(True))
+
+    with pytest.raises(TargetAuthError, match="Spotify source session expired"):
+        runner.run_pass(
+            _opts(
+                execute=True,
+                sync_source="spotify",
+                providers="spotify,apple",
+                playlists="Drive",
+            )
+        )
+
+    assert post_sync_calls == []
 
 
 def test_nway_wraps_accumulated_summary(monkeypatch):

@@ -1051,6 +1051,157 @@ def test_amazon_web_client_renews_rejected_token_and_retries_mutation_once(tmp_p
     assert persisted["expires_at"] > 0
 
 
+def test_amazon_connector_rejects_a_bootstrap_when_renewal_cannot_mint_a_token(tmp_path, monkeypatch):
+    import songmirror.amazon_music_web as amazon_web
+    from songmirror.services.accounts.amazon_music import AmazonMusicConnector
+
+    class Cookies:
+        @staticmethod
+        def get_dict():
+            return {}
+
+    class Response:
+        headers = {}
+        cookies = Cookies()
+
+        def __init__(self, status_code, body):
+            self.status_code = status_code
+            self._body = body
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise AssertionError(f"unexpected HTTP {self.status_code}")
+
+        def json(self):
+            return self._body
+
+    class Session:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append(("GET", url))
+            if url == amazon_web.CONFIG_ENDPOINT:
+                return Response(
+                    200,
+                    {
+                        "accessToken": "config-bootstrap",
+                        "deviceId": "device-7",
+                        "deviceType": "A16ZV8BU3SN1N3",
+                    },
+                )
+            assert url == amazon_web.PANDA_TOKEN_ENDPOINT
+            return Response(200, {"accessToken": "", "expiresIn": 0})
+
+        def post(self, url, **kwargs):
+            self.calls.append(("POST", url))
+            assert url == amazon_web.ENDPOINT
+            return Response(200, {"data": {"user": {"id": "customer-1"}}})
+
+    session = Session()
+    monkeypatch.setattr(amazon_web.requests, "Session", lambda: session)
+    monkeypatch.setenv("AMAZON_MUSIC_WEB_HEADERS", "")
+    monkeypatch.setenv("AMAZON_MUSIC_RENEWAL_REQUEST", "")
+    monkeypatch.setenv("AMAZON_MUSIC_WEB_SESSION_FILE", str(tmp_path / "amazon-session.json"))
+    connector = AmazonMusicConnector(SettingsStore(dir=tmp_path))
+
+    status = connector.submit(
+        {
+            "AMAZON_MUSIC_WEB_HEADERS": json.dumps(
+                {
+                    "accessToken": "one-hour-bootstrap",
+                    "deviceId": "device-7",
+                    "deviceType": "A16ZV8BU3SN1N3",
+                }
+            ),
+            "AMAZON_MUSIC_RENEWAL_REQUEST": "Cookie: at-main-music=stale-session",
+        }
+    )
+
+    assert status.state == "error"
+    assert "/pandaToken did not return an access token" in status.detail
+    assert session.calls == [
+        ("GET", amazon_web.CONFIG_ENDPOINT),
+        ("GET", amazon_web.PANDA_TOKEN_ENDPOINT),
+    ]
+    assert not connector._store.get("AMAZON_MUSIC_WEB_HEADERS")
+    assert not connector._store.get("AMAZON_MUSIC_RENEWAL_REQUEST")
+    assert not (tmp_path / "amazon-session.json").exists()
+
+
+def test_amazon_connector_persists_renewal_only_after_user_validation(tmp_path, monkeypatch):
+    import songmirror.amazon_music_web as amazon_web
+    from songmirror.services.accounts.amazon_music import AmazonMusicConnector
+
+    class Cookies:
+        @staticmethod
+        def get_dict():
+            return {"at-main-music": "rotated-session"}
+
+    class Response:
+        headers = {}
+        cookies = Cookies()
+
+        def __init__(self, status_code, body):
+            self.status_code = status_code
+            self._body = body
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise AssertionError(f"unexpected HTTP {self.status_code}")
+
+        def json(self):
+            return self._body
+
+    class Session:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append(("GET", url))
+            if url == amazon_web.CONFIG_ENDPOINT:
+                return Response(200, {"deviceId": "device-7", "deviceType": "A16ZV8BU3SN1N3"})
+            assert url == amazon_web.PANDA_TOKEN_ENDPOINT
+            return Response(200, {"accessToken": "fresh-access", "expiresIn": 3600})
+
+        def post(self, url, **kwargs):
+            self.calls.append(("POST", url))
+            assert url == amazon_web.ENDPOINT
+            return Response(200, {"data": {"user": None}})
+
+    session = Session()
+    token_file = tmp_path / "amazon-session.json"
+    monkeypatch.setattr(amazon_web.requests, "Session", lambda: session)
+    monkeypatch.setenv("AMAZON_MUSIC_WEB_HEADERS", "")
+    monkeypatch.setenv("AMAZON_MUSIC_RENEWAL_REQUEST", "")
+    monkeypatch.setenv("AMAZON_MUSIC_WEB_SESSION_FILE", str(token_file))
+    connector = AmazonMusicConnector(SettingsStore(dir=tmp_path))
+
+    status = connector.submit(
+        {
+            "AMAZON_MUSIC_WEB_HEADERS": json.dumps(
+                {
+                    "accessToken": "one-hour-bootstrap",
+                    "deviceId": "device-7",
+                    "deviceType": "A16ZV8BU3SN1N3",
+                }
+            ),
+            "AMAZON_MUSIC_RENEWAL_REQUEST": "Cookie: at-main-music=candidate-session",
+        }
+    )
+
+    assert status.state == "error"
+    assert "did not recognize a signed-in user" in status.detail
+    assert session.calls == [
+        ("GET", amazon_web.CONFIG_ENDPOINT),
+        ("GET", amazon_web.PANDA_TOKEN_ENDPOINT),
+        ("POST", amazon_web.ENDPOINT),
+    ]
+    assert not connector._store.get("AMAZON_MUSIC_WEB_HEADERS")
+    assert not connector._store.get("AMAZON_MUSIC_RENEWAL_REQUEST")
+    assert not token_file.exists()
+
+
 def test_amazon_connector_accepts_web_session_without_beta_approval(tmp_path, monkeypatch):
     from songmirror.services.accounts.amazon_music import AmazonMusicConnector
 
@@ -1069,11 +1220,13 @@ def test_amazon_connector_accepts_web_session_without_beta_approval(tmp_path, mo
         ("AMAZON_MUSIC_RENEWAL_REQUEST", True),
     ]
 
-    monkeypatch.setattr(
-        connector,
-        "_validate",
-        lambda raw=None, renewal_request=None, **kwargs: (True, "auto-renewing web session"),
-    )
+    validation_kwargs = []
+
+    def accept_session(raw=None, renewal_request=None, **kwargs):
+        validation_kwargs.append(kwargs)
+        return True, "auto-renewing web session"
+
+    monkeypatch.setattr(connector, "_validate", accept_session)
     connected = connector.submit(
         {
             "AMAZON_MUSIC_WEB_HEADERS": (
@@ -1087,6 +1240,7 @@ def test_amazon_connector_accepts_web_session_without_beta_approval(tmp_path, mo
         }
     )
     assert connected.state == "connected"
+    assert validation_kwargs == [{"prefer_persisted": False, "require_renewal": True}]
     stored = json.loads(connector._store.get("AMAZON_MUSIC_WEB_HEADERS"))
     assert set(stored) == {"authorization", "x-api-key"}
     assert json.loads(connector._store.get("AMAZON_MUSIC_RENEWAL_REQUEST")) == {

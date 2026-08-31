@@ -72,6 +72,10 @@ export type Settings = Record<string, string>
 
 export interface TargetSummary {
   name: string
+  /** A one-way destination whose credentials failed is reported here without
+   * discarding successful sibling destinations or failing the whole pass. */
+  auth_error?: boolean
+  error?: string | null
   added: number
   removed: number
   missing: number
