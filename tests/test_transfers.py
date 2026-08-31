@@ -460,3 +460,31 @@ def test_transfer_service_resolve_writes_cache(monkeypatch, tmp_path):
     asyncio.run(scenario())
     assert "chosen-id" in out["cache"]["search"].values()  # accepted match cached for next run
     assert out["job"]["conflicts"][0]["resolved"] is True
+
+
+def test_transfer_service_normalizes_manual_id_before_writing_cache(monkeypatch, tmp_path):
+    from songmirror.engine.targets.deezer import DeezerTarget
+    from songmirror.engine.runner import load_cache
+
+    out = {}
+
+    async def scenario():
+        _, dst = _service(monkeypatch, tmp_path)
+        dst.normalize_manual_track_id = DeezerTarget.normalize_manual_track_id
+        bus = EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        sync = SyncService(SettingsStore(dir=tmp_path), bus)
+        svc = TransferService(SettingsStore(dir=tmp_path), bus, sync)
+        job = svc.submit({"source_provider": "apple", "source_playlist_id": "p1",
+                          "dest_provider": "deezer", "dest_playlist_id": "p1"})
+        j = await _await_job(svc, job["id"])
+        svc.resolve(
+            job["id"],
+            j["conflicts"][0]["key"],
+            "https://www.deezer.com/tr/track/4160591112",
+        )
+        out["cache"] = load_cache(dst.cache_file)
+
+    asyncio.run(scenario())
+
+    assert "4160591112" in out["cache"]["search"].values()

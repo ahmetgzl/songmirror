@@ -73,6 +73,11 @@ class MirrorTarget:
         """Stable id of an existing target track (for diffing / linking)."""
         raise NotImplementedError
 
+    @classmethod
+    def normalize_manual_track_id(cls, value):
+        """Provider catalog id represented by a manually pasted id or link."""
+        return "" if value is None else str(value).strip()
+
     def occurrence_id(self, track):
         """Provider id for one physical playlist entry, when available."""
         for key in ("relationship_id", "playlistItemId", "setVideoId"):

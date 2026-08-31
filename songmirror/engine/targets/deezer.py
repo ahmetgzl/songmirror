@@ -2,8 +2,9 @@
 
 import os
 import random
+import re
 import time
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import requests
 
@@ -21,6 +22,16 @@ from .provider_utils import best_candidate, source_playlist_details
 
 API = "https://api.deezer.com"
 DEFAULT_TOKEN_FILE = "data/deezer_oauth.json"
+_TRACK_PATH_RE = re.compile(r"(?:^|/)track/(\d+)(?=$|[/?#])", re.IGNORECASE)
+_SHARE_LINK_HOSTS = {"link.deezer.com"}
+
+
+def _track_id_from_reference(value):
+    decoded = unquote(str(value).strip())
+    if re.fullmatch(r"\d+", decoded):
+        return decoded
+    match = _TRACK_PATH_RE.search(decoded)
+    return match.group(1) if match else None
 
 
 def _normalized_track(track):
@@ -275,6 +286,42 @@ class DeezerTarget(MirrorTarget):
     def track_id(self, track):
         return str(track.get("id")) if track.get("id") is not None else None
 
+    @classmethod
+    def normalize_manual_track_id(cls, value):
+        """Extract Deezer's numeric catalog id from a pasted id or track URL."""
+        raw = super().normalize_manual_track_id(value)
+        track_id = _track_id_from_reference(raw)
+        if track_id:
+            return track_id
+
+        try:
+            parts = urlsplit(raw)
+        except ValueError:
+            parts = None
+        is_share_link = (
+            parts
+            and parts.scheme == "https"
+            and (parts.hostname or "").lower() in _SHARE_LINK_HOSTS
+        )
+        if is_share_link:
+            try:
+                response = requests.head(
+                    raw,
+                    allow_redirects=False,
+                    timeout=REQUEST_TIMEOUT,
+                )
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                raise ValueError(
+                    "Could not resolve that Deezer share link; paste its full track URL or numeric ID."
+                ) from exc
+            track_id = _track_id_from_reference(response.headers.get("Location", ""))
+            if track_id:
+                return track_id
+            raise ValueError("That Deezer share link does not point to a track.")
+
+        raise ValueError("Paste a numeric Deezer track ID or a Deezer track URL.")
+
     def playlist_count(self, playlist):
         return playlist.get("nb_tracks", playlist.get("estimatedTracksCount"))
 
@@ -325,7 +372,14 @@ class DeezerTarget(MirrorTarget):
             return best_candidate(track, candidates) or str(candidates[0]["id"]), "isrc"
         key = track_key(track.get("name", ""), " ".join(track.get("artists") or []))
         if key in cache["search"]:
-            return cache["search"][key], "search"
+            cached = cache["search"][key]
+            if cached is None:
+                return None, "search"
+            normalized = self.normalize_manual_track_id(cached)
+            if normalized != cached:
+                cache["search"][key] = normalized
+                cache["dirty"] = True
+            return normalized, "search"
         primary = (track.get("artists") or [""])[0]
         queries = [f"{track.get('name', '')} {primary}".strip()]
         roman = f"{romanized(track.get('name'))} {romanized(primary)}".strip()
@@ -346,13 +400,20 @@ class DeezerTarget(MirrorTarget):
         if self._web is not None:
             try:
                 for target_id in target_ids:
-                    self._web.add(str(playlist["id"]), [str(target_id)])
+                    self._web.add(
+                        str(playlist["id"]),
+                        [self.normalize_manual_track_id(target_id)],
+                    )
                     polite_sleep(0.25)
                 return
             except DeezerWebAuthError as exc:
                 raise TargetAuthError(str(exc)) from exc
         for target_id in target_ids:
-            self._request("POST", f"playlist/{playlist['id']}/tracks", params={"songs": str(target_id)})
+            self._request(
+                "POST",
+                f"playlist/{playlist['id']}/tracks",
+                params={"songs": self.normalize_manual_track_id(target_id)},
+            )
             polite_sleep(0.25)
 
     def remove(self, playlist, track):
