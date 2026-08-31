@@ -29,9 +29,12 @@ class AmazonMusicConnector(Connector):
         ),
         Field(
             "AMAZON_MUSIC_RENEWAL_REQUEST",
-            "Signed-in renewal request",
+            "Signed-in request with SSO cookies",
             secret=True,
-            help="Copy a signed-in config.json or /pandaToken request's headers or cURL",
+            help=(
+                "Copy the complete headers or cURL for a signed-in config.json request; "
+                "SongMirror verifies that its sst-main cookie can recreate the Music session"
+            ),
         ),
     ]
 

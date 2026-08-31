@@ -3,7 +3,8 @@
 Amazon's documented Music Web API is a closed beta.  The consumer web player
 uses a separate GraphQL endpoint, authenticated by short-lived request headers
 from the signed-in browser.  The web player renews those headers through its
-same-origin ``/pandaToken`` route.  This module persists only the minimal
+same-origin ``/pandaToken`` route and recreates expired Music sessions through
+Amazon's signed-in SSO handoff.  This module persists only the minimal
 GraphQL context plus a named allowlist of cookies needed by that renewal route;
 analytics, experiment, AWS-console, and other unrelated cookies are discarded.
 
@@ -18,6 +19,7 @@ import json
 import random
 import re
 import time
+from urllib.parse import urlsplit
 
 import requests
 
@@ -27,7 +29,14 @@ from .oauth import read_token, write_token
 ENDPOINT = "https://gql.music.amazon.dev"
 CONFIG_ENDPOINT = "https://music.amazon.com/config.json"
 PANDA_TOKEN_ENDPOINT = "https://music.amazon.com/pandaToken"
+FORCE_SIGN_IN_ENDPOINT = "https://music.amazon.com/forceSignIn"
+MUSIC_HOME_URL = "https://music.amazon.com/"
 DEFAULT_WEB_SESSION_FILE = "data/amazon_music_web_session.json"
+
+_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+)
 
 # Public identifier embedded in Amazon Music's first-party Firefly web bundle.
 # It identifies the web client; it is not a customer secret.  The signed-in
@@ -66,13 +75,24 @@ _ALLOWED_RENEWAL_COOKIES = {
     "session-id",
     "session-id-time",
     "session-token",
+    "sso-state-main",
+    "sst-main",
     "ubid-main",
     "x-main",
 }
 
+# These cookies belong to the Music web session and expire with the one-hour
+# access token.  They must not be allowed to prove that the retail SSO session
+# can recreate Music authentication during a new connection check.
+_SHORT_LIVED_MUSIC_COOKIES = {"am-token", "at-main-music", "sid"}
+
 
 class AmazonMusicWebAuthError(RuntimeError):
     """The pasted web-player session is missing, expired, or rejected."""
+
+
+class _AmazonMusicRenewalRejected(AmazonMusicWebAuthError):
+    """A token endpoint rejected cookies that may still be recoverable via SSO."""
 
 
 def _header_pairs(raw: str):
@@ -279,10 +299,12 @@ class AmazonMusicWebClient:
         endpoint: str = ENDPOINT,
         config_endpoint: str = CONFIG_ENDPOINT,
         panda_token_endpoint: str = PANDA_TOKEN_ENDPOINT,
+        force_sign_in_endpoint: str = FORCE_SIGN_IN_ENDPOINT,
     ):
         self.endpoint = endpoint
         self.config_endpoint = config_endpoint
         self.panda_token_endpoint = panda_token_endpoint
+        self.force_sign_in_endpoint = force_sign_in_endpoint
         self.session = session or requests.Session()
         self._token_file = str(token_file or "")
 
@@ -311,6 +333,7 @@ class AmazonMusicWebClient:
             if prefer_persisted and stored_cookies
             else supplied_cookies or stored_cookies
         )
+        self._seed_session_cookies()
 
         if not self.headers and not self.renewal_cookies:
             raise ValueError(
@@ -335,19 +358,93 @@ class AmazonMusicWebClient:
             raise AmazonMusicWebAuthError(f"Amazon Music {label} returned an invalid response.")
         return body
 
-    def _merge_response_cookies(self, response) -> None:
-        jar = getattr(response, "cookies", None)
+    @staticmethod
+    def _cookie_domain(name: str) -> str:
+        return ".music.amazon.com" if name in _SHORT_LIVED_MUSIC_COOKIES else ".amazon.com"
+
+    def _session_cookie_jar(self):
+        jar = getattr(self.session, "cookies", None)
+        return jar if hasattr(jar, "set") and hasattr(jar, "clear") else None
+
+    @staticmethod
+    def _clear_jar_cookie(jar, cookie) -> None:
+        try:
+            jar.clear(domain=cookie.domain, path=cookie.path, name=cookie.name)
+        except (KeyError, ValueError):
+            pass
+
+    def _seed_session_cookies(self) -> None:
+        jar = self._session_cookie_jar()
         if jar is None:
             return
-        try:
-            values = jar.get_dict()
-        except AttributeError:
+        for cookie in list(jar):
+            if str(cookie.name).casefold() in _ALLOWED_RENEWAL_COOKIES:
+                self._clear_jar_cookie(jar, cookie)
+        for name, value in self.renewal_cookies.items():
+            jar.set(
+                name,
+                value,
+                domain=self._cookie_domain(name),
+                path="/",
+                secure=True,
+            )
+
+    def _sync_response_cookies(self, response) -> None:
+        session_jar = self._session_cookie_jar()
+        if session_jar is not None:
+            refreshed: dict[str, str] = {}
+            for cookie in session_jar:
+                name = str(cookie.name).casefold()
+                value = str(cookie.value or "").strip()
+                if name not in _ALLOWED_RENEWAL_COOKIES or not value:
+                    continue
+                expected_domain = self._cookie_domain(name).lstrip(".")
+                actual_domain = str(cookie.domain or "").lstrip(".").casefold()
+                # Redirect targets must never be able to smuggle a familiar
+                # cookie name into persisted state and have it widened onto an
+                # Amazon domain the next time the session jar is seeded.
+                if actual_domain != expected_domain:
+                    continue
+                refreshed[name] = value
+            self.renewal_cookies = refreshed
+            return
+
+        # Lightweight test doubles may not expose a session jar. Preserve the
+        # previous response-cookie fallback for those callers, including empty
+        # values that explicitly revoke an existing cookie.
+        for item in [*getattr(response, "history", []), response]:
+            jar = getattr(item, "cookies", None)
+            if jar is None:
+                continue
             try:
-                values = dict(jar)
-            except (TypeError, ValueError):
-                return
-        for name, value in values.items():
-            _add_cookie(self.renewal_cookies, name, value)
+                values = jar.get_dict()
+            except AttributeError:
+                try:
+                    values = dict(jar)
+                except (TypeError, ValueError):
+                    continue
+            for name, value in values.items():
+                key = str(name).strip().casefold()
+                if key not in _ALLOWED_RENEWAL_COOKIES:
+                    continue
+                if value is None or not str(value).strip():
+                    self.renewal_cookies.pop(key, None)
+                else:
+                    _add_cookie(self.renewal_cookies, key, value)
+
+    def _cookie_kwargs(self) -> dict:
+        if self._session_cookie_jar() is not None:
+            return {}
+        return {"cookies": self.renewal_cookies}
+
+    def _drop_short_lived_music_cookies(self) -> None:
+        jar = self._session_cookie_jar()
+        for name in _SHORT_LIVED_MUSIC_COOKIES:
+            self.renewal_cookies.pop(name, None)
+            if jar is not None:
+                for cookie in list(jar):
+                    if str(cookie.name).casefold() == name:
+                        self._clear_jar_cookie(jar, cookie)
 
     def _persist_session(self) -> None:
         if not self._token_file:
@@ -370,7 +467,111 @@ class AmazonMusicWebClient:
         except (ValueError, TypeError, json.JSONDecodeError):
             return {}
 
-    def _renew(self, *, persist: bool = True, require_panda_token: bool = False) -> None:
+    @staticmethod
+    def _api_browser_headers() -> dict[str, str]:
+        return {
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Origin": MUSIC_HOME_URL.rstrip("/"),
+            "Referer": MUSIC_HOME_URL,
+            "User-Agent": _BROWSER_USER_AGENT,
+        }
+
+    @staticmethod
+    def _navigation_browser_headers() -> dict[str, str]:
+        return {
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "image/avif,image/webp,*/*;q=0.8"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": MUSIC_HOME_URL,
+            "User-Agent": _BROWSER_USER_AGENT,
+        }
+
+    def _refresh_music_session(self) -> None:
+        if not self.renewal_cookies.get("sst-main"):
+            raise AmazonMusicWebAuthError(
+                "Amazon Music renewal is missing the sst-main SSO cookie; reconnect and copy "
+                "the complete signed-in config.json request headers or cURL."
+            )
+
+        # Prove the retail SSO state can recreate Music authentication instead
+        # of letting a still-valid one-hour Music cookie satisfy validation.
+        self._drop_short_lived_music_cookies()
+        try:
+            response = self.session.get(
+                self.force_sign_in_endpoint,
+                headers=self._navigation_browser_headers(),
+                params={"webplayerDetailPagePath": MUSIC_HOME_URL},
+                timeout=REQUEST_TIMEOUT,
+                allow_redirects=True,
+                **self._cookie_kwargs(),
+            )
+        except requests.RequestException as exc:
+            raise AmazonMusicWebAuthError(
+                f"Amazon Music SSO renewal failed ({exc!r})."
+            ) from exc
+        self._sync_response_cookies(response)
+
+        final_host = str(urlsplit(str(getattr(response, "url", "") or "")).hostname or "")
+        if final_host.casefold() != "music.amazon.com":
+            raise AmazonMusicWebAuthError(
+                "Amazon Music SSO renewal reached the sign-in page; reconnect and copy the "
+                "complete signed-in config.json request headers or cURL."
+            )
+        if response.status_code in (401, 403):
+            raise AmazonMusicWebAuthError(
+                "Amazon Music SSO renewal was rejected; reconnect with a fresh signed-in request."
+            )
+        response.raise_for_status()
+
+    def _request_renewal(self) -> tuple[dict, dict]:
+        browser_headers = self._api_browser_headers()
+        try:
+            config_response = self.session.get(
+                self.config_endpoint,
+                headers=browser_headers,
+                timeout=REQUEST_TIMEOUT,
+                **self._cookie_kwargs(),
+            )
+        except requests.RequestException as exc:
+            raise AmazonMusicWebAuthError(f"Amazon Music config renewal failed ({exc!r}).") from exc
+        self._sync_response_cookies(config_response)
+        if config_response.status_code in (401, 403):
+            raise _AmazonMusicRenewalRejected(
+                "Amazon Music renewal session expired or was revoked; reconnect with a fresh "
+                "config.json or /pandaToken request."
+            )
+        config_response.raise_for_status()
+        config = self._response_json(config_response, "config renewal")
+
+        try:
+            token_response = self.session.get(
+                self.panda_token_endpoint,
+                headers=browser_headers,
+                timeout=REQUEST_TIMEOUT,
+                **self._cookie_kwargs(),
+            )
+        except requests.RequestException as exc:
+            raise AmazonMusicWebAuthError(f"Amazon Music token renewal failed ({exc!r}).") from exc
+        self._sync_response_cookies(token_response)
+        if token_response.status_code in (400, 401, 403):
+            raise _AmazonMusicRenewalRejected(
+                "Amazon Music renewal session expired or was revoked; reconnect with a fresh "
+                "config.json or /pandaToken request."
+            )
+        token_response.raise_for_status()
+        token = self._response_json(token_response, "token renewal")
+        return config, token
+
+    def _renew(
+        self,
+        *,
+        persist: bool = True,
+        require_panda_token: bool = False,
+        prove_sso: bool = False,
+    ) -> None:
         if not self.renewal_cookies:
             raise AmazonMusicWebAuthError(
                 "Amazon Music access token expired; reconnect once with a signed-in config.json or "
@@ -378,51 +579,48 @@ class AmazonMusicWebClient:
                 "to enable automatic renewal."
             )
 
-        browser_headers = {
-            "Accept": "application/json",
-            "Origin": "https://music.amazon.com",
-            "Referer": "https://music.amazon.com/",
-        }
+        used_sso = prove_sso
+        if used_sso:
+            self._refresh_music_session()
         try:
-            config_response = self.session.get(
-                self.config_endpoint,
-                headers=browser_headers,
-                cookies=self.renewal_cookies,
-                timeout=REQUEST_TIMEOUT,
-            )
-        except requests.RequestException as exc:
-            raise AmazonMusicWebAuthError(f"Amazon Music config renewal failed ({exc!r}).") from exc
-        if config_response.status_code in (401, 403):
-            raise AmazonMusicWebAuthError(
-                "Amazon Music renewal session expired or was revoked; reconnect with a fresh "
-                "config.json or /pandaToken request."
-            )
-        config_response.raise_for_status()
-        config = self._response_json(config_response, "config renewal")
-        self._merge_response_cookies(config_response)
-
-        try:
-            token_response = self.session.get(
-                self.panda_token_endpoint,
-                headers=browser_headers,
-                cookies=self.renewal_cookies,
-                timeout=REQUEST_TIMEOUT,
-            )
-        except requests.RequestException as exc:
-            raise AmazonMusicWebAuthError(f"Amazon Music token renewal failed ({exc!r}).") from exc
-        if token_response.status_code in (400, 401, 403):
-            raise AmazonMusicWebAuthError(
-                "Amazon Music renewal session expired or was revoked; reconnect with a fresh "
-                "config.json or /pandaToken request."
-            )
-        token_response.raise_for_status()
-        token = self._response_json(token_response, "token renewal")
-        self._merge_response_cookies(token_response)
+            config, token = self._request_renewal()
+        except _AmazonMusicRenewalRejected as exc:
+            if used_sso:
+                raise AmazonMusicWebAuthError(
+                    "Amazon Music rejected token renewal after the SSO handoff; reconnect with "
+                    "a fresh signed-in request."
+                ) from exc
+            self._refresh_music_session()
+            used_sso = True
+            try:
+                config, token = self._request_renewal()
+            except _AmazonMusicRenewalRejected as retry_exc:
+                raise AmazonMusicWebAuthError(
+                    "Amazon Music rejected token renewal after the SSO handoff; reconnect with "
+                    "a fresh signed-in request."
+                ) from retry_exc
 
         panda_access_token = str(
             token.get("accessToken") or token.get("access_token") or ""
         ).strip()
         config_access_token = str(config.get("accessToken") or "").strip()
+        if not panda_access_token and not config_access_token and not used_sso:
+            # The one-hour Music cookies have expired. Use Amazon's own web
+            # sign-in handoff to recreate them from the durable SSO session,
+            # then retry the token endpoints once.
+            self._refresh_music_session()
+            used_sso = True
+            try:
+                config, token = self._request_renewal()
+            except _AmazonMusicRenewalRejected as exc:
+                raise AmazonMusicWebAuthError(
+                    "Amazon Music rejected token renewal after the SSO handoff; reconnect with "
+                    "a fresh signed-in request."
+                ) from exc
+            panda_access_token = str(
+                token.get("accessToken") or token.get("access_token") or ""
+            ).strip()
+            config_access_token = str(config.get("accessToken") or "").strip()
         access_token = (
             panda_access_token
             if require_panda_token
@@ -437,7 +635,8 @@ class AmazonMusicWebClient:
         ).strip()
         if not access_token:
             raise AmazonMusicWebAuthError(
-                "Amazon Music /pandaToken did not return an access token; reconnect after signing in."
+                "Amazon Music /pandaToken did not return an access token after SSO renewal; "
+                "reconnect after signing in."
             )
         if not device_id or not device_type:
             raise AmazonMusicWebAuthError(
@@ -577,7 +776,7 @@ class AmazonMusicWebClient:
             # response and the signed-in GraphQL identity have been proven.
             # Disabling execute's normal retry also prevents a hidden second
             # renewal from persisting before that identity check completes.
-            self._renew(persist=False, require_panda_token=True)
+            self._renew(persist=False, require_panda_token=True, prove_sso=True)
         data = self.execute(
             "SongMirrorAmazonSession",
             SESSION_QUERY,

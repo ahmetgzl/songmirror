@@ -153,14 +153,14 @@ const CONNECT_GUIDES: Record<string, ConnectGuideContent> = {
       </>,
       <>
         Choose <strong>Copy request headers</strong> or <strong>Copy as cURL</strong>, then paste it into the renewal
-        field below.
+        field below. Keep the complete <Code>Cookie</Code> header so the <Code>sst-main</Code> SSO cookie is included.
       </>,
       <>
         Paste those <strong>request</strong> headers into the renewal field. Its <strong>Response</strong> JSON is only
         an optional bootstrap in the first field.
       </>,
     ],
-    note: 'A /pandaToken request works too when it appears, but it is not required. SongMirror keeps only a named allowlist of authentication cookies, renews internally through /pandaToken, and drops unrelated browser data.',
+    note: 'SongMirror verifies Amazon’s SSO handoff without relying on the one-hour Music cookie, then renews internally through /pandaToken. Only a named allowlist of authentication cookies is retained.',
   },
   apple: {
     intro: 'No developer account needed. Copy two tokens the Apple Music web player already uses.',
@@ -249,7 +249,7 @@ const RAW_SESSION_PLACEHOLDERS: Record<string, string> = {
   DEEZER_WEB_HEADERS: 'authorization: Bearer …\n—or paste Copy as cURL—',
   DEEZER_REFRESH_TOKEN: 'Cookie: refresh-token=…\n—or paste the auth.deezer.com request as cURL—',
   AMAZON_MUSIC_WEB_HEADERS: '{\n  "accessToken": "…",\n  "deviceId": "…",\n  "deviceType": "…"\n}',
-  AMAZON_MUSIC_RENEWAL_REQUEST: 'Cookie: at-main-music=…; session-id=…\n—or paste config.json Copy as cURL—',
+  AMAZON_MUSIC_RENEWAL_REQUEST: 'Cookie: at-main-music=…; sst-main=…; session-id=…\n—or paste config.json Copy as cURL—',
 }
 
 /** Parses a raw "copy request headers" block (case-insensitive, line-based
