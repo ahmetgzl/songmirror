@@ -55,10 +55,13 @@ function diagnosticCount(rows: ChangeDiagnostic[]): number {
 }
 
 /** Every item here traces back to a real field — account state/detail, or the
- * last pass's own ok flag and per-target held/deferred/removals-skipped counts.
+ * last pass's own ok flag and per-target errors/held/deferred/removals-skipped counts.
  * Nothing is invented (no fabricated "last synced" claims). */
 function buildItems(accounts: Account[] | null, status: SyncStatus | null): NeedsLookItem[] {
   const items: NeedsLookItem[] = []
+  const accountProblems = new Set(
+    (accounts ?? []).filter((account) => account.state !== 'connected').map((account) => account.name),
+  )
 
   for (const a of accounts ?? []) {
     if (a.state === 'expired') {
@@ -94,6 +97,21 @@ function buildItems(accounts: Account[] | null, status: SyncStatus | null): Need
       icon: LuCircleAlert,
       title: 'The last pass failed',
       description: status.last.error || "It didn't complete successfully. The services it reached are unaffected.",
+    })
+  }
+
+  // Account status normally reports the same expired session. Keep the
+  // per-target result as a fallback for the interval before that independent
+  // snapshot refreshes, without rendering two cards for one provider.
+  for (const target of status?.last?.per_target ?? []) {
+    if (!target.auth_error || !target.error || accountProblems.has(target.name)) continue
+    items.push({
+      key: `target-auth-${target.name}`,
+      icon: LuTriangleAlert,
+      title: `${target.name} was skipped`,
+      description: target.error,
+      details: ['Other destinations and post-sync work continued.'],
+      action: { label: 'Reconnect', to: '/accounts' },
     })
   }
 

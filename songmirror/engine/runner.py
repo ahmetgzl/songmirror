@@ -19,6 +19,10 @@ from .targets import TargetAuthError, build_one, build_peers, build_targets, mir
 from .targets.base import _normalize, reconcile_state_key
 
 
+class _SourceAuthError(TargetAuthError):
+    """Auth failure raised while reading the one-way source, not a destination."""
+
+
 def _load_json(path):
     try:
         with open(path) as f:
@@ -91,6 +95,10 @@ def _summary_entry(name, agg):
     entry["held_removals"] = agg.get("held_removals", [])
     entry["change_diagnostics"] = agg.get("change_diagnostics", [])
     entry["failures"] = agg.get("failures", [])
+    if "error" in agg:
+        entry["error"] = agg["error"]
+    if "auth_error" in agg:
+        entry["auth_error"] = bool(agg["auth_error"])
     return entry
 
 
@@ -163,6 +171,8 @@ def run_target(target, selected, get_source_tracks, songs, opts, links=None, sou
                         )
                     agg["created"] += 1
                     log_note(f"created {target.name} playlist '{name}' (name + description copied)", tag=target.tag)
+                except TargetAuthError:
+                    raise
                 except Exception as e:
                     _collect_failure(agg, agg["failures"], name, e)
                     log_warn(f"create '{name}' failed: {e!r}", tag=target.tag)
@@ -182,8 +192,16 @@ def run_target(target, selected, get_source_tracks, songs, opts, links=None, sou
                 continue
 
             try:
+                source_tracks = get_source_tracks(sp_playlist)
+            except TargetAuthError as exc:
+                # The same TargetAuthError type is used by every provider.
+                # Preserve the origin so a shared source expiry cannot be
+                # mislabeled as an independent destination failure.
+                raise _SourceAuthError(str(exc)) from exc
+
+            try:
                 res = mirror_pair(
-                    target, get_source_tracks(sp_playlist), sp_playlist, tgt, cache, songs,
+                    target, source_tracks, sp_playlist, tgt, cache, songs,
                     execute=opts.execute, max_removals=opts.max_removals, max_adds=opts.max_adds,
                     drain_removals=opts.apply_large_removals, should_continue=should_continue,
                     source_key=src_key, source_name=source.name, name=name,
@@ -340,7 +358,20 @@ def run_pass(opts, should_continue=None):
     def worker(target, songs):
         try:
             results[target.tag] = run_target(target, selected, get_source_tracks, songs, opts, links, source, ctrl)
-        except BaseException as e:  # surface after siblings finish
+        except _SourceAuthError as e:
+            # A one-way source is shared by every destination. Its failure
+            # invalidates the pass and must also suppress post-sync work.
+            errors.append((target, e))
+        except TargetAuthError as e:
+            # One-way targets are independent. Preserve a provider-scoped
+            # failure in the summary instead of discarding successful siblings
+            # and the optional post-sync stage after every worker has finished.
+            results[target.tag] = {
+                "name": target.name,
+                "error": str(e) or repr(e),
+                "auth_error": True,
+            }
+        except BaseException as e:  # unexpected failures remain fatal after siblings finish
             errors.append((target, e))
 
     started = time.monotonic()
@@ -380,6 +411,9 @@ def run_pass(opts, should_continue=None):
         agg = results.get(target.tag)
         if not agg:
             continue
+        if agg.get("auth_error"):
+            log_warn(f"{target.name} skipped: {agg['error']}", tag=target.tag)
+            continue
         notes = []
         if agg["created"]:
             notes.append(f"{agg['created']} created")
@@ -389,14 +423,18 @@ def run_pass(opts, should_continue=None):
         log_summary(f"{target.name:<14} {fmt_counts(agg['added'], agg['removed'], agg['missing'], agg['held'])}"
                     + paint(tail, "grey"), indent="  ")
 
-    for target, err in errors:
-        if isinstance(err, TargetAuthError):
-            raise err  # fatal; main() decides exit vs. loop-continue
+    if errors:
+        raise errors[0][1]
 
     c = ctrl()
     if c == "run":
         _post_sync(opts, sp, selected, source_is_spotify=src_is_spotify, should_continue=ctrl)
-    return _summary(opts, [_summary_entry(a["name"], a) for a in results.values()], pass_started,
+    per_target = [
+        _summary_entry(results[target.tag]["name"], results[target.tag])
+        for target in targets
+        if target.tag in results
+    ]
+    return _summary(opts, per_target, pass_started,
                     interrupted=(None if c == "run" else c))
 
 

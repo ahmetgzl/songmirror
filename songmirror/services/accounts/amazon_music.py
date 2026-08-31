@@ -70,7 +70,14 @@ class AmazonMusicConnector(Connector):
         token = read_token(self._official_token_file())
         return bool(token.get("access_token") or token.get("refresh_token"))
 
-    def _validate(self, raw=None, renewal_request=None, *, prefer_persisted=True):
+    def _validate(
+        self,
+        raw=None,
+        renewal_request=None,
+        *,
+        prefer_persisted=True,
+        require_renewal=False,
+    ):
         try:
             client = AmazonMusicWebClient(
                 raw if raw is not None else self._raw_headers(),
@@ -80,7 +87,7 @@ class AmazonMusicConnector(Connector):
                 token_file=self._web_token_file(),
                 prefer_persisted=prefer_persisted,
             )
-            client.validate()
+            client.validate(require_renewal=require_renewal)
             self._validated_client = client
             return True, "auto-renewing web-player session"
         except AmazonMusicWebAuthError as exc:
@@ -126,7 +133,12 @@ class AmazonMusicConnector(Connector):
         except ValueError as exc:
             return ConnStatus("error", str(exc))
 
-        ok, detail = self._validate(minimized, renewal, prefer_persisted=False)
+        ok, detail = self._validate(
+            minimized,
+            renewal,
+            prefer_persisted=False,
+            require_renewal=True,
+        )
         if not ok:
             return ConnStatus("error", detail)
         client = getattr(self, "_validated_client", None)
