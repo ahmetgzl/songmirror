@@ -35,7 +35,7 @@ from ..matching import (
     featured_artists, normalize_text, recording_version_signature,
     recording_versions_compatible, romanized, score_candidate, track_key,
 )
-from .base import MirrorTarget, TargetAuthError
+from .base import MirrorTarget, TargetAuthError, TargetTransientError
 from .provider_utils import source_playlist_details
 
 DEFAULT_AUTH_FILE = "ytmusic_oauth.json"
@@ -599,11 +599,13 @@ class YTMusicTarget(MirrorTarget):
             try:
                 r = self._session.request(method, f"{API}/{path}", params=params,
                                           json=json_body, headers=headers, timeout=REQUEST_TIMEOUT)
-            except requests.RequestException:
+            except requests.RequestException as exc:
                 if method == "GET" and attempt < attempts - 1:
                     time.sleep(min(2 ** attempt, 20) + random.uniform(0, 2))
                     continue
-                raise
+                raise TargetTransientError(
+                    f"YouTube Music transport failure for {method} {path}: {exc}"
+                ) from exc
             if r.status_code == 401:
                 raise TargetAuthError("YouTube rejected the OAuth token (401). Re-run the ytmusicapi oauth setup.")
             if r.status_code == 403:
@@ -614,15 +616,23 @@ class YTMusicTarget(MirrorTarget):
                 raise TargetAuthError(f"YouTube refused {method} {path} (403 {reason or 'forbidden'}).")
             if r.status_code == 404 and ok404:
                 return None
-            if r.status_code in (409, 429) and attempt < attempts - 1:
-                # 409 = transient write-conflict on rapid edits; 429 = brief rate
-                # blip. The write didn't apply, so a backed-off retry is safe.
-                wait = float(r.headers.get("Retry-After") or 0) + min(2 ** attempt, 15) + random.uniform(1, 4)
-                time.sleep(wait)
-                continue
-            if r.status_code >= 500 and method == "GET" and attempt < attempts - 1:
-                time.sleep(min(2 ** attempt, 20) + random.uniform(0, 2))
-                continue
+            if r.status_code in (409, 429):
+                if attempt < attempts - 1:
+                    # 409 = transient write-conflict on rapid edits; 429 = brief rate
+                    # blip. The write didn't apply, so a backed-off retry is safe.
+                    wait = float(r.headers.get("Retry-After") or 0) + min(2 ** attempt, 15) + random.uniform(1, 4)
+                    time.sleep(wait)
+                    continue
+                raise TargetTransientError(
+                    f"YouTube Music kept returning HTTP {r.status_code} for {method} {path}"
+                )
+            if r.status_code >= 500:
+                if method == "GET" and attempt < attempts - 1:
+                    time.sleep(min(2 ** attempt, 20) + random.uniform(0, 2))
+                    continue
+                raise TargetTransientError(
+                    f"YouTube Music kept returning HTTP {r.status_code} for {method} {path}"
+                )
             r.raise_for_status()
             return r
         return None
@@ -814,6 +824,95 @@ class YTMusicTarget(MirrorTarget):
         polite_sleep(0.4)
         return best_id, method
 
+    def _normalize_search_result(self, cand):
+        vid = cand.get("videoId")
+        if not vid:
+            return None
+        artists = [a.get("name", "") for a in (cand.get("artists") or []) if a.get("name")]
+        artist = ", ".join(artists) or cand.get("author") or ""
+        ds = cand.get("duration_seconds")
+        thumbnails = cand.get("thumbnails") or []
+        image = ""
+        if isinstance(thumbnails, list):
+            for thumb in reversed(thumbnails):
+                if isinstance(thumb, dict) and thumb.get("url"):
+                    image = thumb["url"]
+                    break
+        album = cand.get("album") or {}
+        album_name = album.get("name") if isinstance(album, dict) else album
+        return {
+            "id": str(vid),
+            "videoId": str(vid),
+            "name": cand.get("title", ""),
+            "artist": artist,
+            "artists": artists or ([artist] if artist else []),
+            "album": album_name,
+            "duration_ms": ds * 1000 if ds else None,
+            "image": image or None,
+            "external_url": f"https://music.youtube.com/watch?v={vid}",
+        }
+
+    def _promote_transport_error(self, exc, filt):
+        """Promote ytmusicapi-wrapped transport failures so callers do not cache empty misses.
+
+        ytmusicapi often surfaces bot-detection/throttle and connection failures as
+        plain exceptions. Align with `_with_backoff`, which already treats 403/429 as
+        transient: after retries are exhausted, raise TargetTransientError instead of
+        letting resolve()/search soft-miss and cache None.
+        """
+        text = str(exc).lower()
+        # ytmusicapi wraps non-200 responses in YTMusicServerError, whose
+        # status is exposed in "Server returned HTTP NNN", not a Response.
+        http_error = re.search(r"\bhttp\s+(\d{3})\b", text)
+        status = int(http_error[1]) if http_error else None
+        if isinstance(exc, requests.RequestException) or (
+            status == 408 or status is not None and 500 <= status < 600
+        ) or any(
+            marker in text
+            for marker in (
+                "connection",
+                "timeout",
+                "temporarily unavailable",
+                "503",
+                "429",
+                "403",
+            )
+        ):
+            raise TargetTransientError(
+                f"YouTube Music search transport failure ({filt}): {exc}"
+            ) from exc
+
+    def search_candidates(self, query, *, limit=5):
+        query = str(query or "").strip()
+        if not query:
+            return []
+        out = []
+        seen = set()
+        for filt in ("songs", "videos"):
+            try:
+                results = _with_backoff(
+                    lambda q=query, f=filt: self._ytm.search(q, filter=f, limit=max(limit, 1)),
+                    f"{filt}",
+                )
+            except TargetAuthError:
+                raise
+            except TargetTransientError:
+                raise
+            except Exception as exc:
+                self._promote_transport_error(exc, filt)
+                results = []
+            for cand in results or []:
+                normalized = self._normalize_search_result(cand)
+                if not normalized or normalized["id"] in seen:
+                    continue
+                seen.add(normalized["id"])
+                out.append(normalized)
+                if len(out) >= limit:
+                    return out
+            if out:
+                return out
+        return out
+
     def _search(self, track, primary):
         """Resolve via ytmusicapi's public search (no Data API quota). Prefer a
         `songs` (art-track) match so tracks land as native songs; fall back to
@@ -827,7 +926,12 @@ class YTMusicTarget(MirrorTarget):
                 try:
                     results = _with_backoff(lambda q=query, f=filt: self._ytm.search(q, filter=f, limit=8),
                                             f"{filt}")
-                except Exception:
+                except TargetAuthError:
+                    raise
+                except TargetTransientError:
+                    raise
+                except Exception as exc:
+                    self._promote_transport_error(exc, filt)
                     results = []
                 best_id, best_score = None, -1.0
                 for cand in results or []:

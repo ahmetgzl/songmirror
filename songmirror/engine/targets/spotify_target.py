@@ -8,6 +8,7 @@ needs no developer app; OAuth remains a compatible fallback.
 
 import os
 
+import requests
 import spotipy
 
 from .. import archive, spotify, spotify_cookie
@@ -15,7 +16,12 @@ from ..config import (
     DEFAULT_SPOTIFY_CACHE_FILE, polite_sleep, spotify_write_backend,
 )
 from ..matching import normalize_text, romanized, score_candidate, track_key
-from .base import MirrorTarget, TargetAuthError, TargetDirectoryIncompleteError
+from .base import (
+    MirrorTarget,
+    TargetAuthError,
+    TargetDirectoryIncompleteError,
+    TargetTransientError,
+)
 from .provider_utils import source_playlist_details
 
 
@@ -227,14 +233,74 @@ class SpotifyTarget(MirrorTarget):
                 return best, "search"
         return None, None
 
-    def _query(self, q):
-        if spotify_write_backend() == "cookie" or self._sp is None:
-            return spotify_cookie.search_tracks(q, limit=8)
+    def _query(self, q, *, limit=8):
         try:
-            res = spotify._retry(lambda: self._sp.search(q=q, type="track", limit=8), "search")
-        except spotipy.SpotifyException:
+            if spotify_write_backend() == "cookie" or self._sp is None:
+                return spotify_cookie.search_tracks(q, limit=limit)
+            res = spotify._retry(
+                lambda: self._sp.search(q=q, type="track", limit=limit),
+                "search",
+            )
+        except requests.RequestException as exc:
+            raise TargetTransientError(f"Spotify search transport failure: {exc}") from exc
+        except spotipy.SpotifyException as e:
+            status = e.http_status
+            if status in (401, 403):
+                raise TargetAuthError(
+                    f"Spotify rejected search ({status})."
+                ) from e
+            if status == 429 or (isinstance(status, int) and status >= 500):
+                raise TargetTransientError(
+                    f"Spotify search temporary failure ({status})."
+                ) from e
             return []
         return (res.get("tracks") or {}).get("items", [])
+
+    def _normalize_search_item(self, item):
+        target_id = item.get("id")
+        if not target_id:
+            return None
+        arts = [a.get("name", "") for a in item.get("artists", []) if a.get("name")]
+        album = item.get("album") or {}
+        images = album.get("images") or item.get("images") or []
+        image = ""
+        if images and isinstance(images[0], dict):
+            image = images[0].get("url") or ""
+        elif isinstance(images, list) and images and isinstance(images[0], str):
+            image = images[0]
+        return {
+            "id": str(target_id),
+            "name": item.get("name", ""),
+            "artist": ", ".join(arts),
+            "artists": arts,
+            "album": album.get("name") if isinstance(album, dict) else album,
+            "duration_ms": item.get("duration_ms"),
+            "image": image or None,
+            "external_url": f"https://open.spotify.com/track/{target_id}",
+            "isrc": ((item.get("external_ids") or {}).get("isrc") if isinstance(item, dict) else None),
+        }
+
+    def search_candidates(self, query, *, limit=5):
+        query = str(query or "").strip()
+        if not query:
+            return []
+        out = []
+        seen = set()
+        for item in self._query(query, limit=max(limit, 1)):
+            normalized = self._normalize_search_item(item)
+            if not normalized or normalized["id"] in seen:
+                continue
+            seen.add(normalized["id"])
+            out.append(normalized)
+            if len(out) >= limit:
+                break
+        return out
+
+    def search_by_isrc(self, isrc):
+        isrc = str(isrc or "").strip()
+        if not isrc:
+            return []
+        return self.search_candidates(f"isrc:{isrc}", limit=5)
 
     def _best(self, track, items):
         best_id, best_score = None, -1.0

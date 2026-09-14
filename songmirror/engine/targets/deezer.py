@@ -17,7 +17,7 @@ from ...deezer_web import (
 from ...oauth import read_token, token_path
 from ..config import REQUEST_TIMEOUT, polite_sleep
 from ..matching import normalize_text, romanized, track_key
-from .base import MirrorTarget, TargetAuthError
+from .base import MirrorTarget, TargetAuthError, TargetTransientError
 from .provider_utils import best_candidate, compatible_isrc_candidates, source_playlist_details, title_with_version
 
 API = "https://api.deezer.com"
@@ -99,20 +99,36 @@ class DeezerTarget(MirrorTarget):
 
     def _request(self, method, path, *, params=None):
         url = path if str(path).startswith("http") else f"{API}/{str(path).lstrip('/')}"
+        short = url.removeprefix(API + "/")
         query = dict(params or {})
         query["access_token"] = self._token
         attempts = 4
         for attempt in range(attempts):
             try:
                 response = self._session.request(method, url, params=query, timeout=REQUEST_TIMEOUT)
-            except requests.RequestException:
+            except requests.RequestException as exc:
                 if method == "GET" and attempt < attempts - 1:
                     time.sleep(min(2**attempt, 12) + random.uniform(0, 1))
                     continue
-                raise
-            if response.status_code == 429 and attempt < attempts - 1:
-                time.sleep(float(response.headers.get("Retry-After") or 2**attempt) + random.uniform(0.5, 1.5))
-                continue
+                raise TargetTransientError(
+                    f"Deezer transport failure for {method} {short}: {exc}"
+                ) from exc
+            if response.status_code == 429:
+                if attempt < attempts - 1:
+                    time.sleep(float(response.headers.get("Retry-After") or 2**attempt) + random.uniform(0.5, 1.5))
+                    continue
+                raise TargetTransientError(f"Deezer kept returning HTTP 429 for {method} {short}")
+            if response.status_code in (401, 403):
+                raise TargetAuthError(
+                    f"Deezer refused {method} {short} ({response.status_code}); reconnect in Accounts."
+                )
+            if response.status_code >= 500:
+                if method == "GET" and attempt < attempts - 1:
+                    time.sleep(min(2**attempt, 12) + random.uniform(0, 1))
+                    continue
+                raise TargetTransientError(
+                    f"Deezer kept returning HTTP {response.status_code} for {method} {short}"
+                )
             response.raise_for_status()
             body = response.json()
             error = body.get("error") if isinstance(body, dict) else None
@@ -123,7 +139,7 @@ class DeezerTarget(MirrorTarget):
                     raise TargetAuthError(f"Deezer authorization was rejected ({message}); reconnect in Accounts.")
                 raise RuntimeError(f"Deezer API error {code}: {message}")
             return body
-        raise RuntimeError("Deezer request retry budget exhausted")
+        raise TargetTransientError("Deezer request retry budget exhausted")
 
     def _catalog_get(self, path, *, params=None):
         """Use Deezer's unauthenticated catalog reads in browser-session mode."""
@@ -131,24 +147,31 @@ class DeezerTarget(MirrorTarget):
         if self._web is None:
             return self._request("GET", path, params=params)
         url = path if str(path).startswith("http") else f"{API}/{str(path).lstrip('/')}"
+        short = url.removeprefix(API + "/")
         for attempt in range(4):
             try:
                 response = self._session.get(url, params=params, timeout=REQUEST_TIMEOUT)
-            except requests.RequestException:
+            except requests.RequestException as exc:
                 if attempt < 3:
                     time.sleep(min(2**attempt, 12) + random.uniform(0, 1))
                     continue
-                raise
-            if (response.status_code == 429 or response.status_code >= 500) and attempt < 3:
-                time.sleep(float(response.headers.get("Retry-After") or 2**attempt) + random.uniform(0, 1))
-                continue
+                raise TargetTransientError(
+                    f"Deezer transport failure for GET {short}: {exc}"
+                ) from exc
+            if response.status_code == 429 or response.status_code >= 500:
+                if attempt < 3:
+                    time.sleep(float(response.headers.get("Retry-After") or 2**attempt) + random.uniform(0, 1))
+                    continue
+                raise TargetTransientError(
+                    f"Deezer kept returning HTTP {response.status_code} for GET {short}"
+                )
             response.raise_for_status()
             body = response.json()
             error = body.get("error") if isinstance(body, dict) else None
             if error:
                 raise RuntimeError(f"Deezer catalog API error: {error.get('message', error)}")
             return body
-        raise RuntimeError("Deezer catalog request retry budget exhausted")
+        raise TargetTransientError("Deezer catalog request retry budget exhausted")
 
     def _pages(self, path, params=None):
         next_url, next_params = path, dict(params or {})
@@ -392,6 +415,8 @@ class DeezerTarget(MirrorTarget):
             try:
                 raw = self._catalog_get(f"track/isrc:{isrc}")
                 candidate = _normalized_track(raw) if raw.get("id") else None
+            except (TargetTransientError, TargetAuthError):
+                raise
             except RuntimeError:
                 candidate = None
             cache["isrc"][isrc] = [candidate] if candidate else []
@@ -448,6 +473,50 @@ class DeezerTarget(MirrorTarget):
         cache["dirty"] = True
         polite_sleep(0.2)
         return best, "search"
+
+    def search_candidates(self, query, *, limit=5):
+        query = str(query or "").strip()
+        if not query:
+            return []
+        try:
+            body = self._catalog_get("search/track", params={"q": query, "limit": max(limit, 1)})
+        except TargetAuthError:
+            raise
+        except TargetTransientError:
+            raise
+        except Exception:
+            return []
+        out = []
+        seen = set()
+        for raw in body.get("data") or []:
+            candidate = _normalized_track(raw)
+            target_id = candidate.get("id")
+            if not target_id or target_id in seen:
+                continue
+            seen.add(target_id)
+            candidate["external_url"] = f"https://www.deezer.com/track/{target_id}"
+            out.append(candidate)
+            if len(out) >= limit:
+                break
+        return out
+
+    def search_by_isrc(self, isrc):
+        isrc = str(isrc or "").strip()
+        if not isrc:
+            return []
+        try:
+            raw = self._catalog_get(f"track/isrc:{isrc}")
+        except TargetAuthError:
+            raise
+        except TargetTransientError:
+            raise
+        except Exception:
+            return []
+        candidate = _normalized_track(raw) if raw.get("id") else None
+        if not candidate:
+            return []
+        candidate["external_url"] = f"https://www.deezer.com/track/{candidate['id']}"
+        return [candidate]
 
     def add(self, playlist, target_ids):
         if self._web is not None:

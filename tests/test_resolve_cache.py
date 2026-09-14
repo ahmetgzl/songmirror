@@ -39,6 +39,30 @@ def test_recording_match_upgrade_invalidates_previous_automatic_ids(tmp_path):
     assert json.loads(path.read_text("utf-8"))["matching_version"] > 1
 
 
+def test_matching_cache_version_bump_discards_automatic_mappings(tmp_path):
+    """Bumping MATCHING_CACHE_VERSION drops stale automatic search ids, keeps manuals."""
+    path = tmp_path / "cache.json"
+    previous = MATCHING_CACHE_VERSION - 1
+    path.write_text(json.dumps({
+        "matching_version": previous,
+        "isrc": {"ISRC": [{"id": "stale-isrc"}]},
+        "search": {
+            "auto|artist": "old-automatic",
+            "chosen|artist": "user-choice",
+        },
+        "manual": ["chosen|artist"],
+    }), encoding="utf-8")
+    cache = load_cache(path)
+    assert cache["isrc"] == {}
+    assert cache["search"] == {"chosen|artist": "user-choice"}
+    assert cache["manual"] == {"chosen|artist"}
+    assert cache["dirty"] is True
+    save_cache(path, cache)
+    written = json.loads(path.read_text("utf-8"))
+    assert written["matching_version"] == MATCHING_CACHE_VERSION
+    assert written["search"] == {"chosen|artist": "user-choice"}
+
+
 def test_legacy_migration_preserves_manual_choices_and_refreshes_isrc_metadata(tmp_path):
     path = tmp_path / "cache.json"
     path.write_text(json.dumps({

@@ -55,7 +55,7 @@ def _save_json(path, data):
         json.dump(data, f)
 
 
-MATCHING_CACHE_VERSION = 2
+MATCHING_CACHE_VERSION = 3
 
 
 def load_cache(cache_file):

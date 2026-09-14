@@ -1,5 +1,7 @@
 import { t, useTranslation } from '@/i18n'
 import { useMemo, useState } from 'react'
+import { LuPlus } from 'react-icons/lu'
+import { useNavigate } from 'react-router-dom'
 
 import { LinkCard } from '@/components/playlists/LinkCard'
 import { LinkEditorModal } from '@/components/playlists/LinkEditorModal'
@@ -16,6 +18,7 @@ import type { Account, PlaylistLink, ProviderPlaylist } from '@/types'
 
 export default function Playlists() {
   useTranslation()
+  const navigate = useNavigate()
   const { accounts, loading: accountsLoading, error: accountsError } = useAccounts()
   const connectedAccounts = useMemo(
     () => accounts?.filter((account) => account.state === 'connected' && capabilitiesOf(account).library_read) ?? [],
@@ -34,9 +37,14 @@ export default function Playlists() {
 
   return (
     <div className="flex flex-col gap-8">
-      <div>
-        <h1 className="text-xl font-bold tracking-tight text-text sm:text-[22px]">{t("Playlists")}</h1>
-        <p className="mt-1 text-sm text-text-3">{t("Browse what's on each connected service, and pair up playlists that don't share a name.")}</p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight text-text sm:text-[22px]">{t("Playlists")}</h1>
+          <p className="mt-1 max-w-2xl text-sm text-text-3">{t("Browse what's on each connected service, and pair up playlists that don't share a name.")}</p>
+        </div>
+        <Button icon={<LuPlus className="size-4" aria-hidden="true" />} onClick={() => navigate('/playlists/create')}>
+          {t('Create Playlist')}
+        </Button>
       </div>
 
       <section className="flex flex-col gap-4">
@@ -82,6 +90,7 @@ export default function Playlists() {
             )}
           </div>
           <Button
+            variant="secondary"
             onClick={() => setEditorTarget('new')}
             disabled={syncAccounts.length < 2}
             title={syncAccounts.length < 2 ? t("Connect at least 2 full-library services first") : undefined}

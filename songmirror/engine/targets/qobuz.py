@@ -14,7 +14,7 @@ import requests
 from ...qobuz_web import parse_web_request
 from ..config import REQUEST_TIMEOUT, polite_sleep, required_env
 from ..matching import normalize_text, romanized, track_key
-from .base import MirrorTarget, TargetAuthError
+from .base import MirrorTarget, TargetAuthError, TargetTransientError
 from .provider_utils import best_candidate, compatible_isrc_candidates, source_playlist_details, title_with_version
 
 API = "https://www.qobuz.com/api.json/0.2"
@@ -86,6 +86,7 @@ class QobuzTarget(MirrorTarget):
     def _request(self, method, endpoint, *, params=None):
         query = dict(params or {})
         url = endpoint if str(endpoint).startswith("http") else f"{API}/{str(endpoint).lstrip('/')}"
+        short = url.removeprefix(API + "/")
         if self._browser_mode:
             headers = {"X-App-Id": self._app_id, "X-User-Auth-Token": self._user_token}
             request_args = {"params": query} if method == "GET" else {"data": query}
@@ -103,27 +104,41 @@ class QobuzTarget(MirrorTarget):
                     headers=headers,
                     timeout=REQUEST_TIMEOUT,
                 )
-            except requests.RequestException:
+            except requests.RequestException as exc:
                 if method == "GET" and attempt < attempts - 1:
                     time.sleep(min(2**attempt, 12) + random.uniform(0, 1))
                     continue
-                raise
-            if response.status_code == 429 and attempt < attempts - 1:
-                time.sleep(float(response.headers.get("Retry-After") or 2**attempt) + random.uniform(0.5, 1.5))
-                continue
+                raise TargetTransientError(
+                    f"Qobuz transport failure for {method} {short}: {exc}"
+                ) from exc
+            if response.status_code == 429:
+                if attempt < attempts - 1:
+                    time.sleep(float(response.headers.get("Retry-After") or 2**attempt) + random.uniform(0.5, 1.5))
+                    continue
+                raise TargetTransientError(f"Qobuz kept returning HTTP 429 for {method} {short}")
             if response.status_code in (401, 403):
                 raise TargetAuthError(
                     f"Qobuz rejected the web API session ({response.status_code}); reconnect Qobuz in Accounts."
+                )
+            if response.status_code >= 500:
+                if method == "GET" and attempt < attempts - 1:
+                    time.sleep(min(2**attempt, 12) + random.uniform(0, 1))
+                    continue
+                raise TargetTransientError(
+                    f"Qobuz kept returning HTTP {response.status_code} for {method} {short}"
                 )
             response.raise_for_status()
             body = response.json()
             if isinstance(body, dict) and body.get("code") and body.get("message"):
                 code, message = body.get("code"), body.get("message")
-                if str(code).startswith(("4", "5")):
+                code_text = str(code)
+                if code_text.startswith("5"):
+                    raise TargetTransientError(f"Qobuz API temporary failure ({message}).")
+                if code_text.startswith("4"):
                     raise TargetAuthError(f"Qobuz API rejected the credentials ({message}).")
                 raise RuntimeError(f"Qobuz API error {code}: {message}")
             return body
-        raise RuntimeError("Qobuz request retry budget exhausted")
+        raise TargetTransientError("Qobuz request retry budget exhausted")
 
     def list_playlists(self):
         out, offset = {}, 0
@@ -306,6 +321,42 @@ class QobuzTarget(MirrorTarget):
     def _search(self, query, limit=20):
         body = self._request("GET", "catalog/search", params={"query": query, "type": "tracks", "limit": limit})
         return [_normalized_track(track) for track in ((body.get("tracks") or {}).get("items") or [])]
+
+    def search_candidates(self, query, *, limit=5):
+        query = str(query or "").strip()
+        if not query:
+            return []
+        try:
+            rows = self._search(query, limit=max(limit, 1))
+        except TargetAuthError:
+            raise
+        except TargetTransientError:
+            raise
+        except Exception:
+            return []
+        out = []
+        seen = set()
+        for candidate in rows:
+            target_id = candidate.get("id")
+            if not target_id or str(target_id) in seen:
+                continue
+            seen.add(str(target_id))
+            row = dict(candidate)
+            row["external_url"] = f"https://open.qobuz.com/track/{target_id}"
+            out.append(row)
+            if len(out) >= limit:
+                break
+        return out
+
+    def search_by_isrc(self, isrc):
+        isrc = str(isrc or "").strip()
+        if not isrc:
+            return []
+        return [
+            candidate
+            for candidate in self.search_candidates(isrc, limit=10)
+            if str(candidate.get("isrc") or "") == isrc
+        ]
 
     def prefetch(self, source_tracks, cache):
         for isrc in sorted({t.get("isrc") for t in source_tracks if t.get("isrc")}):

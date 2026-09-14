@@ -282,6 +282,7 @@ def test_apple_add_verifies_an_ambiguous_500_and_keeps_source_order(monkeypatch)
     import requests
 
     from songmirror.engine.targets import apple
+    from songmirror.engine.targets.base import TargetTransientError
 
     target = AppleMusicTarget.__new__(AppleMusicTarget)
     landed, calls = [], []
@@ -293,7 +294,9 @@ def test_apple_add_verifies_an_ambiguous_500_and_keeps_source_order(monkeypatch)
         if catalog_id == "middle":
             response = requests.Response()
             response.status_code = 500
-            raise requests.HTTPError("500 Server Error", response=response)
+            raise TargetTransientError(
+                "Apple Music kept returning HTTP 500 for POST me/library/playlists/aurora/tracks"
+            ) from requests.HTTPError("500 Server Error", response=response)
         return object()
 
     target._request = fake_request
@@ -315,6 +318,7 @@ def test_apple_add_waits_and_retries_a_429_without_skipping_a_track(monkeypatch)
     import requests
 
     from songmirror.engine.targets import apple
+    from songmirror.engine.targets.base import TargetTransientError
 
     target = AppleMusicTarget.__new__(AppleMusicTarget)
     landed, calls = [], []
@@ -326,7 +330,10 @@ def test_apple_add_waits_and_retries_a_429_without_skipping_a_track(monkeypatch)
             response = requests.Response()
             response.status_code = 429
             response.headers["Retry-After"] = "3"
-            raise requests.HTTPError("429 Too Many Requests", response=response)
+            raise TargetTransientError(
+                "Apple kept returning HTTP 429 for me/library/playlists/aurora/tracks",
+                retry_after=3.0,
+            ) from requests.HTTPError("429 Too Many Requests", response=response)
         landed.append(catalog_id)
         return object()
 
@@ -357,6 +364,7 @@ def test_apple_add_repairs_a_stale_catalog_id_before_continuing(monkeypatch):
     import requests
 
     from songmirror.engine.targets import apple
+    from songmirror.engine.targets.base import TargetTransientError
 
     target = AppleMusicTarget.__new__(AppleMusicTarget)
     target._write_not_before = 0.0
@@ -397,7 +405,9 @@ def test_apple_add_repairs_a_stale_catalog_id_before_continuing(monkeypatch):
                 b'{"errors":[{"code":"50001","title":"Upstream Service Error",'
                 b'"detail":"Unable to update tracks"}]}'
             )
-            raise requests.HTTPError("500 Server Error", response=response)
+            raise TargetTransientError(
+                "Apple Music kept returning HTTP 500 for POST me/library/playlists/aurora/tracks"
+            ) from requests.HTTPError("500 Server Error", response=response)
         landed.append(catalog_id)
         return object()
 
@@ -426,6 +436,7 @@ def test_apple_add_quarantines_an_unwritable_50001_and_continues(monkeypatch):
     import requests
 
     from songmirror.engine.targets import apple
+    from songmirror.engine.targets.base import TargetTransientError
 
     target = AppleMusicTarget.__new__(AppleMusicTarget)
     target._write_not_before = 0.0
@@ -459,7 +470,9 @@ def test_apple_add_quarantines_an_unwritable_50001_and_continues(monkeypatch):
                 "title": "Upstream Service Error",
                 "detail": "Unable to update tracks",
             }]}).encode()
-            raise requests.HTTPError("500 Server Error", response=response)
+            raise TargetTransientError(
+                "Apple Music kept returning HTTP 500 for POST me/library/playlists/aurora/tracks"
+            ) from requests.HTTPError("500 Server Error", response=response)
         landed.append(catalog_id)
         return object()
 
@@ -491,6 +504,7 @@ def test_apple_add_evicts_a_rejected_replacement_before_continuing(monkeypatch):
     import requests
 
     from songmirror.engine.targets import apple
+    from songmirror.engine.targets.base import TargetTransientError
 
     target = AppleMusicTarget.__new__(AppleMusicTarget)
     target._write_not_before = 0.0
@@ -524,7 +538,9 @@ def test_apple_add_evicts_a_rejected_replacement_before_continuing(monkeypatch):
                 "title": "Upstream Service Error",
                 "detail": "Unable to update tracks",
             }]}).encode()
-            raise requests.HTTPError("500 Server Error", response=response)
+            raise TargetTransientError(
+                "Apple Music kept returning HTTP 500 for POST me/library/playlists/aurora/tracks"
+            ) from requests.HTTPError("500 Server Error", response=response)
         landed.append(catalog_id)
         return object()
 
@@ -554,6 +570,7 @@ def test_apple_add_keeps_generic_500_failures_ordered_for_a_later_retry(monkeypa
     import requests
 
     from songmirror.engine.targets import apple
+    from songmirror.engine.targets.base import TargetTransientError
 
     target = AppleMusicTarget.__new__(AppleMusicTarget)
     target._write_not_before = 0.0
@@ -571,7 +588,9 @@ def test_apple_add_keeps_generic_500_failures_ordered_for_a_later_retry(monkeypa
             "title": "Internal Server Error",
             "detail": "Please try again later",
         }]}).encode()
-        raise requests.HTTPError("500 Server Error", response=response)
+        raise TargetTransientError(
+            "Apple Music kept returning HTTP 500 for POST me/library/playlists/aurora/tracks"
+        ) from requests.HTTPError("500 Server Error", response=response)
 
     target._request = fake_request
     target.playlist_tracks = lambda _playlist: []
@@ -592,6 +611,7 @@ def test_apple_add_does_not_quarantine_non_500_responses(monkeypatch, status_cod
     import requests
 
     from songmirror.engine.targets import apple
+    from songmirror.engine.targets.base import TargetTransientError
 
     target = AppleMusicTarget.__new__(AppleMusicTarget)
     target._write_not_before = 0.0
@@ -609,7 +629,15 @@ def test_apple_add_does_not_quarantine_non_500_responses(monkeypatch, status_cod
             "title": "Upstream Service Error",
             "detail": "Unable to update tracks",
         }]}).encode()
-        raise requests.HTTPError(f"{status_code} Server Error", response=response)
+        # Production _request converts retryable statuses to TargetTransientError.
+        # Keep 408 as RequestException to cover the residual defensive branch.
+        error = requests.HTTPError(f"{status_code} Server Error", response=response)
+        if status_code >= 500:
+            raise TargetTransientError(
+                f"Apple Music kept returning HTTP {status_code} for "
+                "POST me/library/playlists/aurora/tracks"
+            ) from error
+        raise error
 
     target._request = fake_request
     target.playlist_tracks = lambda _playlist: []

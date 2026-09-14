@@ -1,10 +1,11 @@
 import { t, useTranslation } from '@/i18n'
-import { Link, Route, Routes } from 'react-router-dom'
+import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 
 import { AppShell } from './components/layout/AppShell'
 import { BUTTON_BASE_CLASSES, BUTTON_SIZE_CLASSES, BUTTON_VARIANT_CLASSES } from './components/ui/buttonStyles'
 import Accounts from './pages/Accounts'
 import Dashboard from './pages/Dashboard'
+import PlaylistCreation from './pages/PlaylistCreation'
 import Playlists from './pages/Playlists'
 import ResolveMappings from './pages/ResolveMappings'
 import Settings from './pages/Settings'
@@ -21,12 +22,20 @@ export default function App() {
         <Route path="/playlists" element={<Playlists />} />
         <Route path="/sync" element={<Sync />} />
         <Route path="/transfers" element={<Transfers />} />
+        <Route path="/playlists/create/*" element={<PlaylistCreation />} />
+        <Route path="/imports" element={<Navigate to="/playlists/create/history" replace />} />
+        <Route path="/create-playlist" element={<LegacyCreationRedirect />} />
         <Route path="/mappings" element={<ResolveMappings />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </AppShell>
   )
+}
+
+function LegacyCreationRedirect() {
+  const { search, hash } = useLocation()
+  return <Navigate to={{ pathname: '/playlists/create', search, hash }} replace />
 }
 
 function NotFound() {
