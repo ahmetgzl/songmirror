@@ -531,7 +531,7 @@ def _chronology_replay_tail(ordered_keys, current_by_key, additions_by_key):
 def _fit_chronology_writes(ordered_keys, current_by_key, additions, addition_key,
                            max_writes, *, addition_target_id=lambda item: item[0],
                            replay_write_cost=len, can_replay=True, preserve_chronology=True,
-                           order_evidence=None):
+                           order_evidence=None, position_evidence=None):
     """Fit new membership plus any required chronology suffix under one write cap."""
     additions = list(additions)
     if not can_replay:
@@ -539,20 +539,47 @@ def _fit_chronology_writes(ordered_keys, current_by_key, additions, addition_key
         if preserve_chronology:
             positions = {key: position for position, key in enumerate(ordered_keys)}
 
-            def chronology_key(key):
-                evidence = (order_evidence or {}).get(key)
-                if evidence is not None:
-                    # Equal timestamps are not evidence that one song predates
-                    # another; provider rank merely breaks their sorting tie.
-                    return evidence[:2] if evidence[0] == 0 else evidence
-                return (2, positions.get(key, -1))
+            def predates(key, current_key):
+                incoming = (order_evidence or {}).get(key)
+                current = (order_evidence or {}).get(current_key)
+                if incoming is None or current is None:
+                    if order_evidence is None:
+                        return positions.get(key, -1) < positions[current_key]
+                    return None
+                if incoming[0] == current[0] == 0:
+                    # Equal dates are ties, regardless of provider rank.
+                    return incoming[1] < current[1]
+                if position_evidence is not None:
+                    incoming_positions = position_evidence.get(key, {})
+                    current_positions = position_evidence.get(current_key, {})
+                    comparisons = {
+                        incoming_positions[source] < current_positions[source]
+                        for source in incoming_positions.keys() & current_positions.keys()
+                    }
+                    # Conflicting source orders do not establish chronology.
+                    return comparisons.pop() if len(comparisons) == 1 else None
+                # The key's first field partitions dated and undated entries
+                # for deterministic sorting; it is not chronology evidence.
+                # When either date is absent, compare positions only if they
+                # come from the same source playlist.
+                incoming_position = incoming[2:4] if incoming[0] == 0 else incoming[1:3]
+                current_position = current[2:4] if current[0] == 0 else current[1:3]
+                if incoming_position[0] == current_position[0]:
+                    return incoming_position[1] < current_position[1]
+                return None
 
-            existing = [chronology_key(key) for key in current_by_key if key in positions]
-            last_existing = max(existing) if existing else None
+            existing = [key for key in current_by_key if key in positions]
+
+            def can_append(item):
+                comparisons = [predates(addition_key(item), key) for key in existing]
+                # At least one comparable entry must establish the cutoff.
+                # Unrelated, undated entries cannot veto that evidence, nor
+                # can an entirely unplaced recovery be assumed to be new.
+                return not existing or (False in comparisons and True not in comparisons)
+
             # Missing old tracks must not become the newest entries merely
             # because a provider cannot safely replay the newer suffix.
-            eligible = [item for item in additions
-                        if last_existing is None or chronology_key(addition_key(item)) >= last_existing]
+            eligible = [item for item in additions if can_append(item)]
         selected = eligible[:max(0, max_writes)]
         return selected, [], len(additions) - len(selected), len(additions)
 
@@ -1608,6 +1635,19 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
                        for src, (adds, removes) in unconfirmed_plan.items()}
     addition_order = _addition_order_by_cid(
         peers, per_entry, prev, cur, collapsed, alias, authorities)
+    # Keep shared authority positions even when a track's preferred ordering
+    # key uses a date from another service. This lets an undated Apple addition
+    # be compared with a shared track whose best timestamp came from Spotify.
+    position_evidence = {}
+    for peer in peers:
+        if peer.source in collapsed or (authorities is not None and peer.source not in authorities):
+            continue
+        for raw_cid, norm in per_entry[peer.source]:
+            if norm.get("_identity_conflict"):
+                continue
+            cid = alias.get(raw_cid, raw_cid)
+            position_evidence.setdefault(cid, {}).setdefault(
+                peer.source, norm.get("_playlist_position", 0))
     desired_recordings = {}
     for cid in desired:
         norm = repr_.get(cid)
@@ -1913,6 +1953,7 @@ def reconcile(peers, name, playlists, caches, songs, *, execute, max_removals, m
             can_replay=can_replay,
             preserve_chronology=not is_favorite_resource,
             order_evidence=order_evidence,
+            position_evidence=position_evidence,
         )
         chronology_replayed = sum(1 for _target_id, original in chronology_replay
                                   if original is not None)

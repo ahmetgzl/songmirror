@@ -1558,6 +1558,70 @@ def test_older_recoveries_wait_when_playlist_order_cannot_be_repaired(collision)
     conn.close()
 
 
+@pytest.mark.parametrize("max_adds", [0, 2, 200])
+@pytest.mark.parametrize("already_observed", [False, True])
+def test_undated_existing_authority_track_does_not_block_new_spotify_additions(
+    max_adds, already_observed,
+):
+    def track(tid, date):
+        return dict(id=tid, name=f"Song {tid}", isrc=tid.upper(), artists=["Artist"],
+                    duration_ms=180000, added_at=date)
+
+    undated = track("undated", "")
+    cutoff = track("cutoff", "2026-09-09T00:00:00Z")
+    new = [track(f"new{i}", f"2026-09-{10 + i:02d}T00:00:00Z") for i in range(4)]
+
+    class Mirror(_ManyPeer):
+        replay_chronology = None
+
+    conn = archive.connect(":memory:")
+    spotify = _ManyPeer("spotify", [cutoff, *new], lambda norm: norm["_raw"]["id"])
+    destinations = [Mirror(provider, [undated, cutoff], lambda norm: norm["_raw"]["id"])
+                    for provider in ("apple", "ytmusic", "tidal", "deezer", "amazon", "qobuz")]
+    peers = [spotify, *destinations]
+    key = "group:apple,spotify:aurora"
+    spotify_baseline = {"i:CUTOFF"}
+    if already_observed:
+        spotify_baseline.update(f"i:NEW{i}" for i in range(4))
+    archive.set_playlist_state(conn, key, "spotify", spotify_baseline)
+    for peer in destinations:
+        archive.set_playlist_state(conn, key, peer.source, {"i:UNDATED", "i:CUTOFF"})
+
+    reconcile(peers, "Aurora", {p.source: {"id": p.source} for p in peers},
+              _caches(*(p.source for p in peers)), conn, execute=True,
+              authority_sources={"spotify", "apple"}, max_adds=max_adds, max_removals=0)
+
+    assert {peer.source: peer.added for peer in destinations} == {
+        peer.source: [f"new{i}" for i in range(min(4, max_adds))] for peer in destinations
+    }
+    assert spotify.added == []  # The undated Apple entry is still an older recovery.
+    assert all(peer.removed == [] for peer in peers)
+    conn.close()
+
+
+def test_undated_authority_additions_use_shared_playlist_positions():
+    def track(tid, date=""):
+        return dict(id=tid, name=f"Song {tid}", isrc=tid.upper(), artists=["Artist"],
+                    duration_ms=180000, added_at=date)
+
+    cutoff = track("cutoff", "2026-09-09T00:00:00Z")
+    spotify = _ManyPeer("spotify", [cutoff], lambda norm: norm["_raw"]["id"])
+    apple = _ManyPeer("apple", [track("old"), {**cutoff, "added_at": ""}, track("new")],
+                      lambda norm: norm["_raw"]["id"])
+    peers = [spotify, apple]
+    conn = archive.connect(":memory:")
+    for peer in peers:
+        archive.set_playlist_state(conn, "group:apple,spotify:mix", peer.source, {"i:CUTOFF"})
+
+    reconcile(peers, "Mix", {p.source: {"id": p.source} for p in peers},
+              _caches(*(p.source for p in peers)), conn, execute=True,
+              authority_sources={"spotify", "apple"}, max_adds=200, max_removals=0)
+
+    assert spotify.added == ["new"]
+    assert all(peer.removed == [] for peer in peers)
+    conn.close()
+
+
 def test_same_key_queued_additions_stay_distinct_when_audio_differs(tmp_path):
     conn = archive.connect(str(tmp_path / "queued-key-collision.db"))
     for src in ("spotify", "tidal"):
