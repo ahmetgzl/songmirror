@@ -50,6 +50,37 @@ def test_transfer_copies_matches_skips_dupes_reports_conflicts():
     # "Dup" already exists on the destination (same track_key) -> skipped, not re-added
 
 
+def test_symbol_title_manual_mapping_does_not_claim_another_track():
+    from songmirror.engine.matching import track_key
+
+    first, second = "##", '(> ﹏ <")'
+    tracks = [
+        {"id": str(index), "name": title, "artists": ["DEHA INC."],
+         "duration_ms": 1000}
+        for index, title in enumerate((first, second))
+    ]
+    source = _Prov(None, tracks, source="ytmusic")
+    destination = _Prov(None, [], source="deezer")
+    resolved, added = [], []
+
+    def resolve(norm, _cache):
+        resolved.append(norm["name"])
+        return None, None
+
+    destination.resolve = resolve
+    destination.add = lambda _playlist, ids: added.extend(ids)
+    key = track_key(first, "DEHA INC.")
+    cache = {"isrc": {}, "search": {key: "chosen-id"}, "manual": {key}, "dirty": False}
+
+    result = transfer(source, destination, {"id": "s"}, {"id": "d"}, cache,
+                      execute=True, max_adds=100)
+
+    assert added == ["chosen-id"]
+    assert resolved == [second]
+    assert result["not_found"] == [{"name": second, "artist": "DEHA INC.",
+                                     "key": track_key(second, "DEHA INC.")}]
+
+
 @pytest.mark.parametrize("manual_id", ["70711820", "https://www.deezer.com/tr/track/70711820"])
 @pytest.mark.parametrize("already_present", [False, True])
 @pytest.mark.parametrize("automatic_match", [None, "12345"])
