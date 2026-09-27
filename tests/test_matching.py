@@ -74,6 +74,17 @@ def test_turkish_case_variants_produce_the_same_track_key():
     )
 
 
+def test_symbol_only_titles_keep_distinct_track_keys():
+    artist = "DEHA INC."
+    assert normalize_text("##") == normalize_text('(> ﹏ <")') == ""
+    assert loose_name("  ##  ") == "##"
+    assert loose_name('(> ﹏ <")') == '(> ﹏ <")'
+    assert track_key("##", artist) == "##|deha inc"
+    assert track_key('(> ﹏ <")', artist) == '(> ﹏ <")|deha inc'
+    assert track_key("##", artist) != track_key('(> ﹏ <")', artist)
+    assert loose_name("Song (feat. Guest)") == "song"
+
+
 def test_compute_diff_orders_mixed_timestamp_formats_chronologically():
     tracks = [
         sp("Unix Newer", "Artist", "ISRC2", "1704067200"),

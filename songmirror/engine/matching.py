@@ -167,10 +167,12 @@ def loose_name(name):
     """Title with feat-clauses stripped — '(feat. X)' is the classic drift for
     the SAME song. Version qualifiers like (Live)/(Acoustic) are kept: those
     are different recordings — but the abbreviation 'ver' expands to 'version'
-    so 'Twin Ver.' and 'Twin Version' agree token-for-token."""
-    cleaned = normalize_text(_without_feature_credits(name))
+    so 'Twin Ver.' and 'Twin Version' agree token-for-token. Preserve titles
+    made only of symbols so unrelated tracks never share an empty title key."""
+    raw = str(name or "").strip()
+    cleaned = normalize_text(_without_feature_credits(raw))
     cleaned = re.sub(r"\bver\b", "version", cleaned)
-    return cleaned or normalize_text(name)
+    return cleaned or normalize_text(raw) or raw.casefold()
 
 
 def catalog_name(name):
