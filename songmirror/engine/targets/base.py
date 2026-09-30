@@ -85,8 +85,31 @@ class MirrorTarget:
         return True
 
     def create(self, sp_playlist):
-        """Create a same-named playlist (name + description copied)."""
+        """Create a same-named playlist (name + description copied). Private
+        unless an explicit create flow asked for public; see _create_public."""
         raise NotImplementedError
+
+    @classmethod
+    def creates_public_playlists(cls):
+        """Whether create() can publish a playlist. Ask it under the account's
+        activated profile: some providers decide it by their configured backend."""
+        return False
+
+    def _create_public(self, playlist):
+        """The visibility an explicit create flow requested.
+
+        Sync creation passes a raw source playlist, whose own sharing flag must
+        never decide the mirror's, so only SongMirror's `_create_public` request
+        counts. A request the account cannot honor fails before any write
+        instead of quietly creating a private playlist.
+        """
+        public = playlist.get("_create_public") is True
+        if public and not self.creates_public_playlists():
+            raise TargetCapabilityError(
+                f"{self.name} can't create public playlists from SongMirror. Create it "
+                f"private, then change its visibility in {self.name}."
+            )
+        return public
 
     def playlist_tracks(self, playlist):
         """Existing tracks as dicts with name/artist/duration_ms + an id."""

@@ -338,6 +338,7 @@ export const importApi = {
     destination_playlist_id?: string
     name?: string
     description?: string
+    public?: boolean
   }) =>
     request<ImportJob>('/api/imports/text', {
       method: 'POST',
@@ -352,13 +353,14 @@ export const importApi = {
       destination_playlist_id?: string
       name?: string
       description?: string
+      public?: boolean
     },
   ): Promise<ImportJob> {
     const formData = new FormData()
     formData.append('file', file)
     Object.entries(destination).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== '') {
-        formData.append(key, value)
+        formData.append(key, String(value))
       }
     })
 
@@ -381,6 +383,7 @@ export const importApi = {
     destination_playlist_id?: string
     name?: string
     description?: string
+    public?: boolean
   }) =>
     request<ImportJob>('/api/imports/url', {
       method: 'POST',

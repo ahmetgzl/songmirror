@@ -14,6 +14,7 @@ import { Segmented } from '@/components/ui/Segmented'
 import { SelectField } from '@/components/ui/SelectField'
 import { Spinner } from '@/components/ui/Spinner'
 import { TextField } from '@/components/ui/TextField'
+import { Toggle } from '@/components/ui/Toggle'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useProviderPlaylists } from '@/hooks/useProviderPlaylists'
 import { useSettings } from '@/hooks/useSettings'
@@ -162,6 +163,7 @@ export default function CreatePlaylist() {
   const [existingPlaylistId, setExistingPlaylistId] = useState('')
   const [playlistName, setPlaylistName] = useState('')
   const [playlistDescription, setPlaylistDescription] = useState('')
+  const [makePublic, setMakePublic] = useState(false)
   const [working, setLoading] = useState(false)
   const [resumeLoading, setResumeLoading] = useState(false)
   const loading = working || resumeLoading
@@ -204,6 +206,9 @@ export default function CreatePlaylist() {
   const { entries: destinationPlaylistEntries } = useProviderPlaylists(destinationPlaylistIds)
   const destinationPlaylists = destinationPlaylistEntries[destinationAccount]?.playlists ?? []
   const destinationPlaylistsLoading = Boolean(destinationPlaylistEntries[destinationAccount]?.loading)
+  const destinationAccountRecord = writableAccounts.find((a) => a.id === destinationAccount)
+  const canPublish = Boolean(destinationAccountRecord?.public_playlists)
+  const destinationAccountName = destinationAccountRecord?.name ?? t('This account')
 
   useEffect(() => {
     if (!destinationAccount && writableAccounts.length === 1) {
@@ -243,6 +248,7 @@ export default function CreatePlaylist() {
         setExistingPlaylistId(data.job.destination_playlist_id || '')
         setPlaylistName(data.job.destination_name || '')
         setPlaylistDescription(data.job.destination_description || '')
+        setMakePublic(Boolean(data.job.destination_public))
         if (['done', 'failed', 'cancelled'].includes(data.job.status)) {
           setStep('result')
         } else if (data.job.status === 'ready' || data.job.status === 'paused') {
@@ -339,6 +345,7 @@ export default function CreatePlaylist() {
         destination_playlist_id: destinationMode === 'append' ? existingPlaylistId : undefined,
         name: destinationMode === 'create' ? playlistName.trim() || undefined : undefined,
         description: playlistDescription,
+        public: destinationMode === 'create' && canPublish && makePublic,
       }
 
       if (sourceMethod === 'text') {
@@ -645,6 +652,7 @@ export default function CreatePlaylist() {
     setExistingPlaylistId('')
     setPlaylistName('')
     setPlaylistDescription('')
+    setMakePublic(false)
     setSearchModalTrack(null)
     setSearchQuery('')
     setSearchResults([])
@@ -656,7 +664,6 @@ export default function CreatePlaylist() {
     setCurrentPage(0)
   }
 
-  const destinationAccountRecord = writableAccounts.find((a) => a.id === destinationAccount)
   const openPlaylistUrl =
     job?.destination_playlist_id && destinationAccountRecord
       ? playlistExternalUrl(destinationAccountRecord.provider, 'playlist', job.destination_playlist_id)
@@ -864,6 +871,17 @@ export default function CreatePlaylist() {
                           label={t('Description (optional)')}
                           value={playlistDescription}
                           onChange={(e) => setPlaylistDescription(e.target.value)}
+                        />
+                        <Toggle
+                          label={t('Make the playlist public')}
+                          description={
+                            canPublish
+                              ? t('Off keeps it private. On makes it public on {{destAccountName}}.', { destAccountName: destinationAccountName })
+                              : t('{{destAccountName}} creates private playlists here. Change its visibility there after it is created.', { destAccountName: destinationAccountName })
+                          }
+                          checked={canPublish && makePublic}
+                          disabled={!canPublish}
+                          onChange={setMakePublic}
                         />
                       </>
                     ) : (

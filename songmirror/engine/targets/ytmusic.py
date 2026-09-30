@@ -671,10 +671,15 @@ class YTMusicTarget(MirrorTarget):
     def playlist_name(self, playlist):
         return playlist.get("title", "")
 
+    @classmethod
+    def creates_public_playlists(cls):
+        return True
+
     def create(self, sp_playlist):
         name, description = source_playlist_details(sp_playlist)
+        privacy = "public" if self._create_public(sp_playlist) else "private"
         body = {"snippet": {"title": name, "description": description},
-                "status": {"privacyStatus": "private"}}
+                "status": {"privacyStatus": privacy}}
         pid = self._request("POST", "playlists", params={"part": "snippet,status"}, json_body=body).json()["id"]
         polite_sleep(2.0)  # let the new playlist settle before writing to it
         return {"playlistId": pid, "title": name, "count": 0}
@@ -1111,7 +1116,8 @@ class YTMusicBrowserTarget(YTMusicTarget):
 
     def create(self, sp_playlist):
         name, description = source_playlist_details(sp_playlist)
-        pid = self._api.create_playlist(name, description, privacy_status="PRIVATE")
+        privacy = "PUBLIC" if self._create_public(sp_playlist) else "PRIVATE"
+        pid = self._api.create_playlist(name, description, privacy_status=privacy)
         if not isinstance(pid, str):  # ytmusicapi returns a status dict/response on failure
             raise TargetAuthError(f"YouTube Music refused to create the playlist ({pid!r}).")
         polite_sleep(2.0)

@@ -263,9 +263,14 @@ class TidalTarget(MirrorTarget):
                     out[key] = playlist
         return out
 
+    @classmethod
+    def creates_public_playlists(cls):
+        return True
+
     def create(self, source_playlist):
         name, description = source_playlist_details(source_playlist)
-        attributes = {"name": name, "accessType": "UNLISTED"}
+        access = "PUBLIC" if self._create_public(source_playlist) else "UNLISTED"
+        attributes = {"name": name, "accessType": access}
         if description:
             attributes["description"] = description
         body = {"data": {"type": "playlists", "attributes": attributes}}

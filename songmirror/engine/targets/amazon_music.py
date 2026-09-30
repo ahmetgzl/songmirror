@@ -378,10 +378,15 @@ class AmazonMusicTarget(MirrorTarget):
             if cursor is None:
                 return out
 
+    @classmethod
+    def creates_public_playlists(cls):
+        return True
+
     def create(self, source_playlist):
         name, description = source_playlist_details(source_playlist)
+        visibility = "PUBLIC" if self._create_public(source_playlist) else "PRIVATE"
         if getattr(self, "_web", None) is not None:
-            variables = {"title": name, "visibility": "PRIVATE"}
+            variables = {"title": name, "visibility": visibility}
             if description:
                 variables["description"] = description
             data = self._graphql(
@@ -399,7 +404,7 @@ class AmazonMusicTarget(MirrorTarget):
         body = self._request(
             "POST",
             "playlists",
-            json_body={"title": name, "description": description, "visibility": "PRIVATE"},
+            json_body={"title": name, "description": description, "visibility": visibility},
         )
         playlist = self._connection(body, "data", "createPlaylist")
         if not playlist.get("id"):

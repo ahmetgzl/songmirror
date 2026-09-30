@@ -885,6 +885,35 @@ def test_transfer_service_reports_conflicts(monkeypatch, tmp_path):
     assert j["conflicts"][0]["resolved"] is False
 
 
+def test_new_destination_uses_the_requested_description_and_visibility(monkeypatch, tmp_path):
+    created = []
+
+    async def scenario():
+        src, dst = _service(monkeypatch, tmp_path)
+        src.playlist_description = lambda _playlist: "From the source"
+        dst.create = lambda spec: created.append(spec) or {"id": "new", "name": spec["name"]}
+        bus = EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        svc = TransferService(SettingsStore(dir=tmp_path), bus, SyncService(SettingsStore(dir=tmp_path), bus))
+        base = {"source_provider": "apple", "source_playlist_id": "p1",
+                "dest_provider": "ytmusic", "dest_playlist_id": None}
+        for extra in (
+            {"dest_name": "Road trip", "dest_description": "Made for the drive", "dest_public": True},
+            {"dest_description": ""},  # cleared on purpose: no description at all
+            {},  # left untouched: the source's own description
+        ):
+            job = svc.submit({**base, **extra})
+            assert (await _await_job(svc, job["id"]))["status"] == "done"
+
+    asyncio.run(scenario())
+
+    assert created == [
+        {"name": "Road trip", "description": "Made for the drive", "_create_public": True},
+        {"name": "X", "description": "", "_create_public": False},
+        {"name": "X", "description": "From the source", "_create_public": False},
+    ]
+
+
 def test_transfer_service_resolve_writes_cache(monkeypatch, tmp_path):
     from songmirror.engine.runner import load_cache
 

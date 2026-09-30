@@ -63,6 +63,14 @@ def _normalized_track(track):
     }
 
 
+def _web_session_configured():
+    """Whether the signed-in web session, not the REST OAuth token, drives Deezer."""
+    return bool(
+        (os.getenv("DEEZER_WEB_HEADERS") or "").strip()
+        or (os.getenv("DEEZER_REFRESH_TOKEN") or "").strip()
+    )
+
+
 class DeezerTarget(MirrorTarget):
     name = "Deezer"
     tag = "deezer"
@@ -78,7 +86,7 @@ class DeezerTarget(MirrorTarget):
         self._web = None
         web_headers = (os.getenv("DEEZER_WEB_HEADERS") or "").strip()
         refresh_token = (os.getenv("DEEZER_REFRESH_TOKEN") or "").strip()
-        if web_headers or refresh_token:
+        if _web_session_configured():
             try:
                 self._web = DeezerWebClient(
                     web_headers,
@@ -222,11 +230,17 @@ class DeezerTarget(MirrorTarget):
         owner = str((playlist.get("creator") or {}).get("id") or "")
         return not owner or owner == str(self._me().get("id"))
 
+    @classmethod
+    def creates_public_playlists(cls):
+        # The REST create call takes only a title.
+        return _web_session_configured()
+
     def create(self, source_playlist):
         name, description = source_playlist_details(source_playlist)
+        public = self._create_public(source_playlist)
         if self._web is not None:
             try:
-                playlist = self._web.create(name, description)
+                playlist = self._web.create(name, description, public=public)
             except DeezerWebAuthError as exc:
                 raise TargetAuthError(str(exc)) from exc
             if not playlist.get("id"):

@@ -342,7 +342,9 @@ class TransferService:
 
     def submit(self, spec):
         """spec: {source_account, source_playlist_id, dest_account,
-        dest_playlist_id | None, dest_name, preserve_order}. Returns the job
+        dest_playlist_id | None, dest_name, dest_description | None,
+        dest_public, preserve_order}. The last three shape a newly created
+        destination; a None description copies the source's. Returns the job
         dict (with id). Legacy source_provider/dest_provider keys select the
         corresponding compatibility profiles."""
         source_account = spec.get("source_account") or spec.get("source_provider")
@@ -555,7 +557,14 @@ class TransferService:
                 raise RuntimeError("destination playlist not found")
             return pl
         name = spec.get("dest_name") or src.playlist_name(src_pl)
-        return dst.create({"name": name, "description": src.playlist_description(src_pl)})
+        description = spec.get("dest_description")
+        if description is None:
+            description = src.playlist_description(src_pl)
+        return dst.create({
+            "name": name,
+            "description": description,
+            "_create_public": bool(spec.get("dest_public")),
+        })
 
     def _emit(self, kind, message, tag, data=None):
         self._bus.publish(logs.Event(time.time(), kind, tag, message, data))

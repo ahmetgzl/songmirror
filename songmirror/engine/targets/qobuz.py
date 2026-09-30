@@ -171,10 +171,15 @@ class QobuzTarget(MirrorTarget):
             elif not items or len(items) < 100:
                 return out
 
+    @classmethod
+    def creates_public_playlists(cls):
+        return True
+
     def create(self, source_playlist):
         name, description = source_playlist_details(source_playlist)
+        public = "true" if self._create_public(source_playlist) else "false"
         playlist = self._request(
-            "POST", "playlist/create", params={"name": name, "description": description, "is_public": "false"}
+            "POST", "playlist/create", params={"name": name, "description": description, "is_public": public}
         )
         polite_sleep(0.4)
         return playlist

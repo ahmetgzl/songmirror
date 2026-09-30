@@ -69,6 +69,11 @@ export interface Account {
    * False where the provider's writes can't express the repair safely (Deezer),
    * which greys out the transfer form's "preserve order" switch. */
   preserves_order: boolean
+  /** Whether a new playlist can be created public on this account. False where
+   * the account's API always creates private playlists (Apple Music, Spotify
+   * cookie write mode, Deezer without a web session). Optional for account
+   * data cached by older releases, which read as private-only. */
+  public_playlists?: boolean
   /** Operations granted by the current credentials. Optional only so a cached
    * account payload from an older SongMirror release can be upgraded safely. */
   capabilities?: AccountCapabilities
@@ -382,6 +387,8 @@ export interface SyncEvent {
 export interface ProviderPlaylist {
   id: string
   name: string
+  /** Plain-text description when the provider's library listing carries one. */
+  description?: string
   count: number | null
   image: string
   /** First-party web-player URL for opening this exact playlist. */
@@ -613,6 +620,11 @@ export interface StartTransferRequest {
   dest_account: string
   dest_playlist_id: string | null
   dest_name: string
+  /** A new playlist's description. Omitted or null copies the source's;
+   * an empty string creates it without one. */
+  dest_description?: string | null
+  /** Create the new playlist public. Private when omitted. */
+  dest_public?: boolean
   /** Repair the destination's date-added order when a copied track is older
    * than tracks already there. Costs many extra writes; off by default. */
   preserve_order: boolean
@@ -710,6 +722,8 @@ export interface ImportJob {
   destination_name: string
   destination_description: string
   destination_mode: string
+  /** A created playlist is requested public. Always false when appending. */
+  destination_public?: boolean
   created_at: string
   updated_at: string
   started_at?: string

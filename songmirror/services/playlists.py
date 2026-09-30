@@ -19,6 +19,7 @@ from ..engine import archive, spotify, spotify_cookie
 from ..engine.config import parse_args, spotify_write_backend
 from ..engine.logs import log_warn
 from ..engine.targets import TargetCapabilityError, build_one, target_provider
+from ..engine.targets.provider_utils import source_playlist_details
 from .playlist_exports import render_backup
 from .playlist_links import external_url, provider_label
 from .settings import _open_private
@@ -302,7 +303,9 @@ class PlaylistService:
                 playlists = hydrate_counts(playlists) or playlists
         except Exception as exc:
             self._failure(provider_id, "load playlists", exc)
-        rows = [{"id": _pl_id(pl), "name": _pl_name(pl), "count": target.playlist_count(pl),
+        rows = [{"id": _pl_id(pl), "name": _pl_name(pl),
+                 "description": _plain_text(source_playlist_details(pl)[1]),
+                 "count": target.playlist_count(pl),
                  "image": playlist_image(pl), "owned": bool(pl.get("_owned", True)),
                  "external_url": external_url(target_provider(target, self._provider(provider_id)), "playlist", _pl_id(pl))}
                 for pl in playlists]

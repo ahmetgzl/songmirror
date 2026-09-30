@@ -218,6 +218,9 @@ class AppleMusicTarget(MirrorTarget):
 
     def create(self, sp_playlist):
         name, desc = source_playlist_details(sp_playlist)
+        # The library API always creates private playlists; sharing happens in
+        # the Music app.
+        self._create_public(sp_playlist)
         attributes = {"name": name}
         if desc:
             attributes["description"] = desc

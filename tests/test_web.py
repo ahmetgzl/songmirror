@@ -106,6 +106,33 @@ def test_accounts_list_all_unconfigured(tmp_path, monkeypatch):
         assert by_provider["apple"]["preserves_order"] is True
         assert by_provider["deezer"]["preserves_order"] is False
         assert by_provider["jellyfin"]["preserves_order"] is False   # browse-only, no target
+        # The create flows offer "public" only where create() can honor it.
+        assert {p for p, a in by_provider.items() if a["public_playlists"]} == {
+            "spotify", "tidal", "qobuz", "amazon", "ytmusic",
+        }
+
+
+def test_accounts_report_public_playlist_creation_for_each_profile_backend(tmp_path, monkeypatch):
+    from songmirror.services.account_profiles import PROVIDER_KEYS
+
+    for keys in PROVIDER_KEYS.values():
+        for key in keys:
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr("songmirror.web.load_dotenv", lambda: False)
+    app = _app(tmp_path)
+    profiles = app.state.account_profiles
+    cookie = profiles.create("spotify", "Cookie")
+    profiles.settings_for(cookie.id).save({"SPOTIFY_WRITE_BACKEND": "cookie"})
+    web = profiles.create("deezer", "Web")
+    profiles.settings_for(web.id).save({"DEEZER_REFRESH_TOKEN": "refresh"})
+
+    with TestClient(app) as client:
+        by_id = {a["id"]: a["public_playlists"] for a in client.get("/api/accounts").json()}
+
+    assert by_id[profiles.default_id("spotify")] is True
+    assert by_id[cookie.id] is False
+    assert by_id[profiles.default_id("deezer")] is False
+    assert by_id[web.id] is True
 
 
 def test_account_profile_api_adds_labels_isolates_secrets_and_removes(tmp_path):
@@ -788,6 +815,23 @@ def test_transfer_carries_the_preserve_order_choice(tmp_path, monkeypatch):
                                                 "preserve_order": True})
         job = client.get(f"/api/transfers/{r.json()['job_id']}").json()
         assert job["preserve_order"] is True
+
+
+def test_transfer_validates_new_playlist_description_and_visibility(tmp_path, monkeypatch):
+    from songmirror.services.transfers import TransferService
+
+    monkeypatch.setattr(TransferService, "_build", lambda self, pid, opts: None)
+    base = {"source_provider": "apple", "source_playlist_id": "p1",
+            "dest_provider": "ytmusic", "dest_playlist_id": None, "dest_name": "Mix"}
+    with TestClient(_app(tmp_path)) as client:
+        for invalid in (
+            {"dest_description": 123},
+            {"dest_description": "x" * 5001},
+            {"dest_public": "yes"},
+        ):
+            assert client.post("/api/transfers", json={**base, **invalid}).status_code == 422
+        valid = {"dest_description": "x" * 5000, "dest_public": True}
+        assert client.post("/api/transfers", json={**base, **valid}).status_code == 202
 
 
 def test_sse_payload_format():

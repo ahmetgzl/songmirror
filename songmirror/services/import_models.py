@@ -59,6 +59,7 @@ class ImportJob(BaseModel):
     destination_name: str
     destination_description: str = ""
     destination_mode: str = "create"
+    destination_public: bool = False
     created_at: datetime
     updated_at: datetime
     started_at: Optional[datetime] = None
@@ -118,6 +119,7 @@ class CreateTextImportRequest(BaseModel):
     destination_playlist_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = ""
+    public: bool = False
 
 
 class CreateFileImportRequest(BaseModel):
@@ -126,6 +128,7 @@ class CreateFileImportRequest(BaseModel):
     destination_playlist_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = ""
+    public: bool = False
 
 
 class CreateUrlImportRequest(BaseModel):
@@ -136,6 +139,7 @@ class CreateUrlImportRequest(BaseModel):
     destination_playlist_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = ""
+    public: bool = False
 
 
 class UpdateJobRequest(BaseModel):
