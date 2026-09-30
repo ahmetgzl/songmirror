@@ -575,7 +575,8 @@ export interface TransferEndpoint {
   account: string
   provider: string
   name?: string
-  playlist_id: string
+  /** Null for a "Create new" destination until the transfer creates it. */
+  playlist_id: string | null
   playlist_name: string
 }
 

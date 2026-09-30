@@ -914,6 +914,45 @@ def test_new_destination_uses_the_requested_description_and_visibility(monkeypat
     ]
 
 
+def test_created_destination_is_recorded_and_reused_after_a_pause(monkeypatch, tmp_path):
+    created, added = {}, []
+    out = {}
+
+    async def scenario():
+        src, dst = _service(monkeypatch, tmp_path)
+        bus = EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        svc = TransferService(SettingsStore(dir=tmp_path), bus, SyncService(SettingsStore(dir=tmp_path), bus))
+
+        def create(spec):
+            playlist = {"id": f"new-{len(created) + 1}", "name": spec["name"]}
+            created[playlist["id"]] = playlist
+            svc._jobs[out["id"]]["_control"] = "pause"  # paused right after creation
+            return playlist
+
+        dst.create = create
+        dst.find_playlist = created.get
+        dst.resolve = lambda _norm, _cache: ("dest-track", "isrc")
+        dst.add = lambda playlist, ids: added.append((playlist["id"], list(ids)))
+        job = svc.submit({"source_provider": "apple", "source_playlist_id": "p1",
+                          "dest_provider": "ytmusic", "dest_playlist_id": None})
+        out["id"] = job["id"]
+        for _ in range(100):
+            if svc.get(job["id"])["status"] == "paused":
+                break
+            await asyncio.sleep(0.02)
+        out["paused"] = dict(svc.get(job["id"])["dest"])
+        assert svc.resume(job["id"]) is True
+        out["done"] = await _await_job(svc, job["id"])
+
+    asyncio.run(scenario())
+
+    assert out["paused"]["playlist_id"] == "new-1"
+    assert out["done"]["status"] == "done"
+    assert list(created) == ["new-1"]  # resuming must not create a second playlist
+    assert added == [("new-1", ["dest-track"])]
+
+
 def test_transfer_service_resolve_writes_cache(monkeypatch, tmp_path):
     from songmirror.engine.runner import load_cache
 

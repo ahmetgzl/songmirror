@@ -493,6 +493,11 @@ class TransferService:
             job["source"]["playlist_name"] = src.playlist_name(src_pl)
             dest_pl = self._dest_playlist(dst, src, src_pl, spec)
             job["dest"]["playlist_name"] = dst.playlist_name(dest_pl)
+            dest_id = dst.playlist_id(dest_pl)
+            if dest_id:
+                # The UI links to it, and a resumed copy adds to this playlist
+                # instead of creating another one.
+                job["dest"]["playlist_id"] = spec["dest_playlist_id"] = str(dest_id)
             cache = load_cache(dst.cache_file)
             self._emit("section", f"transfer: {job['source']['playlist_name']} -> {dst.name}", "transfer")
 

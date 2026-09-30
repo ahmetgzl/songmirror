@@ -56,7 +56,7 @@ async function main() {
           id: 't1', status: 'queued', preserve_order: false, added: 0, deferred: 0, chronology_replayed: 0,
           unavailable: 0, conflicts: [], error: null, total: 0, processed: 0,
           source: { account: 'spotify', provider: 'spotify', name: 'Spotify', playlist_id: 'p1', playlist_name: 'Road Trip' },
-          dest: { account: 'tidal', provider: 'tidal', name: 'TIDAL', playlist_id: null, playlist_name: 'Road Trip' },
+          dest: { account: 'tidal', provider: 'tidal', name: 'TIDAL', playlist_id: 'tidal-new', playlist_name: 'Road Trip' },
         })
       }
       if (url.pathname === '/api/imports/text') {
@@ -108,7 +108,11 @@ async function main() {
       await page.setViewportSize({ width, height: 1000 })
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Transfers must fit ${width}px`)
     }
-    console.log('PASS: a created transfer destination takes the edited description and the public choice')
+    const open = page.getByRole('link', { name: 'Open in TIDAL' })
+    await open.waitFor()
+    assert.equal(await open.getAttribute('href'), 'https://listen.tidal.com/playlist/tidal-new')
+    assert.equal(await open.getAttribute('target'), '_blank')
+    console.log('PASS: a created transfer destination takes the edited description and the public choice, and links to the new playlist')
     await page.close()
 
     const untouched = {}
