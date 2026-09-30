@@ -56,6 +56,11 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
   const [destMode, setDestMode] = useState<'existing' | 'create'>('existing')
   const [destPlaylistId, setDestPlaylistId] = useState('')
   const [destName, setDestName] = useState('')
+  const [destDescription, setDestDescription] = useState('')
+  // Until edited, the server copies the source's own description, which also
+  // covers services whose playlist list doesn't carry one to prefill.
+  const [descriptionEdited, setDescriptionEdited] = useState(false)
+  const [destPublic, setDestPublic] = useState(false)
   const [preserveOrder, setPreserveOrder] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [starting, setStarting] = useState(false)
@@ -85,16 +90,18 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
     destProviderOptions.length > 0 &&
     (librarySources.length > 0 || publicSources.length > 0)
 
-  // Default "create new"'s name to the source playlist's name — re-derives
-  // whenever the source playlist or the create-new choice changes, but a
-  // manual edit in between sticks until one of those changes again.
+  // Default "create new"'s name and description to the source playlist's. They
+  // re-derive whenever the source playlist or the create-new choice changes,
+  // but a manual edit in between sticks until one of those changes again.
   useEffect(() => {
     if (destMode !== 'create') return
-    const name =
+    const source =
       sourceMode === 'link'
-        ? preview?.name
-        : entries[sourceProvider]?.playlists.find((p) => p.id === sourcePlaylistId)?.name
-    if (name) setDestName(name)
+        ? preview
+        : entries[sourceProvider]?.playlists.find((p) => p.id === sourcePlaylistId)
+    if (source?.name) setDestName(source.name)
+    setDestDescription(source?.description ?? '')
+    setDescriptionEdited(false)
   }, [destMode, sourceMode, preview, sourceProvider, sourcePlaylistId, entries])
 
   // In link mode the preview IS the source: it carries the name and count the
@@ -114,6 +121,13 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
   // services can't replay order at all (their writes can't express it).
   const destSupportsOrder = accounts.find((a) => a.id === destProvider)?.preserves_order ?? false
   const canPreserveOrder = destMode === 'existing' && destSupportsOrder
+  const canPublish = Boolean(destAccount?.public_playlists)
+  const makePublic = destMode === 'create' && canPublish && destPublic
+  const publicHelp = !destProvider
+    ? t("Pick a destination service first.")
+    : canPublish
+      ? t("Off keeps it private. On makes it public on {{destAccountName}}.", { destAccountName: destAccount?.name ?? '' })
+      : t("{{destAccountName}} creates private playlists here. Change its visibility there after the copy.", { destAccountName: destAccount?.name ?? t('This account') })
   const preserveOrderHelp = !destProvider
     ? t("Pick a destination service first.")
     : destMode === 'create'
@@ -182,6 +196,8 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
         dest_account: destProvider,
         dest_playlist_id: destMode === 'create' ? null : destPlaylistId,
         dest_name: destMode === 'create' ? destName.trim() : (destPlaylist?.name ?? ''),
+        dest_description: destMode === 'create' && descriptionEdited ? destDescription : null,
+        dest_public: makePublic,
         preserve_order: canPreserveOrder && preserveOrder,
       }
       const res = await api.startTransfer(body)
@@ -379,13 +395,33 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
                     onChange={setDestPlaylistId}
                   />
                 ) : (
-                  <TextField
-                    label={t("New playlist name")}
-                    help={t("Defaults to the source playlist's name. Feel free to change it.")}
-                    required
-                    value={destName}
-                    onChange={(e) => setDestName(e.target.value)}
-                  />
+                  <>
+                    <TextField
+                      label={t("New playlist name")}
+                      help={t("Defaults to the source playlist's name. Feel free to change it.")}
+                      required
+                      value={destName}
+                      onChange={(e) => setDestName(e.target.value)}
+                    />
+                    <TextField
+                      label={t("Description (optional)")}
+                      help={t("Starts as the source playlist's description. Clear it to create the playlist without one.")}
+                      placeholder={descriptionEdited ? undefined : t("Copies the source playlist's description")}
+                      maxLength={5000}
+                      value={destDescription}
+                      onChange={(e) => {
+                        setDestDescription(e.target.value)
+                        setDescriptionEdited(true)
+                      }}
+                    />
+                    <Toggle
+                      label={t("Make the new playlist public")}
+                      description={publicHelp}
+                      checked={makePublic}
+                      disabled={!canPublish}
+                      onChange={setDestPublic}
+                    />
+                  </>
                 )}
 
                 <Toggle
@@ -441,6 +477,7 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
                   : t('"{{source}}" will be copied from {{sourceAccount}} to "{{destination}}" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.', {
                       source: sourcePlaylist.name, sourceAccount: sourceAccount?.name ?? t('the source account'), destination: destPlaylist?.name ?? '', destinationAccount: destAccount?.name ?? t('the destination account'),
                     }),
+                makePublic ? t('The new playlist will be public.') : '',
                 canPreserveOrder && preserveOrder
                   ? t('Tracks already there will be rewritten to keep Recently Added order, which takes longer.')
                   : '',

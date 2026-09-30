@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
+import requests
 from fastapi.testclient import TestClient
 
 from songmirror.services.account_profiles import AccountProfileStore
@@ -17,6 +18,7 @@ from songmirror.services.playlist_backups import (
     validate_backup_job,
 )
 from songmirror.services.playlist_exports import PlaylistExport
+from songmirror.services.playlists import PlaylistBrowseError
 from songmirror.services.settings import SettingsStore
 from songmirror.web import create_app
 
@@ -116,7 +118,7 @@ def test_backup_run_persists_status_and_prunes_only_managed_snapshots(
     monkeypatch.setattr(
         module.PlaylistService,
         "export",
-        lambda self, provider, format: next(exports),
+        lambda self, provider, format, **_: next(exports),
     )
     store = PlaylistBackupStore(tmp_path)
     store.upsert(PlaylistBackupJob(account_id="spotify", retention=2))
@@ -163,7 +165,7 @@ def test_backup_failure_is_persisted_without_erasing_last_success(tmp_path, monk
 
     outcomes = iter([_export(1), RuntimeError("provider unavailable")])
 
-    def export(self, provider, format):
+    def export(self, provider, format, **_):
         outcome = next(outcomes)
         if isinstance(outcome, Exception):
             raise outcome
@@ -258,7 +260,7 @@ def test_backup_run_and_storage_are_scoped_to_the_selected_profile(tmp_path, mon
     alex = profiles.create("spotify", "Alex")
     seen = []
 
-    def export(self, provider, format):
+    def export(self, provider, format, **_):
         seen.append((provider, format))
         return _export(5)
 
@@ -360,7 +362,7 @@ def test_playlist_backup_api_configures_runs_and_downloads_latest(
     monkeypatch.setattr(
         module.PlaylistService,
         "export",
-        lambda self, provider, format: _export(4, playlist_count=4, track_count=99),
+        lambda self, provider, format, **_: _export(4, playlist_count=4, track_count=99),
     )
     app = create_app(settings=SettingsStore(dir=tmp_path))
     spotify_account = app.state.account_profiles.default_id("spotify")
@@ -416,3 +418,187 @@ def test_playlist_backup_api_configures_runs_and_downloads_latest(
     assert (
         tmp_path / "playlist_backups" / spotify_account / _export(4).filename
     ).is_file()
+
+
+def test_backup_status_reports_each_phase_of_a_running_backup(tmp_path, monkeypatch):
+    import songmirror.services.playlist_backups as module
+
+    store = PlaylistBackupStore(tmp_path)
+    store.upsert(PlaylistBackupJob(account_id="spotify"))
+    seen = []
+
+    class _QueuedSync:
+        async def run_exclusive(self, callback):
+            # A sync or transfer still holds the engine: nothing is read yet.
+            seen.append(service.list_status()[0]["progress"])
+            return callback()
+
+    def export(self, provider, format, *, on_progress):
+        on_progress(done=0, total=2, tracks=0, playlist="Alpha")
+        seen.append(service.list_status()[0]["progress"])
+        on_progress(done=1, total=2, tracks=5, playlist="Zulu")
+        seen.append(service.list_status()[0]["progress"])
+        on_progress(done=2, total=2, tracks=9, playlist=None)
+        return _export(1)
+
+    write_snapshot = store.write_snapshot
+
+    def observed_write(*args):
+        seen.append(service.list_status()[0]["progress"])
+        return write_snapshot(*args)
+
+    monkeypatch.setattr(module.PlaylistService, "export", export)
+    monkeypatch.setattr(store, "write_snapshot", observed_write)
+    service = PlaylistBackupService(SettingsStore(dir=tmp_path), _QueuedSync(), EventBus(), store)
+
+    asyncio.run(service.run("spotify"))
+
+    assert seen == [
+        {"phase": "waiting"},
+        {"phase": "reading", "done": 0, "total": 2, "tracks": 0, "playlist": "Alpha"},
+        {"phase": "reading", "done": 1, "total": 2, "tracks": 5, "playlist": "Zulu"},
+        {"phase": "saving", "done": 2, "total": 2, "tracks": 9, "playlist": None},
+    ]
+    finished = service.list_status()[0]
+    assert finished["running"] is False
+    assert finished["progress"] is None
+
+
+@pytest.mark.parametrize(
+    ("cause", "detail"),
+    [
+        (
+            requests.HTTPError(
+                "429 Client Error: Too Many Requests for url: "
+                "https://api.example.test/v1/query?access_token=SECRET&limit=100"
+            ),
+            "HTTPError: 429 Client Error: Too Many Requests for url: "
+            "https://api.example.test/v1/query",
+        ),
+        (
+            requests.ConnectionError(
+                "HTTPSConnectionPool(host='api.example.test', port=443): Max retries "
+                "exceeded with url: /v1/me/playlists?token=SECRET (Caused by timeout)"
+            ),
+            "ConnectionError: HTTPSConnectionPool(host='api.example.test', port=443): "
+            "Max retries exceeded with url: /v1/me/playlists (Caused by timeout)",
+        ),
+    ],
+)
+def test_backup_failure_records_the_redacted_cause_and_where_it_stopped(
+    tmp_path, monkeypatch, cause, detail,
+):
+    import songmirror.services.playlist_backups as module
+
+    summary = "Spotify could not export playlists right now. Retry; if it continues, reconnect the account."
+
+    def export(self, provider, format, *, on_progress):
+        on_progress(done=0, total=3, tracks=0, playlist="Alpha")
+        on_progress(done=1, total=3, tracks=12, playlist="Road trip")
+        try:
+            raise cause
+        except requests.RequestException as exc:
+            raise PlaylistBrowseError(summary) from exc
+
+    monkeypatch.setattr(module.PlaylistService, "export", export)
+    store = PlaylistBackupStore(tmp_path)
+    store.upsert(PlaylistBackupJob(account_id="spotify"))
+    service = PlaylistBackupService(SettingsStore(dir=tmp_path), _ExclusiveSync(), EventBus(), store)
+
+    asyncio.run(service.run("spotify"))
+
+    failure = PlaylistBackupStore(tmp_path).status("spotify")["last_failure"]
+    assert failure == {
+        "at": failure["at"],
+        "error": summary,
+        "detail": detail,
+        "progress": {
+            "phase": "reading", "done": 1, "total": 3, "tracks": 12, "playlist": "Road trip",
+        },
+    }
+    assert "SECRET" not in (tmp_path / "playlist_backup_status.json").read_text()
+    assert service.list_status()[0]["last_failure"] == failure
+
+
+def test_backup_status_ignores_malformed_failure_context(tmp_path):
+    store = PlaylistBackupStore(tmp_path)
+    store.record_failure("spotify", {
+        "at": "2026-09-04T12:00:00Z",
+        "error": "provider unavailable",
+        "detail": ["not", "text"],
+        "progress": "reading",
+    })
+
+    assert store.status("spotify")["last_failure"] == {
+        "at": "2026-09-04T12:00:00Z",
+        "error": "provider unavailable",
+    }
+
+
+def test_retention_tolerates_a_snapshot_deleted_while_pruning(tmp_path, monkeypatch):
+    store = PlaylistBackupStore(tmp_path)
+    first, _ = store.write_snapshot("spotify", _export(1), 0)
+    listed = store.snapshots
+
+    def listed_then_deleted(account_id, storage_dir=None):
+        rows = listed(account_id, storage_dir)
+        first.unlink()  # removed from the snapshot list while the backup prunes
+        return rows
+
+    monkeypatch.setattr(store, "snapshots", listed_then_deleted)
+
+    latest, removed = store.write_snapshot("spotify", _export(2), 1)
+
+    assert latest.is_file()
+    assert removed == 0
+
+
+def test_playlist_backup_api_lists_downloads_and_deletes_single_snapshots(tmp_path):
+    app = create_app(settings=SettingsStore(dir=tmp_path))
+    store = app.state.playlist_backups.store
+    base = "/api/playlist-backups/spotify"
+
+    with TestClient(app) as client:
+        assert client.get(base + "/snapshots").status_code == 404
+        assert client.put(base, json={"enabled": False}).status_code == 200
+        account_id = app.state.account_profiles.default_id("spotify")
+        for day in (1, 2):
+            store.write_snapshot(account_id, _export(day), 30)
+        unmanaged = store.account_dir(account_id) / "notes.txt"
+        unmanaged.write_text("keep", encoding="utf-8")
+
+        assert client.get(base + "/snapshots").json() == [
+            {
+                "filename": _export(day).filename,
+                "format": "json",
+                "size": len(_export(day).content),
+                "created_at": f"2026-09-{day:02d}T12:00:00Z",
+            }
+            for day in (2, 1)
+        ]
+
+        single = client.get(f"{base}/snapshots/{_export(1).filename}")
+        assert single.status_code == 200
+        assert single.content == _export(1).content
+        assert single.headers["content-disposition"] == (
+            f'attachment; filename="{_export(1).filename}"'
+        )
+        assert single.headers["cache-control"] == "no-store"
+
+        deleted = client.delete(f"{base}/snapshots/{_export(1).filename}")
+        assert deleted.json() == {"ok": True}
+        assert [row["filename"] for row in client.get(base + "/snapshots").json()] == [
+            _export(2).filename,
+        ]
+        assert client.get("/api/playlist-backups").json()[0]["snapshot_count"] == 1
+
+        # Only managed snapshots of this account are addressable by name.
+        for name in (_export(1).filename, "notes.txt"):
+            assert client.get(f"{base}/snapshots/{name}").status_code == 404
+            assert client.delete(f"{base}/snapshots/{name}").status_code == 404
+        escape = f"{base}/snapshots/..%2F..%2Fplaylist_backups.json"
+        assert client.get(escape).status_code == 404
+        assert client.delete(escape).status_code in (404, 405)
+
+    assert unmanaged.read_text(encoding="utf-8") == "keep"
+    assert (tmp_path / "playlist_backups.json").is_file()

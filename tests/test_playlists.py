@@ -77,7 +77,12 @@ def test_browse_normalizes_rows(monkeypatch, tmp_path):
         def list_playlists(self):
             # Qobuz emits numeric playlist ids. The web contract is string-id
             # based because ids become select values and link-store keys.
-            return {"chill": {"id": 1, "name": "Chill", "tracks": {"total": 5}}}
+            return {"chill": {
+                "id": 1,
+                "name": "Chill",
+                "tracks": {"total": 5},
+                "attributes": {"description": {"standard": "Late <b>night</b> &amp; slow"}},
+            }}
 
         def browse_playlists(self):
             return list(self.list_playlists().values())
@@ -85,14 +90,19 @@ def test_browse_normalizes_rows(monkeypatch, tmp_path):
         def playlist_count(self, pl):
             return (pl.get("tracks") or {}).get("total")
 
+        def playlist_public(self, pl):
+            return True
+
     monkeypatch.setattr("songmirror.services.playlists.build_one", lambda pid, opts, sp=None: FakeTarget())
     rows = PlaylistService(SettingsStore(dir=tmp_path)).browse("apple")
     assert rows == [{
         "id": "1",
         "name": "Chill",
+        "description": "Late night & slow",
         "count": 5,
         "image": "",
         "owned": True,
+        "public": True,
         "external_url": "https://music.apple.com/library/playlist/1",
     }]
 

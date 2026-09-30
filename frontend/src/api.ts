@@ -14,7 +14,9 @@ import type {
   LinkUpsertRequest,
   OkResponse,
   PlaylistBackupJob,
+  PlaylistBackupSnapshot,
   PlaylistBackupUpdate,
+  PlaylistDetailsUpdate,
   PlaylistLink,
   PlaylistExportFormat,
   PollResponse,
@@ -175,6 +177,18 @@ export const api = {
       `/api/playlist-backups/${encodeURIComponent(accountId)}/latest`,
       `songmirror-${accountId}-playlists.json`,
     ),
+  getPlaylistBackupSnapshots: (accountId: string) =>
+    request<PlaylistBackupSnapshot[]>(`/api/playlist-backups/${encodeURIComponent(accountId)}/snapshots`),
+  downloadPlaylistBackupSnapshot: (accountId: string, filename: string) =>
+    download(
+      `/api/playlist-backups/${encodeURIComponent(accountId)}/snapshots/${encodeURIComponent(filename)}`,
+      filename,
+    ),
+  deletePlaylistBackupSnapshot: (accountId: string, filename: string) =>
+    request<OkResponse>(
+      `/api/playlist-backups/${encodeURIComponent(accountId)}/snapshots/${encodeURIComponent(filename)}`,
+      { method: 'DELETE' },
+    ),
 
   // Sync (global: run-all + the auto-sync master switch)
   runSync: (execute: boolean) => request<RunResponse>(`/api/sync/run?execute=${execute ? 1 : 0}`, { method: 'POST' }),
@@ -241,6 +255,11 @@ export const api = {
     request<OkResponse>(
       `/api/playlists/${encodeURIComponent(provider)}/${encodeURIComponent(playlistId)}/tracks`,
       { method: 'DELETE', body: JSON.stringify(body) },
+    ),
+  updatePlaylistDetails: (provider: string, playlistId: string, changes: PlaylistDetailsUpdate) =>
+    request<OkResponse>(
+      `/api/playlists/${encodeURIComponent(provider)}/${encodeURIComponent(playlistId)}`,
+      { method: 'PATCH', body: JSON.stringify(changes) },
     ),
 
   // Links (cross-service pairings)
@@ -325,6 +344,7 @@ export const importApi = {
     destination_playlist_id?: string
     name?: string
     description?: string
+    public?: boolean
   }) =>
     request<ImportJob>('/api/imports/text', {
       method: 'POST',
@@ -339,13 +359,14 @@ export const importApi = {
       destination_playlist_id?: string
       name?: string
       description?: string
+      public?: boolean
     },
   ): Promise<ImportJob> {
     const formData = new FormData()
     formData.append('file', file)
     Object.entries(destination).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== '') {
-        formData.append(key, value)
+        formData.append(key, String(value))
       }
     })
 
@@ -368,6 +389,7 @@ export const importApi = {
     destination_playlist_id?: string
     name?: string
     description?: string
+    public?: boolean
   }) =>
     request<ImportJob>('/api/imports/url', {
       method: 'POST',

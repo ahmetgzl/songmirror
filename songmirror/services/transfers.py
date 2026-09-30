@@ -342,7 +342,9 @@ class TransferService:
 
     def submit(self, spec):
         """spec: {source_account, source_playlist_id, dest_account,
-        dest_playlist_id | None, dest_name, preserve_order}. Returns the job
+        dest_playlist_id | None, dest_name, dest_description | None,
+        dest_public, preserve_order}. The last three shape a newly created
+        destination; a None description copies the source's. Returns the job
         dict (with id). Legacy source_provider/dest_provider keys select the
         corresponding compatibility profiles."""
         source_account = spec.get("source_account") or spec.get("source_provider")
@@ -491,6 +493,11 @@ class TransferService:
             job["source"]["playlist_name"] = src.playlist_name(src_pl)
             dest_pl = self._dest_playlist(dst, src, src_pl, spec)
             job["dest"]["playlist_name"] = dst.playlist_name(dest_pl)
+            dest_id = dst.playlist_id(dest_pl)
+            if dest_id:
+                # The UI links to it, and a resumed copy adds to this playlist
+                # instead of creating another one.
+                job["dest"]["playlist_id"] = spec["dest_playlist_id"] = str(dest_id)
             cache = load_cache(dst.cache_file)
             self._emit("section", f"transfer: {job['source']['playlist_name']} -> {dst.name}", "transfer")
 
@@ -555,7 +562,14 @@ class TransferService:
                 raise RuntimeError("destination playlist not found")
             return pl
         name = spec.get("dest_name") or src.playlist_name(src_pl)
-        return dst.create({"name": name, "description": src.playlist_description(src_pl)})
+        description = spec.get("dest_description")
+        if description is None:
+            description = src.playlist_description(src_pl)
+        return dst.create({
+            "name": name,
+            "description": description,
+            "_create_public": bool(spec.get("dest_public")),
+        })
 
     def _emit(self, kind, message, tag, data=None):
         self._bus.publish(logs.Event(time.time(), kind, tag, message, data))

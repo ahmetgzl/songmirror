@@ -19,9 +19,16 @@ from ..engine import archive, spotify, spotify_cookie
 from ..engine.config import parse_args, spotify_write_backend
 from ..engine.logs import log_warn
 from ..engine.targets import TargetCapabilityError, build_one, target_provider
+from ..engine.targets.provider_utils import source_playlist_details
 from .playlist_exports import render_backup
 from .playlist_links import external_url, provider_label
 from .settings import _open_private
+
+
+MAX_PLAYLIST_NAME = 200
+# The largest description any supported provider accepts (YouTube).
+MAX_PLAYLIST_DESCRIPTION = 5000
+_DETAIL_LABELS = {"name": "name", "description": "description", "public": "visibility"}
 
 
 class PlaylistServiceError(RuntimeError):
@@ -302,8 +309,11 @@ class PlaylistService:
                 playlists = hydrate_counts(playlists) or playlists
         except Exception as exc:
             self._failure(provider_id, "load playlists", exc)
-        rows = [{"id": _pl_id(pl), "name": _pl_name(pl), "count": target.playlist_count(pl),
+        rows = [{"id": _pl_id(pl), "name": _pl_name(pl),
+                 "description": _plain_text(source_playlist_details(pl)[1]),
+                 "count": target.playlist_count(pl),
                  "image": playlist_image(pl), "owned": bool(pl.get("_owned", True)),
+                 "public": getattr(target, "playlist_public", lambda _pl: None)(pl),
                  "external_url": external_url(target_provider(target, self._provider(provider_id)), "playlist", _pl_id(pl))}
                 for pl in playlists]
         self._prune_details(provider_id, [row["id"] for row in rows])
@@ -441,12 +451,15 @@ class PlaylistService:
         except Exception as exc:
             self._failure(provider_id, "open that playlist", exc)
 
-    def export(self, provider_id, export_format, *, playlist_id=None):
+    def export(self, provider_id, export_format, *, playlist_id=None, on_progress=None):
         """Read fresh provider metadata and return a browser-download payload.
 
         A provider-wide JSON/XML export uses one target instance and one library
         read, then snapshots every playlist. Soundiiz's documented JSON shape is
         playlist-scoped, so that interoperability format requires playlist_id.
+
+        ``on_progress(done=, total=, tracks=, playlist=)`` fires before each
+        playlist read and once after the last, with ``playlist=None``.
         """
         export_format = str(export_format).casefold()
         if self._provider(provider_id) == "jellyfin":
@@ -471,16 +484,25 @@ class PlaylistService:
             else:
                 playlists = list(target.browse_playlists())
 
-            details = [
-                self._read_detail(
+            report = on_progress or (lambda **_state: None)
+            details = []
+            tracks = 0
+            for done, playlist in enumerate(playlists):
+                report(
+                    done=done,
+                    total=len(playlists),
+                    tracks=tracks,
+                    playlist=target.playlist_name(playlist),
+                )
+                details.append(self._read_detail(
                     provider_id,
                     target.playlist_id(playlist) or _pl_id(playlist),
                     target,
                     playlist,
                     retain_idless=True,
-                )
-                for playlist in playlists
-            ]
+                ))
+                tracks += len(details[-1]["tracks"])
+            report(done=len(playlists), total=len(playlists), tracks=tracks, playlist=None)
             details.sort(key=lambda detail: (detail["name"].casefold(), detail["id"]))
             return render_backup(
                 target_provider(target),
@@ -573,6 +595,32 @@ class PlaylistService:
             "next_cursor": next_cursor,
             "complete": next_cursor is None,
         }
+
+    def update_details(self, provider_id, playlist_id, *, changes):
+        """Rename, re-describe, or change the visibility of one owned playlist.
+        ``changes`` holds only validated fields the caller wants to change."""
+        target = self._target(provider_id)
+        try:
+            playlist = target.find_playlist(str(playlist_id))
+            if playlist is None:
+                raise PlaylistNotFoundError("That playlist no longer exists. Refresh Browse.")
+            if not target.is_editable(playlist):
+                raise PlaylistReadOnlyError(
+                    "This playlist is read-only on the provider and cannot be edited here."
+                )
+            unsupported = sorted(set(changes) - set(target.editable_details()))
+            if unsupported:
+                raise PlaylistReadOnlyError(
+                    f"{self._label(provider_id)} can't change a playlist's "
+                    f"{_DETAIL_LABELS[unsupported[0]]} from SongMirror."
+                )
+            self._invalidate_detail(provider_id, playlist_id)
+            target.update_details(playlist, changes)
+        except PlaylistServiceError:
+            raise
+        except Exception as exc:
+            self._failure(provider_id, "update that playlist", exc)
+        return {"ok": True}
 
     def remove_track(self, provider_id, playlist_id, *, position, track_id, occurrence_id=""):
         self.remove_tracks(provider_id, playlist_id, selections=[{

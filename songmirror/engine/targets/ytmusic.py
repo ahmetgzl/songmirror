@@ -531,6 +531,11 @@ def _public_video_metadata(video_id):
     return None
 
 
+def _privacy(public):
+    """Data API privacyStatus; the youtubei session takes it upper-cased."""
+    return "public" if public else "private"
+
+
 def _err_reason(response):
     try:
         errors = response.json().get("error", {}).get("errors", [])
@@ -650,12 +655,13 @@ class YTMusicTarget(MirrorTarget):
     # -- MirrorTarget ----------------------------------------------------------
     def list_playlists(self):
         out = {}
-        for pl in self._paged("playlists", {"part": "snippet,contentDetails", "mine": "true", "maxResults": 50}):
+        for pl in self._paged("playlists", {"part": "snippet,contentDetails,status", "mine": "true", "maxResults": 50}):
             title = (pl.get("snippet", {}).get("title") or "").strip()
             key = title.casefold()
             if key and key not in out:
                 out[key] = {"playlistId": pl["id"], "title": title,
                             "count": pl.get("contentDetails", {}).get("itemCount"),
+                            "privacy": pl.get("status", {}).get("privacyStatus"),
                             "thumbnails": pl.get("snippet", {}).get("thumbnails")}  # cover art for browse
         return out
 
@@ -671,10 +677,44 @@ class YTMusicTarget(MirrorTarget):
     def playlist_name(self, playlist):
         return playlist.get("title", "")
 
+    @classmethod
+    def creates_public_playlists(cls):
+        return True
+
+    @classmethod
+    def editable_details(cls):
+        return frozenset({"name", "description", "public"})
+
+    def update_details(self, playlist, changes):
+        playlist_id = self.playlist_id(playlist)
+        body, parts = {"id": playlist_id}, []
+        if "name" in changes or "description" in changes:
+            rows = self._request(
+                "GET", "playlists", params={"part": "snippet", "id": playlist_id},
+            ).json().get("items") or []
+            if not rows:
+                raise RuntimeError("YouTube did not return that playlist")
+            current = rows[0].get("snippet") or {}
+            # An update deletes every mutable snippet property it leaves out.
+            body["snippet"] = {
+                "title": changes.get("name", current.get("title", "")),
+                "description": changes.get("description", current.get("description", "")),
+                **{key: current[key] for key in ("defaultLanguage", "tags") if key in current},
+            }
+            parts.append("snippet")
+        if "public" in changes:
+            body["status"] = {"privacyStatus": _privacy(changes["public"])}
+            parts.append("status")
+        self._request("PUT", "playlists", params={"part": ",".join(parts)}, json_body=body)
+
+    def playlist_public(self, playlist):
+        privacy = playlist.get("privacy")
+        return None if privacy is None else privacy == "public"
+
     def create(self, sp_playlist):
         name, description = source_playlist_details(sp_playlist)
         body = {"snippet": {"title": name, "description": description},
-                "status": {"privacyStatus": "private"}}
+                "status": {"privacyStatus": _privacy(self._create_public(sp_playlist))}}
         pid = self._request("POST", "playlists", params={"part": "snippet,status"}, json_body=body).json()["id"]
         polite_sleep(2.0)  # let the new playlist settle before writing to it
         return {"playlistId": pid, "title": name, "count": 0}
@@ -1109,9 +1149,23 @@ class YTMusicBrowserTarget(YTMusicTarget):
                                   "re-export the browser cookies (Settings -> YouTube Music).")
         return out
 
+    def update_details(self, playlist, changes):
+        description = changes.get("description")
+        result = self._api.edit_playlist(
+            self.playlist_id(playlist),
+            title=changes.get("name"),
+            # edit_playlist skips a falsy description, so one space stands in
+            # for clearing it; YouTube Music shows it as empty.
+            description=" " if description == "" else description,
+            privacyStatus=_privacy(changes["public"]).upper() if "public" in changes else None,
+        )
+        if result != "STATUS_SUCCEEDED":
+            raise TargetAuthError(f"YouTube Music refused to update the playlist ({result!r}).")
+
     def create(self, sp_playlist):
         name, description = source_playlist_details(sp_playlist)
-        pid = self._api.create_playlist(name, description, privacy_status="PRIVATE")
+        privacy = _privacy(self._create_public(sp_playlist)).upper()
+        pid = self._api.create_playlist(name, description, privacy_status=privacy)
         if not isinstance(pid, str):  # ytmusicapi returns a status dict/response on failure
             raise TargetAuthError(f"YouTube Music refused to create the playlist ({pid!r}).")
         polite_sleep(2.0)

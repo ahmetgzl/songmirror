@@ -190,6 +190,48 @@ def test_provider_export_uses_one_target_and_snapshots_every_playlist_fresh(
     ] == [0, 0]
 
 
+def test_provider_export_reports_progress_before_each_playlist_read(monkeypatch, tmp_path):
+    from songmirror.services.playlists import PlaylistService
+    from songmirror.services.settings import SettingsStore
+
+    class Target:
+        name = "Spotify"
+
+        def browse_playlists(self):
+            return [{"id": "2", "name": "Zulu"}, {"id": "1", "name": "Alpha"}]
+
+        def playlist_tracks(self, playlist):
+            count = 3 if playlist["id"] == "2" else 1
+            return [{"id": f"{playlist['id']}-{n}", "name": "Song"} for n in range(count)]
+
+        def playlist_id(self, playlist):
+            return playlist["id"]
+
+        def playlist_name(self, playlist):
+            return playlist["name"]
+
+        def playlist_description(self, playlist):
+            return ""
+
+        def track_id(self, track):
+            return track["id"]
+
+        def is_editable(self, playlist):
+            return True
+
+    service = PlaylistService(SettingsStore(dir=tmp_path))
+    monkeypatch.setattr(service, "_target", lambda provider: Target())
+    reports = []
+
+    service.export("spotify", "json", on_progress=lambda **state: reports.append(state))
+
+    assert reports == [
+        {"done": 0, "total": 2, "tracks": 0, "playlist": "Zulu"},
+        {"done": 1, "total": 2, "tracks": 3, "playlist": "Alpha"},
+        {"done": 2, "total": 2, "tracks": 4, "playlist": None},
+    ]
+
+
 def test_export_keeps_idless_catalog_ghosts_with_last_visible_metadata(
     monkeypatch,
     tmp_path,

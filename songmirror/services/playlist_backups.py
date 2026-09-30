@@ -39,6 +39,38 @@ _MANAGED_SNAPSHOT = re.compile(
     r"^songmirror-.+-(?P<timestamp>\d{8}T\d{6}Z)"
     r"(?:-(?P<collision>\d+))?\.(?:json|xml)$"
 )
+# Provider errors can echo their request URL, and some providers carry
+# credentials in the query string, so persisted failure text keeps only paths.
+_QUERY_STRING = re.compile(r"(?<=[^\s?])\?[^\s'\")]+")
+
+
+def _redacted(text):
+    return _QUERY_STRING.sub("", str(text)).strip()[:500]
+
+
+def _failure_cause(exc):
+    """The provider-level reason behind a wrapped, user-facing error."""
+    cause = exc.__cause__
+    if cause is None:
+        return None
+    message = str(cause).strip()
+    return _redacted(f"{type(cause).__name__}: {message}" if message else type(cause).__name__)
+
+
+def _snapshot_row(path):
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return None  # deleted after it was listed
+    created = datetime.strptime(
+        _MANAGED_SNAPSHOT.fullmatch(path.name).group("timestamp"), "%Y%m%dT%H%M%SZ"
+    )
+    return {
+        "filename": path.name,
+        "format": path.suffix.lstrip("."),
+        "size": size,
+        "created_at": created.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
 
 
 def _utc_timestamp(now=None):
@@ -273,7 +305,11 @@ class PlaylistBackupStore:
             and isinstance(failure.get("at"), str)
             and isinstance(failure.get("error"), str)
         ):
-            result["last_failure"] = failure
+            result["last_failure"] = {
+                key: failure[key]
+                for key, kind in (("at", str), ("error", str), ("detail", str), ("progress", dict))
+                if isinstance(failure.get(key), kind)
+            }
         return result
 
     def _record(self, account_id, key, value):
@@ -383,13 +419,37 @@ class PlaylistBackupStore:
         removed = 0
         if retention > 0:
             for stale in self.snapshots(account_id, storage_dir)[retention:]:
-                stale.unlink()
+                try:
+                    stale.unlink()
+                except FileNotFoundError:
+                    continue  # deleted from the snapshot list meanwhile
                 removed += 1
         return destination, removed
 
     def latest_snapshot(self, account_id):
         snapshots = self.snapshots(account_id)
         return snapshots[0] if snapshots else None
+
+    def snapshot_rows(self, account_id):
+        return [row for row in map(_snapshot_row, self.snapshots(account_id)) if row]
+
+    def snapshot(self, account_id, filename):
+        """One managed snapshot by name. Only a file the listing itself returns
+        can match, so a caller-supplied name never reaches another path."""
+        return next(
+            (path for path in self.snapshots(account_id) if path.name == filename),
+            None,
+        )
+
+    def delete_snapshot(self, account_id, filename):
+        snapshot = self.snapshot(account_id, filename)
+        if snapshot is None:
+            return False
+        try:
+            snapshot.unlink()
+        except FileNotFoundError:
+            return False
+        return True
 
 
 class PlaylistBackupService:
@@ -406,6 +466,9 @@ class PlaylistBackupService:
         self._scheduler_intervals = {}
         self._next_run = {}
         self._runs = {}
+        # account_id -> {"phase": waiting|reading|saving, + export progress}.
+        # Export reads mutate it from a worker thread; status copies it.
+        self._progress = {}
 
     def _account(self, identity):
         identity = str(identity or "").strip().casefold()
@@ -533,14 +596,21 @@ class PlaylistBackupService:
         if job is None:
             return
         label = self._label(account_id)
+        # Waiting until a sync or transfer releases the shared engine lock.
+        progress = self._progress[account_id] = {"phase": "waiting"}
         self._emit("section", f"{label}: playlist backup started", account_id)
-        try:
-            export = await self._sync.run_exclusive(
-                lambda: PlaylistService(self._settings, self._profiles).export(
-                    account_id,
-                    job.format,
-                )
+
+        def read():
+            progress["phase"] = "reading"
+            return PlaylistService(self._settings, self._profiles).export(
+                account_id,
+                job.format,
+                on_progress=lambda **state: progress.update(state),
             )
+
+        try:
+            export = await self._sync.run_exclusive(read)
+            progress["phase"] = "saving"
             destination, removed = await asyncio.to_thread(
                 self.store.write_snapshot,
                 account_id,
@@ -568,14 +638,21 @@ class PlaylistBackupService:
         except Exception as exc:
             failure = {
                 "at": _utc_timestamp(),
-                "error": str(exc).strip()[:500] or type(exc).__name__,
+                "error": _redacted(exc) or type(exc).__name__,
+                "progress": dict(progress),
             }
+            cause = _failure_cause(exc)
+            if cause:
+                failure["detail"] = cause
             self.store.record_failure(account_id, failure)
             self._emit(
                 "warn",
-                f"{label}: playlist backup failed: {failure['error']}",
+                f"{label}: playlist backup failed: {failure['error']}"
+                + (f" ({cause})" if cause else ""),
                 account_id,
             )
+        finally:
+            self._progress.pop(account_id, None)
 
     def list_status(self):
         return [self.job_status(job) for job in self.store.list()]
@@ -584,12 +661,14 @@ class PlaylistBackupService:
         account_id = job.account_id
         provider = self._provider(account_id)
         history = self.store.status(account_id)
+        progress = self._progress.get(account_id)
         return {
             **asdict(job),
             "provider": provider,
             "provider_name": provider_label(provider) or str(provider or account_id),
             "account_name": self._label(account_id),
             "running": account_id in self._runs,
+            "progress": dict(progress) if progress is not None else None,
             "next_run_at": self._next_run.get(account_id) if job.enabled else None,
             "snapshot_count": len(self.store.snapshots(account_id)),
             "storage_path": str(self.store.account_dir(account_id).resolve()),

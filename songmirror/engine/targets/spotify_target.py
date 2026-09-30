@@ -121,13 +121,36 @@ class SpotifyTarget(MirrorTarget):
             return spotify_cookie.hydrate_playlist_counts(playlists)
         return playlists
 
+    @classmethod
+    def creates_public_playlists(cls):
+        # The web-player create call sets only the name.
+        return spotify_write_backend() != "cookie"
+
+    @classmethod
+    def editable_details(cls):
+        # Visibility stays out: the web-player call has no visibility attribute,
+        # and the developer API does not reliably make a public playlist private.
+        return frozenset({"name", "description"})
+
+    def update_details(self, playlist, changes):
+        if spotify_write_backend() == "cookie":
+            spotify_cookie.update_details(playlist["id"], **changes)
+        else:
+            self._write(lambda: self._sp.playlist_change_details(playlist["id"], **changes),
+                        "edit playlist details")
+
+    def playlist_public(self, playlist):
+        public = playlist.get("public")
+        return public if isinstance(public, bool) else None
+
     def create(self, sp_playlist):
         name, desc = source_playlist_details(sp_playlist)
+        public = self._create_public(sp_playlist)
         if spotify_write_backend() == "cookie":
             pl = spotify_cookie.create(name, public=False, description=desc)
         else:
             pl = self._write(
-                lambda: self._sp.user_playlist_create(self._user(), name, public=False, description=desc),
+                lambda: self._sp.user_playlist_create(self._user(), name, public=public, description=desc),
                 "create playlist")
         polite_sleep(1.0)
         return pl

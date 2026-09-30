@@ -42,6 +42,10 @@ def _scopes_from_token(token):
     return jwt_scopes(str(token.get("access_token") or ""))
 
 
+def _access_type(public):
+    return "PUBLIC" if public else "UNLISTED"
+
+
 class TidalTarget(MirrorTarget):
     name = "TIDAL"
     tag = "tidal"
@@ -263,9 +267,30 @@ class TidalTarget(MirrorTarget):
                     out[key] = playlist
         return out
 
+    @classmethod
+    def creates_public_playlists(cls):
+        return True
+
+    @classmethod
+    def editable_details(cls):
+        return frozenset({"name", "description", "public"})
+
+    def update_details(self, playlist, changes):
+        attributes = {key: changes[key] for key in ("name", "description") if key in changes}
+        if "public" in changes:
+            attributes["accessType"] = _access_type(changes["public"])
+        playlist_id = str(self.playlist_id(playlist))
+        self._request("PATCH", f"playlists/{playlist_id}", json_body={
+            "data": {"id": playlist_id, "type": "playlists", "attributes": attributes},
+        })
+
+    def playlist_public(self, playlist):
+        access = (playlist.get("attributes") or {}).get("accessType")
+        return None if access is None else access == "PUBLIC"
+
     def create(self, source_playlist):
         name, description = source_playlist_details(source_playlist)
-        attributes = {"name": name, "accessType": "UNLISTED"}
+        attributes = {"name": name, "accessType": _access_type(self._create_public(source_playlist))}
         if description:
             attributes["description"] = description
         body = {"data": {"type": "playlists", "attributes": attributes}}

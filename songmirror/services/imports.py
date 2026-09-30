@@ -184,6 +184,7 @@ class ImportService:
     # ------------------------------------------------------------------ mapping
 
     def _job_from_row(self, row: dict) -> ImportJob:
+        options = json.loads(row.get("options_json") or "{}")
         return ImportJob(
             id=row["id"],
             status=ImportStatus(row["status"]),
@@ -198,6 +199,7 @@ class ImportService:
             destination_name=row["destination_name"],
             destination_description=row.get("destination_description") or "",
             destination_mode=row.get("destination_mode") or "create",
+            destination_public=isinstance(options, dict) and options.get("destination_public") is True,
             created_at=_parse_dt(row["created_at"]) or _utc_now(),
             updated_at=_parse_dt(row["updated_at"]) or _utc_now(),
             started_at=_parse_dt(row.get("started_at")),
@@ -279,6 +281,7 @@ class ImportService:
         source_name: Optional[str] = None,
         source_description: Optional[str] = None,
         options: Optional[dict] = None,
+        public: bool = False,
     ) -> ImportJob:
         account_id = self._account(destination_account)
         provider = self._provider_of(account_id)
@@ -306,6 +309,9 @@ class ImportService:
             if description is not None
             else (result.description or source_description or "")
         ) or ""
+        options = dict(options or {})
+        if public and mode == "create":  # appending creates nothing
+            options["destination_public"] = True
         job_data = {
             "id": job_id,
             "status": ImportStatus.ready.value,
@@ -322,7 +328,7 @@ class ImportService:
             "destination_mode": mode,
             "created_at": now,
             "updated_at": now,
-            "options_json": json.dumps(options or {}, ensure_ascii=False),
+            "options_json": json.dumps(options, ensure_ascii=False),
         }
 
         def write(conn):
@@ -358,6 +364,7 @@ class ImportService:
             name=request.name,
             description=request.description,
             result=result,
+            public=request.public,
         )
 
     async def create_file_import(
@@ -382,6 +389,7 @@ class ImportService:
             description=request.description,
             result=result,
             options={"filename": Path(filename or "upload").name},
+            public=request.public,
         )
 
     async def create_url_import(self, request: CreateUrlImportRequest) -> ImportJob:
@@ -505,6 +513,7 @@ class ImportService:
             source_url=request.url,
             source_name=result.name,
             source_description=result.description,
+            public=request.public,
         )
         return await self.start_matching(job.id)
 
@@ -1373,6 +1382,7 @@ class ImportService:
             playlist = dest.create({
                 "name": job["destination_name"],
                 "description": job.get("destination_description") or "",
+                "_create_public": self._job_from_row(job).destination_public,
             })
             playlist_id = str(dest.playlist_id(playlist))
             self._with_conn(

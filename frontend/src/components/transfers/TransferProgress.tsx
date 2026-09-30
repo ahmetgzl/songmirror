@@ -1,17 +1,19 @@
 import { formatNumber } from '@/lib/format'
 import { t, useTranslation } from '@/i18n'
 import { useState } from 'react'
-import { LuArrowRight, LuPause, LuPlay, LuSquare } from 'react-icons/lu'
+import { LuArrowRight, LuExternalLink, LuPause, LuPlay, LuSquare } from 'react-icons/lu'
 
 import { errorMessage } from '@/api'
 import { serviceLogoId, tagDot, tagLabel, tagText, TRANSFER_STATUS_STYLES } from '@/lib/constants'
 import { cn } from '@/lib/cn'
+import { playlistExternalUrl } from '@/lib/playlistLinks'
 import type { TransferJob, TransferStatus } from '@/types'
 
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { ConfirmDialog } from '../ui/ConfirmDialog'
 import { CountChip } from '../ui/CountChip'
+import { LinkButton } from '../ui/LinkButton'
 import { Pill } from '../ui/Pill'
 import { ServiceLogo } from '../ui/ServiceLogo'
 import { LoadingStatus, Skeleton } from '../ui/Skeleton'
@@ -192,6 +194,9 @@ export function TransferProgress({
   // added (misses and already-present tracks still advance the scan).
   const hasTotal = job.total > 0
   const pct = hasTotal ? Math.min(100, Math.round((job.processed / job.total) * 100)) : 0
+  // Edits SongMirror can't make (name, description, visibility, order) happen
+  // in the destination service itself.
+  const destUrl = job.dest.playlist_id ? playlistExternalUrl(job.dest.provider, 'playlist', job.dest.playlist_id) : ''
 
   return (
     <Card className="flex flex-col gap-4 p-4 sm:p-6">
@@ -203,6 +208,12 @@ export function TransferProgress({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Pill toneClasses={style.badge} label={style.label} pulsing={isRunning} />
+          {destUrl ? (
+            <LinkButton variant="ghost" size="sm" href={destUrl} target="_blank" rel="noreferrer">
+              {t("Open in {{accountName}}", { accountName: job.dest.name || tagLabel(job.dest.provider) })}
+              <LuExternalLink className="size-3.5" aria-hidden="true" />
+            </LinkButton>
+          ) : null}
           {controls && <TransferControls status={job.status} onPause={controls.onPause} onResume={controls.onResume} onStop={controls.onStop} />}
         </div>
       </div>

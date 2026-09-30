@@ -843,6 +843,21 @@ def _rootlist_add(playlist_uri):
         log_warn(f"created {playlist_uri} but couldn't add it to the library ({e!r})", tag="spotify")
 
 
+def update_details(playlist_id, *, name=None, description=None):
+    """Rename or re-describe a playlist through the web-player backend.
+    Attributes left out keep their value; an empty description clears it."""
+    values = {key: value for key, value in (("name", name), ("description", description)) if value is not None}
+    playlist = f"{_SPCLIENT}/playlist/v2/playlist/{playlist_id}"
+    current = requests.get(playlist, headers=_spc_headers(), timeout=REQUEST_TIMEOUT)
+    current.raise_for_status()
+    body = {"baseRevision": current.json()["revision"], "wantResultingRevisions": False,
+            "wantSyncResult": False, "nonces": [],
+            "deltas": [{"ops": [{"kind": 6, "updateListAttributes": {"newAttributes": {
+                "values": values, "noValue": []}}}]}]}
+    requests.post(playlist + "/changes", headers=_spc_headers(), data=json.dumps(body),
+                  timeout=REQUEST_TIMEOUT).raise_for_status()
+
+
 def create(name, public=False, description=""):
     """Create a playlist via the web-player backend and file it into the account's
     library — neither call touches api.spotify.com or the dev-app dev-mode gate.

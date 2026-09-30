@@ -62,6 +62,7 @@ class FakeDest(MirrorTarget):
         self._playlists = {}
         self._tracks = {str(key): list(value) for key, value in (existing or {}).items()}
         self.created = []
+        self.requested = []
         self.added = []
         self.create_fail = create_fail
         self.add_fail_ids = set(add_fail_ids or [])
@@ -85,6 +86,7 @@ class FakeDest(MirrorTarget):
         return self.find_playlist(playlist_id)
 
     def create(self, sp_playlist):
+        self.requested.append(dict(sp_playlist))
         if self.create_fail:
             raise RuntimeError("create failed")
         self._seq += 1
@@ -184,7 +186,7 @@ def _service(tmp_path, *, targets=None, profiles=None):
     return service
 
 
-def _seed_ready_job(service, *, playlist_id=None, tracks=None, mode="create"):
+def _seed_ready_job(service, *, playlist_id=None, tracks=None, mode="create", public=False):
     request = CreateTextImportRequest(
         text="AURORA - Runaway\nThe Vaccines - Post Break-Up Sex",
         destination_account="spotify",
@@ -192,6 +194,7 @@ def _seed_ready_job(service, *, playlist_id=None, tracks=None, mode="create"):
         destination_playlist_id=playlist_id,
         name="Night Drive",
         description="imported",
+        public=public,
     )
     job = asyncio.run(service.create_text_import(request))
 
@@ -233,6 +236,31 @@ def test_create_playlist_writes_tracks_and_marks_done(tmp_path):
     assert done.job.tracks_failed == 0
     assert dest.created[0]["name"] == "Night Drive"
     assert dest.added == [("pl-1", "t1"), ("pl-1", "t2")]
+
+
+@pytest.mark.parametrize("public", [True, False])
+def test_create_playlist_requests_the_chosen_visibility(tmp_path, public):
+    dest = FakeDest()
+    service = _service(tmp_path, targets={"spotify": dest})
+    job = _seed_ready_job(service, public=public)
+    assert job.destination_public is public
+
+    asyncio.run(_run_and_wait(service, service.create_playlist(job.id)))
+
+    assert dest.requested == [
+        {"name": "Night Drive", "description": "imported", "_create_public": public},
+    ]
+    assert asyncio.run(service.get_job(job.id)).job.destination_public is public
+
+
+def test_appending_never_records_a_visibility_request(tmp_path):
+    dest = FakeDest()
+    existing = dest.create({"name": "Existing"})
+    service = _service(tmp_path, targets={"spotify": dest})
+
+    job = _seed_ready_job(service, mode="append", playlist_id=existing["id"], public=True)
+
+    assert job.destination_public is False
 
 
 def test_create_playlist_marks_partial_provider_rejects(tmp_path):

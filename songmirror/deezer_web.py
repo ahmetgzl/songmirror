@@ -475,10 +475,10 @@ class DeezerWebClient:
             mutation=True,
         )
 
-    def create(self, title: str, description: str = "") -> dict:
+    def create(self, title: str, description: str = "", public: bool = False) -> dict:
         create_input = {
             "title": title,
-            "isPrivate": True,
+            "isPrivate": not public,
             "isCollaborative": False,
         }
         if description:

@@ -69,6 +69,15 @@ export interface Account {
    * False where the provider's writes can't express the repair safely (Deezer),
    * which greys out the transfer form's "preserve order" switch. */
   preserves_order: boolean
+  /** Whether a new playlist can be created public on this account. False where
+   * the account's API always creates private playlists (Apple Music, Spotify
+   * cookie write mode, Deezer without a web session). Optional for account
+   * data cached by older releases, which read as private-only. */
+  public_playlists?: boolean
+  /** Fields of an existing playlist this account can edit in SongMirror.
+   * Empty where the service has no verified update call; absent in account
+   * data cached by older releases. */
+  editable_details?: PlaylistDetailField[]
   /** Operations granted by the current credentials. Optional only so a cached
    * account payload from an older SongMirror release can be upgraded safely. */
   capabilities?: AccountCapabilities
@@ -379,9 +388,19 @@ export interface SyncEvent {
  * `image` is a cover-art URL and may be an empty string (no art available).
  * `count` is `null` when the service doesn't expose a track count cheaply
  * (Apple Music) — never render the literal "null", see formatTrackCount(). */
+/** An existing playlist field SongMirror can change on some services. */
+export type PlaylistDetailField = 'name' | 'description' | 'public'
+
+/** PATCH /api/playlists/{account}/{playlist} body: only the changed fields. */
+export type PlaylistDetailsUpdate = Partial<{ name: string; description: string; public: boolean }>
+
 export interface ProviderPlaylist {
   id: string
   name: string
+  /** Plain-text description when the provider's library listing carries one. */
+  description?: string
+  /** Visibility as the library listing reports it; null when it doesn't. */
+  public?: boolean | null
   count: number | null
   image: string
   /** First-party web-player URL for opening this exact playlist. */
@@ -433,9 +452,39 @@ export interface PlaylistBackupSuccess {
   pruned: number
 }
 
+/** Where a backup run is: waiting for a sync or transfer to release the
+ * shared engine, reading playlists, or saving the snapshot file. The counts
+ * appear once the playlist list has been read. */
+export interface PlaylistBackupProgress {
+  phase: 'waiting' | 'reading' | 'saving'
+  /** Playlists fully read so far. */
+  done?: number
+  total?: number
+  /** Tracks read so far. */
+  tracks?: number
+  /** The playlist being read now; null after the last one. */
+  playlist?: string | null
+}
+
 export interface PlaylistBackupFailure {
   at: string
+  /** User-facing summary. */
   error: string
+  /** The provider-level cause behind the summary, with URL query strings
+   * removed. Absent when the summary is already the cause. */
+  detail?: string
+  /** Where the run stopped. */
+  progress?: PlaylistBackupProgress
+}
+
+/** One managed snapshot file in the schedule's current backup folder. */
+export interface PlaylistBackupSnapshot {
+  filename: string
+  format: PlaylistBackupFormat
+  /** Bytes on disk. */
+  size: number
+  /** UTC ISO timestamp taken from the file name. */
+  created_at: string
 }
 
 /** GET /api/playlist-backups — one persistent account-wide backup schedule
@@ -455,6 +504,9 @@ export interface PlaylistBackupJob {
   /** Maximum snapshots retained; zero keeps every snapshot. */
   retention: number
   running: boolean
+  /** Live phase and counts while running; null before a queued run starts
+   * and whenever nothing is running. */
+  progress: PlaylistBackupProgress | null
   next_run_at: number | null
   snapshot_count: number
   storage_path: string
@@ -535,7 +587,8 @@ export interface TransferEndpoint {
   account: string
   provider: string
   name?: string
-  playlist_id: string
+  /** Null for a "Create new" destination until the transfer creates it. */
+  playlist_id: string | null
   playlist_name: string
 }
 
@@ -580,6 +633,11 @@ export interface StartTransferRequest {
   dest_account: string
   dest_playlist_id: string | null
   dest_name: string
+  /** A new playlist's description. Omitted or null copies the source's;
+   * an empty string creates it without one. */
+  dest_description?: string | null
+  /** Create the new playlist public. Private when omitted. */
+  dest_public?: boolean
   /** Repair the destination's date-added order when a copied track is older
    * than tracks already there. Costs many extra writes; off by default. */
   preserve_order: boolean
@@ -677,6 +735,8 @@ export interface ImportJob {
   destination_name: string
   destination_description: string
   destination_mode: string
+  /** A created playlist is requested public. Always false when appending. */
+  destination_public?: boolean
   created_at: string
   updated_at: string
   started_at?: string

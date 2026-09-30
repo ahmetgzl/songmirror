@@ -77,6 +77,7 @@ async def create_file_import(
     destination_playlist_id: str | None = Form(None),
     name: str | None = Form(None),
     description: str | None = Form(""),
+    public: bool = Form(False),
 ):
     service = _imports(request)
     # Reject obviously oversized uploads before buffering the whole body.
@@ -115,6 +116,7 @@ async def create_file_import(
                 "destination_playlist_id": destination_playlist_id or None,
                 "name": name,
                 "description": description or "",
+                "public": public,
             },
         )
     except ImportServiceError as exc:

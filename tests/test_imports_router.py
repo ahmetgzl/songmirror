@@ -74,6 +74,24 @@ class TestImportsRouter:
         # Should be 422 (validation error) or 415 (unsupported media)
         assert response.status_code in [415, 422]
 
+    def test_imports_record_the_requested_visibility(self, client):
+        account = client.app.state.account_profiles.default_id("spotify")
+        uploaded = client.post(
+            "/api/imports/file",
+            files={"file": ("mix.txt", b"Artist - Title", "text/plain")},
+            data={"destination_account": account, "name": "Mix", "public": "true"},
+        )
+        assert uploaded.status_code == 201
+        assert uploaded.json()["destination_public"] is True
+
+        pasted = {"text": "Artist - Title", "destination_account": account}
+        created = client.post("/api/imports/text", json=pasted)
+        assert created.status_code == 201
+        assert created.json()["destination_public"] is False
+        assert client.post(
+            "/api/imports/text", json={**pasted, "public": "maybe"},
+        ).status_code == 422
+
     def test_search_track_missing_params(self, client):
         response = client.get("/api/imports/search-track")
         assert response.status_code == 422  # Missing required params

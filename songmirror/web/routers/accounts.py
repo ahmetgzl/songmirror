@@ -48,6 +48,19 @@ def _preserves_order(provider):
     return cls is not None and callable(getattr(cls, "replay_chronology", None))
 
 
+def _public_playlists(provider):
+    """Whether create() can publish a playlist. Call it under the profile's
+    activation: Spotify and Deezer decide it by the account's backend."""
+    cls = target_class(provider)
+    return cls is not None and cls.creates_public_playlists()
+
+
+def _editable_details(provider):
+    """Existing-playlist fields the account can edit, under its activation."""
+    cls = target_class(provider)
+    return sorted(cls.editable_details()) if cls is not None else []
+
+
 def _capabilities(provider, status):
     """Current operations the connected credentials can perform.
 
@@ -142,6 +155,8 @@ def _status_payload(request, profile):
         status_values = _status_values(profile.provider, status)
         supports_playlists = _supports_playlists(profile.provider)
         transferable = is_peer(profile.provider)
+        public_playlists = _public_playlists(profile.provider)
+        editable_details = _editable_details(profile.provider)
         fields = []
         for field in connector.config_fields:
             data = asdict(field)
@@ -165,6 +180,8 @@ def _status_payload(request, profile):
         "supports_playlists": supports_playlists,
         "source_capable": _source_capable(profile.provider),
         "preserves_order": _preserves_order(profile.provider),
+        "public_playlists": public_playlists,
+        "editable_details": editable_details,
         "callback_url": _callback_url(request, profile, connector),
         "authorization_pending": bool(store.get("LASTFM_AUTH_PENDING")) if profile.provider == "lastfm" else False,
     }

@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from ...services.playlists import MAX_PLAYLIST_DESCRIPTION
 from ...services.transfers import TransferPreviewError
 
 router = APIRouter()
@@ -28,12 +29,26 @@ def preview_transfer_source(request: Request, body: dict = Body(...)):
 async def start_transfer(request: Request, body: dict = Body(...)):
     # async so submit()'s asyncio.create_task has a running loop (a sync endpoint
     # runs in a threadpool with no loop and would 500).
+    description = body.get("dest_description")
+    if description is not None and (
+        not isinstance(description, str) or len(description) > MAX_PLAYLIST_DESCRIPTION
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=f"dest_description must be text of at most {MAX_PLAYLIST_DESCRIPTION} characters",
+        )
+    public = body.get("dest_public", False)
+    if not isinstance(public, bool):
+        raise HTTPException(status_code=422, detail="dest_public must be true or false")
     job = request.app.state.transfers.submit({
         "source_account": body.get("source_account") or body["source_provider"],
         "source_playlist_id": body["source_playlist_id"],
         "dest_account": body.get("dest_account") or body["dest_provider"],
         "dest_playlist_id": body.get("dest_playlist_id"),
         "dest_name": body.get("dest_name", ""),
+        # None keeps the source playlist's own description.
+        "dest_description": description,
+        "dest_public": public,
         # Off unless asked for: the repair costs many extra writes and only
         # applies when a copied track predates tracks already on the destination.
         "preserve_order": bool(body.get("preserve_order")),

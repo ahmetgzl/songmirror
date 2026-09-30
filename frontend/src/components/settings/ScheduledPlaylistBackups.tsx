@@ -8,11 +8,13 @@ import { useAccounts } from '@/hooks/useAccounts'
 import { useNow } from '@/hooks/useNow'
 import { usePlaylistBackups } from '@/hooks/usePlaylistBackups'
 import { capabilitiesOf } from '@/lib/accountCapabilities'
-import { formatCountdown, formatTrackCount, intervalSeconds } from '@/lib/format'
+import { formatCountdown, formatFileSize, formatTrackCount, intervalSeconds } from '@/lib/format'
 import type {
   Account,
   PlaylistBackupFormat,
   PlaylistBackupJob,
+  PlaylistBackupProgress,
+  PlaylistBackupSnapshot,
   PlaylistBackupUpdate,
 } from '@/types'
 
@@ -80,6 +82,171 @@ function resultIsFailure(job: PlaylistBackupJob): boolean {
   return Date.parse(job.last_failure.at) >= Date.parse(job.last_success.at)
 }
 
+/** A queued run has no progress until it starts; it waits for the engine too. */
+function BackupProgress({ progress }: { progress: PlaylistBackupProgress | null }) {
+  useTranslation()
+  if (!progress || progress.phase === 'waiting') {
+    return <p>{t("Waiting for a sync or transfer to finish. Backups never run at the same time as them.")}</p>
+  }
+  const { done = 0, total, tracks = 0, playlist } = progress
+  // After the last playlist the export only encodes the file before saving it.
+  const saving = progress.phase === 'saving' || (total !== undefined && !playlist)
+  const percent = saving ? 100 : total ? Math.round((done / total) * 100) : null
+  return (
+    <div className="flex flex-col gap-2">
+      {percent === null ? (
+        <div role="progressbar" aria-label={t("Backup progress")} aria-valuetext={t("Reading the playlist list…")}
+          className="relative h-1.5 w-full overflow-hidden rounded-full bg-inset">
+          <div className="absolute inset-y-0 start-0 w-1/3 rounded-full bg-accent [animation:indeterminate-bar_1.4s_ease-in-out_infinite]" />
+        </div>
+      ) : (
+        <div role="progressbar" aria-label={t("Backup progress")} aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}
+          className="relative h-1.5 w-full overflow-hidden rounded-full bg-inset">
+          <div className="absolute inset-y-0 start-0 rounded-full bg-accent transition-[width] duration-500 ease-out" style={{ width: `${percent}%` }} />
+        </div>
+      )}
+      <p className="break-words">
+        {saving
+          ? t("Saving the snapshot file…")
+          : total === undefined
+            ? t("Reading the playlist list…")
+            : t("Reading playlist {{current, number}} of {{total, number}}: {{playlist}}", { current: done + 1, total, playlist })}
+      </p>
+      {total !== undefined ? (
+        <p className="text-text-3">{t("Tracks read so far: {{tracks, number}}", { tracks })}</p>
+      ) : null}
+    </div>
+  )
+}
+
+function failurePlace(progress: PlaylistBackupProgress | undefined): string | null {
+  if (progress?.phase === 'saving') return t("It stopped while saving the snapshot file.")
+  if (progress?.phase !== 'reading') return null
+  if (progress.total === undefined) return t("It stopped while reading the playlist list.")
+  if (!progress.playlist) return null
+  return t("It stopped at playlist {{current, number}} of {{total, number}}: {{playlist}}", {
+    current: (progress.done ?? 0) + 1, total: progress.total, playlist: progress.playlist,
+  })
+}
+
+/** Every managed snapshot in the schedule's current folder, newest first. The
+ * list reloads whenever a run or a delete changes the folder's contents. */
+function SnapshotList({ job, refresh }: { job: PlaylistBackupJob; refresh: () => Promise<void> }) {
+  useTranslation()
+  const [snapshots, setSnapshots] = useState<PlaylistBackupSnapshot[] | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [busy, setBusy] = useState<{ action: 'download' | 'delete'; filename: string } | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<PlaylistBackupSnapshot | null>(null)
+  const { account_id: accountId, snapshot_count: count, storage_path: folder } = job
+  const latestAt = job.last_success?.at
+
+  useEffect(() => {
+    let current = true
+    api.getPlaylistBackupSnapshots(accountId)
+      .then((rows) => {
+        if (!current) return
+        setSnapshots(rows)
+        setLoadError(null)
+      })
+      .catch((err: unknown) => {
+        if (current) setLoadError(errorMessage(err))
+      })
+    return () => { current = false }
+  }, [accountId, count, folder, latestAt])
+
+  async function download(snapshot: PlaylistBackupSnapshot) {
+    setBusy({ action: 'download', filename: snapshot.filename })
+    setActionError(null)
+    try {
+      await api.downloadPlaylistBackupSnapshot(accountId, snapshot.filename)
+    } catch (err) {
+      setActionError(errorMessage(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function remove(snapshot: PlaylistBackupSnapshot) {
+    setBusy({ action: 'delete', filename: snapshot.filename })
+    setActionError(null)
+    try {
+      await api.deletePlaylistBackupSnapshot(accountId, snapshot.filename)
+      setPendingDelete(null)
+      setSnapshots((rows) => rows?.filter((row) => row.filename !== snapshot.filename) ?? null)
+      await refresh()
+    } catch (err) {
+      setPendingDelete(null)
+      setActionError(errorMessage(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <div className="mt-2">
+      {loadError ? <p role="alert" className="text-danger">{t("Could not load snapshots: {{error}}", { error: loadError })}</p> : null}
+      {actionError ? <p role="alert" className="text-danger">{actionError}</p> : null}
+      {snapshots === null && !loadError ? <p className="text-text-3">{t("Loading snapshots…")}</p> : null}
+      {snapshots?.length === 0 ? <p className="text-text-3">{t("No snapshots in this folder yet.")}</p> : null}
+      {snapshots?.length ? (
+        <ul aria-label={t("Stored snapshots")} className="divide-y divide-border rounded-control border border-border">
+          {snapshots.map((snapshot) => {
+            const when = dateTime(snapshot.created_at)
+            const working = busy?.filename === snapshot.filename
+            return (
+              <li key={snapshot.filename} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2">
+                {/* A 14rem basis wraps the buttons below the name on phones. */}
+                <div className="min-w-0 grow basis-56">
+                  <p className="font-medium text-text">{when}</p>
+                  <p className="mt-0.5 break-all font-mono text-[10.5px] text-text-3">
+                    {snapshot.filename} · {formatFileSize(snapshot.size)}
+                  </p>
+                </div>
+                <div className="flex shrink-0 gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={<LuDownload className="size-3.5" aria-hidden="true" />}
+                    loading={working && busy?.action === 'download'}
+                    disabled={busy !== null}
+                    aria-label={t("Download the snapshot from {{when}}", { when })}
+                    onClick={() => void download(snapshot)}
+                  >
+                    {t("Download")}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="danger-ghost"
+                    icon={<LuTrash2 className="size-3.5" aria-hidden="true" />}
+                    disabled={busy !== null}
+                    aria-label={t("Delete the snapshot from {{when}}", { when })}
+                    onClick={() => setPendingDelete(snapshot)}
+                  >
+                    {t("Delete")}
+                  </Button>
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      ) : null}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={t("Delete this snapshot?")}
+        description={t("{{filename}} will be permanently deleted from {{folder}}. This can't be undone.", {
+          filename: pendingDelete?.filename ?? '', folder,
+        })}
+        confirmLabel={t("Delete snapshot")}
+        danger
+        loading={busy?.action === 'delete'}
+        onConfirm={() => { if (pendingDelete) void remove(pendingDelete) }}
+        onCancel={() => setPendingDelete(null)}
+      />
+    </div>
+  )
+}
+
 function BackupScheduleCard({
   job,
   refresh,
@@ -93,6 +260,7 @@ function BackupScheduleCard({
   const [actionError, setActionError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [customRetention, setCustomRetention] = useState(false)
+  const [showSnapshots, setShowSnapshots] = useState(false)
   const now = useNow()
   const { enabled, format, interval, retention, storage_dir = '' } = job
 
@@ -108,6 +276,7 @@ function BackupScheduleCard({
   const intervalOk = validInterval(draft.interval)
   const retentionOk = validRetention(draft.retention)
   const latestFailed = resultIsFailure(job)
+  const failureStop = failurePlace(job.last_failure?.progress)
   const folderSaveBlocked = job.running && draft.storage_dir !== storage_dir
 
   async function save() {
@@ -267,35 +436,47 @@ function BackupScheduleCard({
         {job.running && <p className="mt-2 text-xs text-text-3">{t("You can choose a folder now. Save the new location after this backup finishes.")}</p>}
       </div>
 
-      <div aria-live="polite" className="mt-4 rounded-control border border-border/80 bg-surface px-3 py-2.5 text-xs leading-relaxed text-text-2">
-        {job.running ? (
-          <p>{t("Reading every playlist now. Syncs and transfers will run before or after this backup, never at the same time.")}</p>
-        ) : job.enabled && job.next_run_at ? (
-          <p>
-            <Trans i18nKey={"Next backup <span1>{{dateTimeToISOString}}</span1> · {{formatCountdown}}"} values={{ dateTimeToISOString: dateTime(new Date(job.next_run_at * 1000).toISOString()), formatCountdown: formatCountdown(job.next_run_at, now) }} components={{ span1: <span className="font-semibold text-text" /> }} />
+      <div className="mt-4 rounded-control border border-border/80 bg-surface px-3 py-2.5 text-xs leading-relaxed text-text-2">
+        <div aria-live="polite">
+          {job.running ? (
+            <BackupProgress progress={job.progress} />
+          ) : job.enabled && job.next_run_at ? (
+            <p>
+              <Trans i18nKey={"Next backup <span1>{{dateTimeToISOString}}</span1> · {{formatCountdown}}"} values={{ dateTimeToISOString: dateTime(new Date(job.next_run_at * 1000).toISOString()), formatCountdown: formatCountdown(job.next_run_at, now) }} components={{ span1: <span className="font-semibold text-text" /> }} />
+            </p>
+          ) : (
+            <p>{t("Automatic backups are paused. Run now is still available.")}</p>
+          )}
+          {job.last_success ? (
+            <p className="mt-1 break-words text-success">
+              {t('Last success {{dateTime}} · {{playlists}}, {{tracks}} · {{filename}}', {
+                dateTime: dateTime(job.last_success.at),
+                playlists: t('{{count, number}} playlist', { count: job.last_success.playlist_count, defaultValue_one: '{{count, number}} playlist', defaultValue_other: '{{count, number}} playlists' }),
+                tracks: formatTrackCount(job.last_success.track_count), filename: job.last_success.filename,
+              })}
+            </p>
+          ) : (
+            <p className="mt-1 text-text-3">{t("No successful snapshot yet.")}</p>
+          )}
+          {job.last_failure ? (
+            <div className={`mt-1 break-words ${latestFailed ? 'text-danger' : 'text-text-3'}`}>
+              <p>{t("Last failure {{dateTime}} · {{jobLast}}", { dateTime: dateTime(job.last_failure.at), jobLast: job.last_failure.error })}</p>
+              {job.last_failure.detail ? (
+                <p className="mt-0.5 font-mono text-[10.5px]">{t("Reason: {{detail}}", { detail: job.last_failure.detail })}</p>
+              ) : null}
+              {failureStop ? <p className="mt-0.5">{failureStop}</p> : null}
+            </div>
+          ) : null}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-border/80 pt-2">
+          <p className="text-text-3">
+            {t("{{count, number}} stored snapshot.", { count: job.snapshot_count, defaultValue_one: "{{count, number}} stored snapshot.", defaultValue_other: "{{count, number}} stored snapshots." })}
           </p>
-        ) : (
-          <p>{t("Automatic backups are paused. Run now is still available.")}</p>
-        )}
-        {job.last_success ? (
-          <p className="mt-1 break-words text-success">
-            {t('Last success {{dateTime}} · {{playlists}}, {{tracks}} · {{filename}}', {
-              dateTime: dateTime(job.last_success.at),
-              playlists: t('{{count, number}} playlist', { count: job.last_success.playlist_count, defaultValue_one: '{{count, number}} playlist', defaultValue_other: '{{count, number}} playlists' }),
-              tracks: formatTrackCount(job.last_success.track_count), filename: job.last_success.filename,
-            })}
-          </p>
-        ) : (
-          <p className="mt-1 text-text-3">{t("No successful snapshot yet.")}</p>
-        )}
-        {job.last_failure ? (
-          <p className={`mt-1 break-words ${latestFailed ? 'text-danger' : 'text-text-3'}`}>
-            {t("Last failure {{dateTime}} · {{jobLast}}", { dateTime: dateTime(job.last_failure.at), jobLast: job.last_failure.error })}
-          </p>
-        ) : null}
-        <p className="mt-1 text-text-3">
-          {t("{{count, number}} stored snapshot.", { count: job.snapshot_count, defaultValue_one: "{{count, number}} stored snapshot.", defaultValue_other: "{{count, number}} stored snapshots." })}
-        </p>
+          <Button size="sm" variant="ghost" aria-expanded={showSnapshots} onClick={() => setShowSnapshots((open) => !open)}>
+            {showSnapshots ? t("Hide snapshots") : t("Show snapshots")}
+          </Button>
+        </div>
+        {showSnapshots ? <SnapshotList job={job} refresh={refresh} /> : null}
       </div>
 
       {actionError ? <p role="alert" className="mt-3 text-xs text-danger">{actionError}</p> : null}
