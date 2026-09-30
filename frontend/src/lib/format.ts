@@ -108,6 +108,14 @@ export function formatTrackCount(count: number | null | undefined): string | nul
   })
 }
 
+/** A file size in decimal units, e.g. 7_355_754 -> "7.4 MB" in English. */
+export function formatFileSize(bytes: number): string {
+  const [value, unit] = bytes >= 1_000_000
+    ? [bytes / 1_000_000, 'megabyte']
+    : bytes >= 1_000 ? [bytes / 1_000, 'kilobyte'] : [bytes, 'byte']
+  return formatNumber(value, { style: 'unit', unit, unitDisplay: 'short', maximumFractionDigits: 1 })
+}
+
 /** Loosely validates the interval text format the backend accepts
  * (`parse_interval`): digits optionally followed by s/m/h. */
 export function isValidIntervalText(value: string): boolean {

@@ -14,6 +14,7 @@ import type {
   LinkUpsertRequest,
   OkResponse,
   PlaylistBackupJob,
+  PlaylistBackupSnapshot,
   PlaylistBackupUpdate,
   PlaylistLink,
   PlaylistExportFormat,
@@ -174,6 +175,18 @@ export const api = {
     download(
       `/api/playlist-backups/${encodeURIComponent(accountId)}/latest`,
       `songmirror-${accountId}-playlists.json`,
+    ),
+  getPlaylistBackupSnapshots: (accountId: string) =>
+    request<PlaylistBackupSnapshot[]>(`/api/playlist-backups/${encodeURIComponent(accountId)}/snapshots`),
+  downloadPlaylistBackupSnapshot: (accountId: string, filename: string) =>
+    download(
+      `/api/playlist-backups/${encodeURIComponent(accountId)}/snapshots/${encodeURIComponent(filename)}`,
+      filename,
+    ),
+  deletePlaylistBackupSnapshot: (accountId: string, filename: string) =>
+    request<OkResponse>(
+      `/api/playlist-backups/${encodeURIComponent(accountId)}/snapshots/${encodeURIComponent(filename)}`,
+      { method: 'DELETE' },
     ),
 
   // Sync (global: run-all + the auto-sync master switch)

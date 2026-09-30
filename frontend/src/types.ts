@@ -433,9 +433,39 @@ export interface PlaylistBackupSuccess {
   pruned: number
 }
 
+/** Where a backup run is: waiting for a sync or transfer to release the
+ * shared engine, reading playlists, or saving the snapshot file. The counts
+ * appear once the playlist list has been read. */
+export interface PlaylistBackupProgress {
+  phase: 'waiting' | 'reading' | 'saving'
+  /** Playlists fully read so far. */
+  done?: number
+  total?: number
+  /** Tracks read so far. */
+  tracks?: number
+  /** The playlist being read now; null after the last one. */
+  playlist?: string | null
+}
+
 export interface PlaylistBackupFailure {
   at: string
+  /** User-facing summary. */
   error: string
+  /** The provider-level cause behind the summary, with URL query strings
+   * removed. Absent when the summary is already the cause. */
+  detail?: string
+  /** Where the run stopped. */
+  progress?: PlaylistBackupProgress
+}
+
+/** One managed snapshot file in the schedule's current backup folder. */
+export interface PlaylistBackupSnapshot {
+  filename: string
+  format: PlaylistBackupFormat
+  /** Bytes on disk. */
+  size: number
+  /** UTC ISO timestamp taken from the file name. */
+  created_at: string
 }
 
 /** GET /api/playlist-backups — one persistent account-wide backup schedule
@@ -455,6 +485,9 @@ export interface PlaylistBackupJob {
   /** Maximum snapshots retained; zero keeps every snapshot. */
   retention: number
   running: boolean
+  /** Live phase and counts while running; null before a queued run starts
+   * and whenever nothing is running. */
+  progress: PlaylistBackupProgress | null
   next_run_at: number | null
   snapshot_count: number
   storage_path: string

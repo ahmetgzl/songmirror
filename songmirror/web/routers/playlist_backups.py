@@ -1,4 +1,4 @@
-"""CRUD, run-now, status, and latest-file access for playlist backups."""
+"""CRUD, run-now, status, and snapshot access for playlist backups."""
 
 from dataclasses import asdict
 
@@ -58,6 +58,27 @@ def _job_from(account_id, values, existing=None, profiles=None):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+def _scheduled(request, account_id):
+    service = request.app.state.playlist_backups
+    account_id = _known_account(account_id, request.app.state.account_profiles)
+    if service.store.get(account_id) is None:
+        raise HTTPException(status_code=404, detail="backup schedule not found")
+    return service, account_id
+
+
+def _snapshot_file(snapshot):
+    media_type = "application/xml" if snapshot.suffix == ".xml" else "application/json"
+    return FileResponse(
+        snapshot,
+        media_type=media_type,
+        filename=snapshot.name,
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.get("/api/playlist-backups")
 def list_playlist_backups(request: Request):
     return request.app.state.playlist_backups.list_status()
@@ -98,10 +119,7 @@ async def put_playlist_backup(
 
 @router.delete("/api/playlist-backups/{account_id}")
 async def delete_playlist_backup(account_id: str, request: Request):
-    service = request.app.state.playlist_backups
-    account_id = _known_account(account_id, request.app.state.account_profiles)
-    if service.store.get(account_id) is None:
-        raise HTTPException(status_code=404, detail="backup schedule not found")
+    service, account_id = _scheduled(request, account_id)
     service.store.delete(account_id)
     await service.reconcile()
     return {"ok": True}
@@ -109,30 +127,38 @@ async def delete_playlist_backup(account_id: str, request: Request):
 
 @router.post("/api/playlist-backups/{account_id}/run")
 async def run_playlist_backup(account_id: str, request: Request):
-    service = request.app.state.playlist_backups
-    account_id = _known_account(account_id, request.app.state.account_profiles)
-    if service.store.get(account_id) is None:
-        raise HTTPException(status_code=404, detail="backup schedule not found")
+    service, account_id = _scheduled(request, account_id)
     queued = service.queue(account_id)
     return JSONResponse({"queued": queued}, status_code=202)
 
 
 @router.get("/api/playlist-backups/{account_id}/latest")
 def latest_playlist_backup(account_id: str, request: Request):
-    service = request.app.state.playlist_backups
-    account_id = _known_account(account_id, request.app.state.account_profiles)
-    if service.store.get(account_id) is None:
-        raise HTTPException(status_code=404, detail="backup schedule not found")
+    service, account_id = _scheduled(request, account_id)
     snapshot = service.store.latest_snapshot(account_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="no playlist backup exists yet")
-    media_type = "application/xml" if snapshot.suffix == ".xml" else "application/json"
-    return FileResponse(
-        snapshot,
-        media_type=media_type,
-        filename=snapshot.name,
-        headers={
-            "Cache-Control": "no-store",
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
+    return _snapshot_file(snapshot)
+
+
+@router.get("/api/playlist-backups/{account_id}/snapshots")
+def list_playlist_backup_snapshots(account_id: str, request: Request):
+    service, account_id = _scheduled(request, account_id)
+    return service.store.snapshot_rows(account_id)
+
+
+@router.get("/api/playlist-backups/{account_id}/snapshots/{filename}")
+def download_playlist_backup_snapshot(account_id: str, filename: str, request: Request):
+    service, account_id = _scheduled(request, account_id)
+    snapshot = service.store.snapshot(account_id, filename)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="snapshot not found")
+    return _snapshot_file(snapshot)
+
+
+@router.delete("/api/playlist-backups/{account_id}/snapshots/{filename}")
+def delete_playlist_backup_snapshot(account_id: str, filename: str, request: Request):
+    service, account_id = _scheduled(request, account_id)
+    if not service.store.delete_snapshot(account_id, filename):
+        raise HTTPException(status_code=404, detail="snapshot not found")
+    return {"ok": True}

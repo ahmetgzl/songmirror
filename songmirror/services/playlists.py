@@ -441,12 +441,15 @@ class PlaylistService:
         except Exception as exc:
             self._failure(provider_id, "open that playlist", exc)
 
-    def export(self, provider_id, export_format, *, playlist_id=None):
+    def export(self, provider_id, export_format, *, playlist_id=None, on_progress=None):
         """Read fresh provider metadata and return a browser-download payload.
 
         A provider-wide JSON/XML export uses one target instance and one library
         read, then snapshots every playlist. Soundiiz's documented JSON shape is
         playlist-scoped, so that interoperability format requires playlist_id.
+
+        ``on_progress(done=, total=, tracks=, playlist=)`` fires before each
+        playlist read and once after the last, with ``playlist=None``.
         """
         export_format = str(export_format).casefold()
         if self._provider(provider_id) == "jellyfin":
@@ -471,16 +474,25 @@ class PlaylistService:
             else:
                 playlists = list(target.browse_playlists())
 
-            details = [
-                self._read_detail(
+            report = on_progress or (lambda **_state: None)
+            details = []
+            tracks = 0
+            for done, playlist in enumerate(playlists):
+                report(
+                    done=done,
+                    total=len(playlists),
+                    tracks=tracks,
+                    playlist=target.playlist_name(playlist),
+                )
+                details.append(self._read_detail(
                     provider_id,
                     target.playlist_id(playlist) or _pl_id(playlist),
                     target,
                     playlist,
                     retain_idless=True,
-                )
-                for playlist in playlists
-            ]
+                ))
+                tracks += len(details[-1]["tracks"])
+            report(done=len(playlists), total=len(playlists), tracks=tracks, playlist=None)
             details.sort(key=lambda detail: (detail["name"].casefold(), detail["id"]))
             return render_backup(
                 target_provider(target),
