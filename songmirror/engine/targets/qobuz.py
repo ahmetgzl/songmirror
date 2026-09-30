@@ -53,6 +53,10 @@ def _normalized_track(track):
     }
 
 
+def _flag(value):
+    return "true" if value else "false"
+
+
 class QobuzTarget(MirrorTarget):
     name = "Qobuz"
     tag = "qobuz"
@@ -175,9 +179,24 @@ class QobuzTarget(MirrorTarget):
     def creates_public_playlists(cls):
         return True
 
+    @classmethod
+    def editable_details(cls):
+        return frozenset({"name", "description", "public"})
+
+    def update_details(self, playlist, changes):
+        params = {"playlist_id": str(self.playlist_id(playlist))}
+        params.update({key: changes[key] for key in ("name", "description") if key in changes})
+        if "public" in changes:
+            params["is_public"] = _flag(changes["public"])
+        self._request("POST", "playlist/update", params=params)
+
+    def playlist_public(self, playlist):
+        public = playlist.get("is_public")
+        return public if isinstance(public, bool) else None
+
     def create(self, source_playlist):
         name, description = source_playlist_details(source_playlist)
-        public = "true" if self._create_public(source_playlist) else "false"
+        public = _flag(self._create_public(source_playlist))
         playlist = self._request(
             "POST", "playlist/create", params={"name": name, "description": description, "is_public": public}
         )

@@ -7,7 +7,8 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import Response
 
 from ...services.playlists import (
-    PlaylistLink, PlaylistService, PlaylistServiceError,
+    MAX_PLAYLIST_DESCRIPTION, MAX_PLAYLIST_NAME, PlaylistLink, PlaylistService,
+    PlaylistServiceError,
 )
 
 router = APIRouter()
@@ -116,6 +117,56 @@ def playlist_detail(
             playlist_id,
             refresh=refresh,
             expected_count=expected_count,
+        )
+    except PlaylistServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+def _detail_changes(body):
+    """Validate a details edit: at least one of name, description, public."""
+    if not isinstance(body, dict) or not body:
+        raise HTTPException(status_code=422, detail="send at least one of name, description, public")
+    unknown = sorted(set(body) - {"name", "description", "public"})
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"unknown field: {unknown[0]}")
+    changes = {}
+    if "name" in body:
+        name = body["name"].strip() if isinstance(body["name"], str) else ""
+        if not 0 < len(name) <= MAX_PLAYLIST_NAME:
+            raise HTTPException(
+                status_code=422,
+                detail=f"name must be 1 to {MAX_PLAYLIST_NAME} characters",
+            )
+        changes["name"] = name
+    if "description" in body:
+        description = body["description"]
+        if not isinstance(description, str) or len(description) > MAX_PLAYLIST_DESCRIPTION:
+            raise HTTPException(
+                status_code=422,
+                detail=f"description must be text of at most {MAX_PLAYLIST_DESCRIPTION} characters",
+            )
+        changes["description"] = description
+    if "public" in body:
+        if not isinstance(body["public"], bool):
+            raise HTTPException(status_code=422, detail="public must be true or false")
+        changes["public"] = body["public"]
+    return changes
+
+
+@router.patch("/api/playlists/{provider}/{playlist_id}")
+async def update_playlist_details(
+    request: Request,
+    provider: str,
+    playlist_id: str,
+    body: dict = Body(...),
+):
+    changes = _detail_changes(body)
+    service = PlaylistService(
+        request.app.state.settings, request.app.state.account_profiles
+    )
+    try:
+        return await request.app.state.sync.run_exclusive(
+            lambda: service.update_details(provider, playlist_id, changes=changes)
         )
     except PlaylistServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

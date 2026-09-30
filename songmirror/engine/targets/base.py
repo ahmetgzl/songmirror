@@ -111,6 +111,23 @@ class MirrorTarget:
             )
         return public
 
+    @classmethod
+    def editable_details(cls):
+        """The existing-playlist fields update_details() can change: a subset of
+        {"name", "description", "public"}. Ask it under the account's activated
+        profile: some providers decide it by their configured backend."""
+        return frozenset()
+
+    def update_details(self, playlist, changes):
+        """Apply {name?, description?, public?} to an owned playlist. Callers
+        pass only fields that editable_details() lists."""
+        raise NotImplementedError
+
+    def playlist_public(self, playlist):
+        """True/False when the provider's playlist listing reports visibility,
+        None when it does not."""
+        return None
+
     def playlist_tracks(self, playlist):
         """Existing tracks as dicts with name/artist/duration_ms + an id."""
         raise NotImplementedError

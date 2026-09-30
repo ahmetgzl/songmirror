@@ -90,6 +90,9 @@ def test_browse_normalizes_rows(monkeypatch, tmp_path):
         def playlist_count(self, pl):
             return (pl.get("tracks") or {}).get("total")
 
+        def playlist_public(self, pl):
+            return True
+
     monkeypatch.setattr("songmirror.services.playlists.build_one", lambda pid, opts, sp=None: FakeTarget())
     rows = PlaylistService(SettingsStore(dir=tmp_path)).browse("apple")
     assert rows == [{
@@ -99,6 +102,7 @@ def test_browse_normalizes_rows(monkeypatch, tmp_path):
         "count": 5,
         "image": "",
         "owned": True,
+        "public": True,
         "external_url": "https://music.apple.com/library/playlist/1",
     }]
 

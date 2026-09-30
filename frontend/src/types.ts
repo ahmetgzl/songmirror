@@ -74,6 +74,10 @@ export interface Account {
    * cookie write mode, Deezer without a web session). Optional for account
    * data cached by older releases, which read as private-only. */
   public_playlists?: boolean
+  /** Fields of an existing playlist this account can edit in SongMirror.
+   * Empty where the service has no verified update call; absent in account
+   * data cached by older releases. */
+  editable_details?: PlaylistDetailField[]
   /** Operations granted by the current credentials. Optional only so a cached
    * account payload from an older SongMirror release can be upgraded safely. */
   capabilities?: AccountCapabilities
@@ -384,11 +388,19 @@ export interface SyncEvent {
  * `image` is a cover-art URL and may be an empty string (no art available).
  * `count` is `null` when the service doesn't expose a track count cheaply
  * (Apple Music) — never render the literal "null", see formatTrackCount(). */
+/** An existing playlist field SongMirror can change on some services. */
+export type PlaylistDetailField = 'name' | 'description' | 'public'
+
+/** PATCH /api/playlists/{account}/{playlist} body: only the changed fields. */
+export type PlaylistDetailsUpdate = Partial<{ name: string; description: string; public: boolean }>
+
 export interface ProviderPlaylist {
   id: string
   name: string
   /** Plain-text description when the provider's library listing carries one. */
   description?: string
+  /** Visibility as the library listing reports it; null when it doesn't. */
+  public?: boolean | null
   count: number | null
   image: string
   /** First-party web-player URL for opening this exact playlist. */

@@ -16,6 +16,7 @@ import type {
   PlaylistBackupJob,
   PlaylistBackupSnapshot,
   PlaylistBackupUpdate,
+  PlaylistDetailsUpdate,
   PlaylistLink,
   PlaylistExportFormat,
   PollResponse,
@@ -254,6 +255,11 @@ export const api = {
     request<OkResponse>(
       `/api/playlists/${encodeURIComponent(provider)}/${encodeURIComponent(playlistId)}/tracks`,
       { method: 'DELETE', body: JSON.stringify(body) },
+    ),
+  updatePlaylistDetails: (provider: string, playlistId: string, changes: PlaylistDetailsUpdate) =>
+    request<OkResponse>(
+      `/api/playlists/${encodeURIComponent(provider)}/${encodeURIComponent(playlistId)}`,
+      { method: 'PATCH', body: JSON.stringify(changes) },
     ),
 
   // Links (cross-service pairings)

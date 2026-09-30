@@ -3,11 +3,10 @@
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from ...services.playlists import MAX_PLAYLIST_DESCRIPTION
 from ...services.transfers import TransferPreviewError
 
 router = APIRouter()
-# The largest description any supported provider accepts (YouTube).
-_MAX_DESCRIPTION = 5000
 
 
 @router.post("/api/transfers/preview")
@@ -32,11 +31,11 @@ async def start_transfer(request: Request, body: dict = Body(...)):
     # runs in a threadpool with no loop and would 500).
     description = body.get("dest_description")
     if description is not None and (
-        not isinstance(description, str) or len(description) > _MAX_DESCRIPTION
+        not isinstance(description, str) or len(description) > MAX_PLAYLIST_DESCRIPTION
     ):
         raise HTTPException(
             status_code=422,
-            detail=f"dest_description must be text of at most {_MAX_DESCRIPTION} characters",
+            detail=f"dest_description must be text of at most {MAX_PLAYLIST_DESCRIPTION} characters",
         )
     public = body.get("dest_public", False)
     if not isinstance(public, bool):

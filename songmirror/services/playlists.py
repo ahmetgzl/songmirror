@@ -25,6 +25,12 @@ from .playlist_links import external_url, provider_label
 from .settings import _open_private
 
 
+MAX_PLAYLIST_NAME = 200
+# The largest description any supported provider accepts (YouTube).
+MAX_PLAYLIST_DESCRIPTION = 5000
+_DETAIL_LABELS = {"name": "name", "description": "description", "public": "visibility"}
+
+
 class PlaylistServiceError(RuntimeError):
     status_code = 502
 
@@ -307,6 +313,7 @@ class PlaylistService:
                  "description": _plain_text(source_playlist_details(pl)[1]),
                  "count": target.playlist_count(pl),
                  "image": playlist_image(pl), "owned": bool(pl.get("_owned", True)),
+                 "public": getattr(target, "playlist_public", lambda _pl: None)(pl),
                  "external_url": external_url(target_provider(target, self._provider(provider_id)), "playlist", _pl_id(pl))}
                 for pl in playlists]
         self._prune_details(provider_id, [row["id"] for row in rows])
@@ -588,6 +595,32 @@ class PlaylistService:
             "next_cursor": next_cursor,
             "complete": next_cursor is None,
         }
+
+    def update_details(self, provider_id, playlist_id, *, changes):
+        """Rename, re-describe, or change the visibility of one owned playlist.
+        ``changes`` holds only validated fields the caller wants to change."""
+        target = self._target(provider_id)
+        try:
+            playlist = target.find_playlist(str(playlist_id))
+            if playlist is None:
+                raise PlaylistNotFoundError("That playlist no longer exists. Refresh Browse.")
+            if not target.is_editable(playlist):
+                raise PlaylistReadOnlyError(
+                    "This playlist is read-only on the provider and cannot be edited here."
+                )
+            unsupported = sorted(set(changes) - set(target.editable_details()))
+            if unsupported:
+                raise PlaylistReadOnlyError(
+                    f"{self._label(provider_id)} can't change a playlist's "
+                    f"{_DETAIL_LABELS[unsupported[0]]} from SongMirror."
+                )
+            self._invalidate_detail(provider_id, playlist_id)
+            target.update_details(playlist, changes)
+        except PlaylistServiceError:
+            raise
+        except Exception as exc:
+            self._failure(provider_id, "update that playlist", exc)
+        return {"ok": True}
 
     def remove_track(self, provider_id, playlist_id, *, position, track_id, occurrence_id=""):
         self.remove_tracks(provider_id, playlist_id, selections=[{

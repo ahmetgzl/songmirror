@@ -235,6 +235,25 @@ class DeezerTarget(MirrorTarget):
         # The REST create call takes only a title.
         return _web_session_configured()
 
+    @classmethod
+    def editable_details(cls):
+        # Only the REST API documents a playlist update; the web session has none.
+        return frozenset() if _web_session_configured() else frozenset({"name", "description", "public"})
+
+    def update_details(self, playlist, changes):
+        params = {"title": changes["name"]} if "name" in changes else {}
+        if "description" in changes:
+            params["description"] = changes["description"]
+        if "public" in changes:
+            params["public"] = "true" if changes["public"] else "false"
+        self._request("POST", f"playlist/{self.playlist_id(playlist)}", params=params)
+
+    def playlist_public(self, playlist):
+        if isinstance(playlist.get("isPrivate"), bool):
+            return not playlist["isPrivate"]
+        public = playlist.get("public")
+        return public if isinstance(public, bool) else None
+
     def create(self, source_playlist):
         name, description = source_playlist_details(source_playlist)
         public = self._create_public(source_playlist)

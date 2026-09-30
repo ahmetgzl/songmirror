@@ -6,6 +6,7 @@ import {
   LuChevronLeft,
   LuChevronRight,
   LuExternalLink,
+  LuPencil,
   LuRefreshCw,
   LuSearch,
   LuSquare,
@@ -17,7 +18,7 @@ import { api, errorMessage } from '@/api'
 import { usePlaylistDetail } from '@/hooks/usePlaylistDetail'
 import { cn } from '@/lib/cn'
 import { formatDuration, formatTrackCount } from '@/lib/format'
-import type { Account, ProviderPlaylist, ProviderPlaylistTrack } from '@/types'
+import type { Account, PlaylistDetailsUpdate, ProviderPlaylist, ProviderPlaylistTrack } from '@/types'
 
 import { Button } from '../ui/Button'
 import { CoverArt } from '../ui/CoverArt'
@@ -27,6 +28,7 @@ import { FilterSelect } from '../ui/FilterSelect'
 import { Modal } from '../ui/Modal'
 import { LoadingStatus, Skeleton } from '../ui/Skeleton'
 import { Spinner } from '../ui/Spinner'
+import { PlaylistDetailsEditor } from './PlaylistDetailsEditor'
 import { PlaylistExportActions } from './PlaylistExportActions'
 
 type TrackOrder = 'latest' | 'playlist'
@@ -98,6 +100,7 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
   const [bulkConfirming, setBulkConfirming] = useState(false)
   const [bulkRemoving, setBulkRemoving] = useState(false)
+  const [editingDetails, setEditingDetails] = useState(false)
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase())
 
   useEffect(() => {
@@ -109,6 +112,7 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
     setSelectedKeys(new Set())
     setSelectionAnchor(null)
     setBulkConfirming(false)
+    setEditingDetails(false)
   }, [provider, playlistId])
 
   const orderedTracks = useMemo(() => {
@@ -241,6 +245,15 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
     }
   }
 
+  async function saveDetails(changes: PlaylistDetailsUpdate) {
+    if (!provider || !playlistId) return
+    await api.updatePlaylistDetails(provider, playlistId, changes)
+    setEditingDetails(false)
+    await refresh()
+    onChanged()
+  }
+
+  const canEditDetails = Boolean(detail?.editable) && (account?.editable_details?.length ?? 0) > 0
   const externalUrl = detail?.external_url || playlist?.external_url || ''
   const trackCount = detail ? formatTrackCount(detail.count) : formatTrackCount(playlist?.count)
 
@@ -262,6 +275,16 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
             ) : null}
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">
+            {canEditDetails && !editingDetails ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<LuPencil className="size-3.5" aria-hidden="true" />}
+                onClick={() => setEditingDetails(true)}
+              >
+                {t("Edit details")}
+              </Button>
+            ) : null}
             <Button
               variant="secondary"
               size="sm"
@@ -284,6 +307,17 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
             ) : null}
           </div>
         </div>
+
+        {editingDetails && detail && account ? (
+          <PlaylistDetailsEditor
+            account={account}
+            name={detail.name}
+            description={detail.description}
+            isPublic={playlist?.public ?? null}
+            onCancel={() => setEditingDetails(false)}
+            onSave={saveDetails}
+          />
+        ) : null}
 
         {detail && provider && playlistId && account ? (
           <div className="flex flex-col gap-3 rounded-control border border-border bg-inset px-3.5 py-3 sm:flex-row sm:items-center">
