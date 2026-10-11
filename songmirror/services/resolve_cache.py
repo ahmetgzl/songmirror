@@ -161,10 +161,9 @@ class ResolveCacheStore:
     def _guard(self):
         """Refuse a write while a sync pass is running.
 
-        A pass loads the cache once, holds it for its whole duration, and writes
-        it back at the end, so an edit landing in between would be overwritten
-        without a trace. Refusing is better than queuing behind a pass that can
-        run for many minutes.
+        Keep interactive edits out of an active pass rather than queueing them
+        behind a sync that can run for many minutes. Merge-on-save also protects
+        these edits from concurrent writers in another process.
         """
         if self._sync is not None and self._sync.status().get("running"):
             raise ResolveCacheBusy(
@@ -188,7 +187,7 @@ class ResolveCacheStore:
         cache["search"][key] = normalized
         cache["manual"].add(key)
         cache["dirty"] = True
-        save_cache(path, cache)
+        save_cache(path, cache, manual_keys={key})
         name, artist = _split_key(key)
         return {
             "key": key,

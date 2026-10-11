@@ -1321,5 +1321,8 @@
   "Public history": "السجل العام",
   "no playlists": "بلا قوائم تشغيل",
   "Filled in automatically when you authorize; set it by hand to read a different public profile": "يُملأ تلقائيًا عند التفويض؛ اضبطه يدويًا لقراءة ملف عام آخر",
-  "Reads your listening history. Authorize it to read a private profile and love tracks.": "يقرأ سجل استماعك. فوّضه لقراءة ملف خاص وإضافة المقطوعات إلى المفضلة."
+  "Reads your listening history. Authorize it to read a private profile and love tracks.": "يقرأ سجل استماعك. فوّضه لقراءة ملف خاص وإضافة المقطوعات إلى المفضلة.",
+  "Applied": "تم التطبيق",
+  "Apply resolved tracks": "تطبيق المقاطع التي تم حلها",
+  "Saved matches are ready. Apply them to this destination playlist.": "المطابقات المحفوظة جاهزة. طبّقها على قائمة التشغيل الوجهة هذه."
 }

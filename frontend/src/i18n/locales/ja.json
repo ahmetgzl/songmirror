@@ -1193,5 +1193,8 @@
   "Public history": "公開の再生履歴",
   "no playlists": "プレイリストなし",
   "Filled in automatically when you authorize; set it by hand to read a different public profile": "認証時に自動入力されます。別の公開プロフィールを読み込む場合は手動で設定してください",
-  "Reads your listening history. Authorize it to read a private profile and love tracks.": "再生履歴を読み込みます。認証すると非公開プロフィールの読み込みとトラックのお気に入り登録ができます。"
+  "Reads your listening history. Authorize it to read a private profile and love tracks.": "再生履歴を読み込みます。認証すると非公開プロフィールの読み込みとトラックのお気に入り登録ができます。",
+  "Applied": "反映済み",
+  "Apply resolved tracks": "解決済みの曲を反映",
+  "Saved matches are ready. Apply them to this destination playlist.": "保存した対応付けの準備ができました。このコピー先プレイリストに反映してください。"
 }

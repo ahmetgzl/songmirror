@@ -15,6 +15,7 @@ wheels/
 .cache
 .cache-*
 *_resolve_cache.json
+*_resolve_cache.json.lock
 song_cache.db
 spotify_tracks_cache.json
 download_state.json

@@ -1225,5 +1225,8 @@
   "Public history": "Historial público",
   "no playlists": "sin listas",
   "Filled in automatically when you authorize; set it by hand to read a different public profile": "Se rellena automáticamente al autorizar; defínelo manualmente para leer otro perfil público",
-  "Reads your listening history. Authorize it to read a private profile and love tracks.": "Lee tu historial de escucha. Autorízalo para leer un perfil privado y marcar canciones como favoritas."
+  "Reads your listening history. Authorize it to read a private profile and love tracks.": "Lee tu historial de escucha. Autorízalo para leer un perfil privado y marcar canciones como favoritas.",
+  "Applied": "Aplicado",
+  "Apply resolved tracks": "Aplicar pistas resueltas",
+  "Saved matches are ready. Apply them to this destination playlist.": "Las coincidencias guardadas están listas. Aplícalas a esta lista de destino."
 }

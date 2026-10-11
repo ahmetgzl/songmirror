@@ -17,6 +17,7 @@ from . import archive, spotify, spotify_cookie
 from .aggregation import AggregateSourceSnapshot, aggregate_source_tracks
 from .config import spotify_write_backend
 from .logs import fmt_counts, fmt_secs, log, log_note, log_section, log_summary, log_warn, paint
+from .resolve_cache import MATCHING_CACHE_VERSION, load_cache, save_cache
 from .targets import (
     TargetAuthError,
     TargetDirectoryIncompleteError,
@@ -53,47 +54,6 @@ def _load_json(path):
 def _save_json(path, data):
     with open(path, "w") as f:
         json.dump(data, f)
-
-
-MATCHING_CACHE_VERSION = 3
-
-
-def load_cache(cache_file):
-    """The provider's resolution cache: ISRC candidates, search results, and
-    which search keys were set by hand.
-
-    `manual` is a set of `search` keys a person chose in the conflict editor.
-    Old automatic results must be searched again when matching rules change:
-    they contain only ids, so recording-metadata conflicts cannot be checked
-    offline. Manual choices survive migration. ISRC candidates are refetched
-    as older normalizers could discard the provider's separate version field.
-    """
-    try:
-        with open(cache_file) as f:
-            data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        data = {}
-    manual = set(data.get("manual") or [])
-    migrate = bool(data) and data.get("matching_version") != MATCHING_CACHE_VERSION
-    search = data.get("search", {})
-    return {
-        "isrc": {} if migrate else data.get("isrc", {}),
-        "search": {key: value for key, value in search.items() if key in manual} if migrate else search,
-        "manual": manual,
-        "dirty": migrate,
-    }
-
-
-def save_cache(cache_file, cache):
-    if not cache.pop("dirty", False):
-        return
-    with open(cache_file, "w") as f:
-        json.dump({
-            "matching_version": MATCHING_CACHE_VERSION,
-            "isrc": cache["isrc"],
-            "search": cache["search"],
-            "manual": sorted(cache.get("manual") or ()),
-        }, f, indent=1)
 
 
 _SUMMARY_KEYS = ("added", "removed", "missing", "held", "uncertain_matches",

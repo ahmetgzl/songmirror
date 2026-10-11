@@ -1193,5 +1193,8 @@
   "Public history": "Öffentlicher Hörverlauf",
   "no playlists": "keine Playlists",
   "Filled in automatically when you authorize; set it by hand to read a different public profile": "Wird beim Autorisieren automatisch ausgefüllt; manuell setzen, um ein anderes öffentliches Profil zu lesen",
-  "Reads your listening history. Authorize it to read a private profile and love tracks.": "Liest Ihren Hörverlauf. Autorisieren Sie ihn, um ein privates Profil zu lesen und Titel zu markieren."
+  "Reads your listening history. Authorize it to read a private profile and love tracks.": "Liest Ihren Hörverlauf. Autorisieren Sie ihn, um ein privates Profil zu lesen und Titel zu markieren.",
+  "Applied": "Übernommen",
+  "Apply resolved tracks": "Zugeordnete Titel übernehmen",
+  "Saved matches are ready. Apply them to this destination playlist.": "Die gespeicherten Zuordnungen sind bereit. Übernimm sie in diese Ziel-Playlist."
 }

@@ -13,17 +13,34 @@ interface ConflictListProps {
   jobId: string
   conflicts: TransferConflict[]
   onResolved: () => void
+  onApply: () => Promise<void>
+  busy: boolean
 }
 
 /** Tracks the transfer couldn't automatically match on the destination
  * service. A search-picker is a future refinement — for now each conflict
  * resolves by pasting the destination track's id/URL directly. */
-export function ConflictList({ jobId, conflicts, onResolved }: ConflictListProps) {
+export function ConflictList({ jobId, conflicts, onResolved, onApply, busy }: ConflictListProps) {
   useTranslation()
+  const [applying, setApplying] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   if (conflicts.length === 0) return null
 
   const unresolvedCount = conflicts.filter((c) => !c.resolved).length
   const resolvedCount = conflicts.length - unresolvedCount
+  const readyCount = conflicts.filter((c) => c.resolved && !c.applied).length
+
+  async function handleApply() {
+    setApplying(true)
+    setError(null)
+    try {
+      await onApply()
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setApplying(false)
+    }
+  }
 
   return (
     <Card className="flex flex-col overflow-hidden">
@@ -49,16 +66,27 @@ export function ConflictList({ jobId, conflicts, onResolved }: ConflictListProps
           )}
         </div>
       </div>
+      {readyCount > 0 && (
+        <div className="flex flex-col items-stretch gap-3 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:px-6">
+          <p className="min-w-0 flex-1 text-sm text-text-2">
+            {t("Saved matches are ready. Apply them to this destination playlist.")}
+          </p>
+          <Button loading={applying} disabled={busy} onClick={() => void handleApply()}>
+            {t("Apply resolved tracks")}
+          </Button>
+        </div>
+      )}
+      {error && <p role="alert" className="px-4 pb-3 text-sm text-danger sm:px-6">{error}</p>}
       <ul className="flex flex-col divide-y divide-border border-t border-border">
         {conflicts.map((conflict) => (
-          <ConflictRow key={conflict.key} jobId={jobId} conflict={conflict} onResolved={onResolved} />
+          <ConflictRow key={conflict.key} jobId={jobId} conflict={conflict} onResolved={onResolved} disabled={busy || applying} />
         ))}
       </ul>
     </Card>
   )
 }
 
-function ConflictRow({ jobId, conflict, onResolved }: { jobId: string; conflict: TransferConflict; onResolved: () => void }) {
+function ConflictRow({ jobId, conflict, onResolved, disabled }: { jobId: string; conflict: TransferConflict; onResolved: () => void; disabled: boolean }) {
   useTranslation()
   const [destId, setDestId] = useState('')
   const [resolving, setResolving] = useState(false)
@@ -101,7 +129,7 @@ function ConflictRow({ jobId, conflict, onResolved }: { jobId: string; conflict:
             conflict.resolved ? 'bg-success-soft text-success' : 'bg-warning-soft text-warning',
           )}
         >
-          {conflict.resolved ? t("resolved") : t("unresolved")}
+          {conflict.applied ? t("Applied") : conflict.resolved ? t("resolved") : t("unresolved")}
         </span>
       </div>
 
@@ -118,10 +146,11 @@ function ConflictRow({ jobId, conflict, onResolved }: { jobId: string; conflict:
               label={t("Destination track link or id")}
               placeholder={t("e.g. https://open.spotify.com/track/...")}
               value={destId}
+              disabled={disabled || resolving}
               onChange={(e) => setDestId(e.target.value)}
             />
           </div>
-          <Button type="submit" loading={resolving} disabled={!destId.trim()}>
+          <Button type="submit" loading={resolving} disabled={disabled || !destId.trim()}>
             {t("Resolve")}
           </Button>
         </form>

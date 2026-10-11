@@ -431,7 +431,8 @@ def test_transfer_orders_mixed_timestamp_formats_chronologically():
     assert added == ["dest-old", "dest-new"]
 
 
-def test_resumed_transfer_replays_newer_tracks_after_a_resolved_conflict():
+@pytest.mark.parametrize("only_resolved", [False, True])
+def test_resumed_transfer_replays_newer_tracks_after_a_resolved_conflict(only_resolved):
     class Source:
         source = "spotify"
 
@@ -472,8 +473,9 @@ def test_resumed_transfer_replays_newer_tracks_after_a_resolved_conflict():
     destination = Destination()
     result = transfer(
         Source(), destination, {"id": "source"}, {"id": "destination"},
-        {"search": {}, "isrc": {}, "dirty": False},
+        {"search": {"b|artist": "b"}, "manual": {"b|artist"}, "isrc": {}, "dirty": False},
         execute=True, max_adds=200, preserve_order=True,
+        only_keys={"b|artist"} if only_resolved else None,
     )
 
     assert destination.replayed == [[("b", None), ("c", 1), ("d", 2)]]
@@ -1002,6 +1004,99 @@ def test_transfer_service_normalizes_manual_id_before_writing_cache(monkeypatch,
     asyncio.run(scenario())
 
     assert "4160591112" in out["cache"]["search"].values()
+
+
+def test_apply_resolved_uses_saved_destination_without_reopening_source(monkeypatch, tmp_path):
+    async def scenario():
+        src, dst = _service(monkeypatch, tmp_path)
+        src._tracks.append({"id": "other", "name": "Other", "artists": ["B"], "added_at": "2"})
+        written, created = [], []
+        dst.create = lambda spec: created.append(spec) or {"id": "new", "name": "Copy"}
+        dst.add = lambda playlist, ids: written.append((playlist["id"], list(ids)))
+        bus = EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        svc = TransferService(SettingsStore(dir=tmp_path), bus, SyncService(SettingsStore(dir=tmp_path), bus))
+        job = svc.submit({"source_provider": "apple", "source_playlist_id": "p1",
+                          "dest_provider": "ytmusic", "dest_playlist_id": None})
+        await _await_job(svc, job["id"])
+        assert svc.apply_resolved(job["id"]) is False
+        assert svc.resolve(job["id"], job["conflicts"][0]["key"], "chosen-id")
+
+        def destination_only(account, _opts):
+            assert account == "ytmusic", "Applying saved matches must not reconnect the source"
+            return dst
+
+        monkeypatch.setattr(svc, "_build", destination_only)
+        assert svc.apply_resolved(job["id"]) is True
+        assert svc.apply_resolved(job["id"]) is False  # double click while queued
+        await _await_job(svc, job["id"])
+        assert job["status"] == "done", job["error"]
+        assert written == [("new", ["chosen-id"])]
+        assert len(created) == 1
+        assert job["added"] == 1
+        assert job["conflicts"][0]["applied"] is True
+        assert job["conflicts"][1]["resolved"] is False
+        assert svc.apply_resolved(job["id"]) is False
+
+    asyncio.run(scenario())
+
+
+def test_apply_resolved_preserves_choices_on_failure_and_retries(monkeypatch, tmp_path):
+    async def scenario():
+        _src, dst = _service(monkeypatch, tmp_path)
+        bus = EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        svc = TransferService(SettingsStore(dir=tmp_path), bus, SyncService(SettingsStore(dir=tmp_path), bus))
+        job = svc.submit({"source_provider": "apple", "source_playlist_id": "p1",
+                          "dest_provider": "ytmusic", "dest_playlist_id": "p1"})
+        await _await_job(svc, job["id"])
+        key = job["conflicts"][0]["key"]
+        svc.resolve(job["id"], key, "chosen-id")
+
+        def fail(*_args):
+            raise RuntimeError("destination unavailable")
+
+        dst.add = fail
+        assert svc.apply_resolved(job["id"])
+        await _await_job(svc, job["id"])
+        assert job["status"] == "error"
+        assert job["conflicts"][0]["resolved"] is True
+        assert not job["conflicts"][0].get("applied")
+        written = []
+        dst.add = lambda playlist, ids: written.extend(ids)
+        assert svc.apply_resolved(job["id"])
+        await _await_job(svc, job["id"])
+        assert job["status"] == "done", job["error"]
+        assert job["error"] is None
+        assert written == ["chosen-id"]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("rejected", [False, True])
+def test_apply_shared_manual_id_writes_once_and_reports_each_conflict(rejected):
+    from types import SimpleNamespace
+
+    source = SimpleNamespace(source="spotify", playlist_tracks=lambda _: [
+        {"id": "a", "name": "A", "artists": ["Artist"]},
+        {"id": "b", "name": "B", "artists": ["Artist"]},
+    ])
+    written = []
+    destination = _Prov(None, [], source="deezer")
+
+    def add(_playlist, ids):
+        written.extend(ids)
+        return [] if rejected else None
+
+    destination.add = add
+    cache = {"search": {"a|artist": "123", "b|artist": "123"},
+             "manual": {"a|artist", "b|artist"}, "isrc": {}, "dirty": False}
+    result = transfer(source, destination, {}, {}, cache, execute=True, max_adds=100,
+                      only_keys={"a|artist", "b|artist"})
+    assert written == ["123"]
+    assert result["added"] == (0 if rejected else 1)
+    assert result["applied_keys"] == (set() if rejected else {"a|artist", "b|artist"})
+    assert {c["key"] for c in result["not_found"]} == ({"a|artist", "b|artist"} if rejected else set())
 
 
 def test_retransfer_uses_manual_deezer_conflicts_for_the_selected_profile(monkeypatch, tmp_path):

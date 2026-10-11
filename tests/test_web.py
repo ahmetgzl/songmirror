@@ -37,6 +37,27 @@ def test_transfer_conflict_resolution_returns_manual_id_validation_error(tmp_pat
     }
 
 
+def test_apply_resolved_route_schedules_on_the_event_loop(tmp_path):
+    import asyncio
+
+    app = _app(tmp_path)
+    service = app.state.transfers
+    service._jobs["job-1"] = {"id": "job-1"}
+    called = []
+
+    def apply(job_id):
+        called.append((job_id, asyncio.get_running_loop().is_running()))
+        return True
+
+    service.apply_resolved = apply
+    with TestClient(app) as client:
+        assert client.post("/api/transfers/job-1/apply-resolved").status_code == 202
+        assert client.post("/api/transfers/missing/apply-resolved").status_code == 404
+        service.apply_resolved = lambda _id: False
+        assert client.post("/api/transfers/job-1/apply-resolved").status_code == 409
+    assert called == [("job-1", True)]
+
+
 def test_playlist_export_routes_return_downloads(tmp_path, monkeypatch):
     from songmirror.services.playlist_exports import PlaylistExport
     from songmirror.services.playlists import PlaylistService

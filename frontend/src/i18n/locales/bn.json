@@ -1193,5 +1193,8 @@
   "Public history": "প্রকাশ্য ইতিহাস",
   "no playlists": "প্লেলিস্ট নেই",
   "Filled in automatically when you authorize; set it by hand to read a different public profile": "অনুমোদন করলে স্বয়ংক্রিয়ভাবে পূরণ হয়; অন্য কোনো পাবলিক প্রোফাইল পড়তে নিজে লিখুন",
-  "Reads your listening history. Authorize it to read a private profile and love tracks.": "আপনার শোনার ইতিহাস পড়ে। ব্যক্তিগত প্রোফাইল পড়তে এবং ট্র্যাক পছন্দ করতে অনুমোদন দিন।"
+  "Reads your listening history. Authorize it to read a private profile and love tracks.": "আপনার শোনার ইতিহাস পড়ে। ব্যক্তিগত প্রোফাইল পড়তে এবং ট্র্যাক পছন্দ করতে অনুমোদন দিন।",
+  "Applied": "প্রয়োগ করা হয়েছে",
+  "Apply resolved tracks": "মেলানো গানগুলো যোগ করুন",
+  "Saved matches are ready. Apply them to this destination playlist.": "সংরক্ষিত মিলগুলো প্রস্তুত। এই গন্তব্য প্লেলিস্টে সেগুলো যোগ করুন।"
 }

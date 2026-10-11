@@ -1193,5 +1193,8 @@
   "Public history": "Herkese açık geçmiş",
   "no playlists": "çalma listesi yok",
   "Filled in automatically when you authorize; set it by hand to read a different public profile": "Yetkilendirdiğinizde otomatik olarak doldurulur; farklı bir herkese açık profili okumak için elle girin",
-  "Reads your listening history. Authorize it to read a private profile and love tracks.": "Dinleme geçmişinizi okur. Özel bir profili okumak ve şarkıları beğenmek için yetkilendirin."
+  "Reads your listening history. Authorize it to read a private profile and love tracks.": "Dinleme geçmişinizi okur. Özel bir profili okumak ve şarkıları beğenmek için yetkilendirin.",
+  "Applied": "Uygulandı",
+  "Apply resolved tracks": "Eşleştirilen şarkıları uygula",
+  "Saved matches are ready. Apply them to this destination playlist.": "Kaydedilen eşleştirmeler hazır. Bunları bu hedef çalma listesine uygulayın."
 }
