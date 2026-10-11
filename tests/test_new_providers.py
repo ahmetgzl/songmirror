@@ -2349,17 +2349,33 @@ def test_deezer_add_skips_invalid_track_ids(monkeypatch):
     })()
     monkeypatch.setattr(deezer, "polite_sleep", lambda _: None)
 
-    # Mixed list containing valid IDs, URLs, and invalid IDs/None/spaces
-    target.add(
-        {"id": "playlist-1"},
-        ["12", "invalid_id", None, "https://www.deezer.com/tr/track/34", "   ", "56"],
-    )
+    # Web path: all valid returns None
+    assert target.add({"id": "playlist-1"}, ["12", "https://www.deezer.com/tr/track/34"]) is None
+
+    # Web path: mixed list containing valid IDs, URLs, and invalid IDs/None/spaces
+    calls.clear()
+    mixed = ["12", "invalid_id", None, "https://www.deezer.com/tr/track/34", "   ", "56"]
+    written = target.add({"id": "playlist-1"}, mixed)
 
     assert calls == [
         ("playlist-1", ["12"]),
         ("playlist-1", ["34"]),
         ("playlist-1", ["56"]),
     ]
+    assert written == ["12", "https://www.deezer.com/tr/track/34", "56"]
+
+    # REST path: verify it also returns written requested IDs when invalid IDs are skipped
+    target._web = None
+    rest_calls = []
+    monkeypatch.setattr(target, "_request", lambda method, path, params: rest_calls.append((method, path, params)))
+    written_rest = target.add({"id": "playlist-2"}, mixed)
+
+    assert rest_calls == [
+        ("POST", "playlist/playlist-2/tracks", {"songs": "12"}),
+        ("POST", "playlist/playlist-2/tracks", {"songs": "34"}),
+        ("POST", "playlist/playlist-2/tracks", {"songs": "56"}),
+    ]
+    assert written_rest == ["12", "https://www.deezer.com/tr/track/34", "56"]
 
 
 def test_deezer_validate_link():

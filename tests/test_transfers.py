@@ -1261,3 +1261,59 @@ def test_resolving_a_conflict_records_the_choice_as_hand_set(monkeypatch, tmp_pa
     asyncio.run(scenario())
     # The resolve-mappings view can tell this apart from a match the matcher guessed.
     assert out["cache"]["manual"] == {out["key"]}
+
+
+def test_transfer_to_deezer_reports_skipped_invalid_track_as_not_found(monkeypatch):
+    """When DeezerTarget skips an unaddable/invalid ID, the transfer must report it
+    as not_found and not treat it as a successful addition.
+    """
+    from songmirror.engine.targets import deezer
+    from songmirror.engine.targets.deezer import DeezerTarget
+
+    target = DeezerTarget.__new__(DeezerTarget)
+    target.tag = "deezer"
+    target.source = "deezer"
+    target.name = "Deezer"
+
+    added_calls = []
+    target._web = type("Web", (), {
+        "add": lambda self, playlist_id, track_ids: added_calls.append((playlist_id, track_ids)),
+    })()
+    monkeypatch.setattr(deezer, "polite_sleep", lambda _: None)
+
+    source_tracks = [
+        {"id": "sp1", "name": "Valid Track", "artist": "Artist 1", "artists": ["Artist 1"],
+         "isrc": "VALID1", "duration_ms": 1000, "added_at": "2020"},
+        {"id": "sp2", "name": "Broken Track", "artist": "Artist 2", "artists": ["Artist 2"],
+         "isrc": "BROKEN2", "duration_ms": 1000, "added_at": "2021"},
+    ]
+
+    class _MockSource:
+        tag = "source"
+        source = "spotify"
+
+        def playlist_tracks(self, playlist):
+            return source_tracks
+
+    target.playlist_tracks = lambda playlist: []
+
+    # Real Deezer resolve reads cached ISRC candidates
+    cache = {
+        "search": {},
+        "isrc": {
+            "VALID1": [{"id": "123456", "duration": 1}],
+            "BROKEN2": [{"id": "invalid_token_123", "duration": 1}],
+        },
+        "dirty": False,
+    }
+    result = transfer(
+        _MockSource(), target, {"id": "src-p"}, {"id": "dst-p"},
+        cache, execute=True, max_adds=10,
+    )
+
+    # Only the valid track was added to Deezer
+    assert added_calls == [("dst-p", ["123456"])]
+    # Transfer must report only 1 track added, and Broken Track must be in not_found
+    assert result["added"] == 1
+    assert [conflict["name"] for conflict in result["not_found"]] == ["Broken Track"]
+

@@ -561,6 +561,7 @@ class DeezerTarget(MirrorTarget):
         return [candidate]
 
     def add(self, playlist, target_ids):
+        written = []
         if self._web is not None:
             try:
                 for target_id in target_ids:
@@ -573,8 +574,9 @@ class DeezerTarget(MirrorTarget):
                         str(playlist["id"]),
                         [normalized],
                     )
+                    written.append(target_id)
                     polite_sleep(0.25)
-                return
+                return None if len(written) == len(target_ids) else written
             except DeezerWebAuthError as exc:
                 raise TargetAuthError(str(exc)) from exc
         for target_id in target_ids:
@@ -588,7 +590,9 @@ class DeezerTarget(MirrorTarget):
                 f"playlist/{playlist['id']}/tracks",
                 params={"songs": normalized},
             )
+            written.append(target_id)
             polite_sleep(0.25)
+        return None if len(written) == len(target_ids) else written
 
     def remove(self, playlist, track):
         target_id = self.track_id(track)
