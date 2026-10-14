@@ -275,6 +275,7 @@ export const api = {
   listTransfers: () => request<TransferJob[]>('/api/transfers'),
   pauseTransfer: (id: string) => request<TransferControlResponse>(`/api/transfers/${encodeURIComponent(id)}/pause`, { method: 'POST' }),
   resumeTransfer: (id: string) => request<TransferControlResponse>(`/api/transfers/${encodeURIComponent(id)}/resume`, { method: 'POST' }),
+  applyResolvedTracks: (id: string) => request<TransferControlResponse>(`/api/transfers/${encodeURIComponent(id)}/apply-resolved`, { method: 'POST' }),
   stopTransfer: (id: string) => request<TransferControlResponse>(`/api/transfers/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
   resolveTransferConflict: (id: string, body: ResolveConflictRequest) =>
     request<OkResponse>(`/api/transfers/${encodeURIComponent(id)}/resolve`, json(body)),

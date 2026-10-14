@@ -1193,5 +1193,8 @@
   "Public history": "公开收听记录",
   "no playlists": "无播放列表",
   "Filled in automatically when you authorize; set it by hand to read a different public profile": "授权时自动填写；如需读取其他公开资料请手动填写",
-  "Reads your listening history. Authorize it to read a private profile and love tracks.": "读取你的收听记录。授权后可读取私密资料并收藏歌曲。"
+  "Reads your listening history. Authorize it to read a private profile and love tracks.": "读取你的收听记录。授权后可读取私密资料并收藏歌曲。",
+  "Applied": "已应用",
+  "Apply resolved tracks": "应用已匹配曲目",
+  "Saved matches are ready. Apply them to this destination playlist.": "已保存的匹配已准备就绪。请将它们应用到此目标播放列表。"
 }

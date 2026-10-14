@@ -1193,5 +1193,8 @@
   "Public history": "Lịch sử công khai",
   "no playlists": "không có danh sách phát",
   "Filled in automatically when you authorize; set it by hand to read a different public profile": "Được điền tự động khi bạn cấp quyền; nhập thủ công để đọc một trang công khai khác",
-  "Reads your listening history. Authorize it to read a private profile and love tracks.": "Đọc lịch sử nghe của bạn. Cấp quyền để đọc trang cá nhân riêng tư và yêu thích bài hát."
+  "Reads your listening history. Authorize it to read a private profile and love tracks.": "Đọc lịch sử nghe của bạn. Cấp quyền để đọc trang cá nhân riêng tư và yêu thích bài hát.",
+  "Applied": "Đã áp dụng",
+  "Apply resolved tracks": "Áp dụng các bài đã khớp",
+  "Saved matches are ready. Apply them to this destination playlist.": "Các kết quả khớp đã lưu đã sẵn sàng. Hãy áp dụng chúng vào danh sách phát đích này."
 }

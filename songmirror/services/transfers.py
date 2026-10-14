@@ -9,6 +9,7 @@ is a follow-up.
 import asyncio
 import time
 import uuid
+from types import SimpleNamespace
 
 from ..engine import logs, spotify, spotify_cookie
 from ..engine.config import parse_args, spotify_write_backend
@@ -32,7 +33,7 @@ from .playlist_links import (
 
 
 def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserve_order=False,
-             on_progress=None, should_continue=None):
+             on_progress=None, should_continue=None, source_tracks=None, only_keys=None):
     """Copy `src_pl` (on `source`) into `dest_pl` (on `dest`). Returns
     {added, deferred, chronology_replayed, unavailable,
     not_found: [{name, artist, key}], completed}.
@@ -56,13 +57,17 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
     A one-off copy has no following pass to drain a deferral, so it never defers.
     `max_adds` therefore budgets a sync pass, not this: an opted-in repair spends
     what it actually costs, and everything else is appended in full.
+
+    `source_tracks` can supply the original job snapshot when applying saved
+    matches. `only_keys` limits writes to those conflict keys while retaining
+    the full snapshot as evidence for chronology repair.
     """
     read_source = getattr(
         source,
         "playlist_tracks_for_transfer",
         source.playlist_tracks,
     )
-    raw_source = list(read_source(src_pl))
+    raw_source = list(read_source(src_pl) if source_tracks is None else source_tracks)
     unavailable = [track for track in raw_source if track.get("unavailable")]
     src = [
         _normalize(track, target_provider(source))
@@ -112,6 +117,8 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
     same_provider = target_provider(source) == target_provider(dest)
     additions, not_found = [], []
     resolved_existing = {}
+    applied_keys = set()
+    queued_keys = {}
     completed = True
     ordered_source = tracks_oldest_first(src)
     for i, norm in enumerate(ordered_source, unavailable_count + 1):
@@ -120,8 +127,10 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
             break
         key = track_key(norm["name"], norm["artist"])
         keys = spotify_track_keys(norm)
-        if not keys & seen:  # skip tracks already on the destination
-            if same_provider:
+        if only_keys is not None and key not in only_keys:
+            continue
+        if only_keys is not None or not keys & seen:
+            if same_provider and only_keys is None:
                 tid = source.track_id(norm["_raw"])
             else:
                 try:
@@ -153,8 +162,11 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
                     # exact-key fast path. Keep the resolver's hard-id proof for
                     # chronology construction and do not append a duplicate.
                     resolved_existing[id(norm)] = {tid}
+                    applied_keys.add(key)
                 else:
-                    additions.append((tid, norm))
+                    if only_keys is None or str(tid) not in queued_keys:
+                        additions.append((tid, norm))
+                    queued_keys.setdefault(str(tid), set()).add(key)
                 seen |= keys
                 if not already_present:
                     log_add(f"{norm['name']} - {norm['artist']}", dry=not execute, tag="transfer")
@@ -228,7 +240,7 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
                 f"{norm['name']} - {norm['artist']}; moved it to Needs review and continued",
                 tag="transfer",
             )
-    return {
+    result = {
         "added": len(additions),
         "deferred": deferred,
         "chronology_replayed": chronology_replayed,
@@ -236,6 +248,19 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
         "not_found": not_found,
         "completed": completed,
     }
+    if only_keys is not None:
+        for tid, _norm in additions:
+            applied_keys.update(queued_keys[str(tid)])
+        # A shared manual ID is written once. Every conflict that chose that
+        # ID needs the same rejection result if the provider declined it.
+        rejected_keys = {c["key"] for c in not_found}
+        rejected_ids = {str(cache["search"][key]) for key in rejected_keys if key in cache["search"]}
+        for norm in ordered_source:
+            key = track_key(norm["name"], norm["artist"])
+            if key in only_keys and key not in rejected_keys and str(cache["search"].get(key)) in rejected_ids:
+                not_found.append({"name": norm["name"], "artist": norm["artist"], "key": key})
+        result["applied_keys"] = applied_keys
+    return result
 
 
 def _friendly_error(e):
@@ -419,7 +444,21 @@ class TransferService:
             return False
         job["_control"] = "run"
         job["status"] = "queued"
-        asyncio.create_task(self._run(job, job["_spec"]))
+        run = self._run_resolved if job.get("_apply_mode") else self._run
+        asyncio.create_task(run(job, job["_spec"]))
+        return True
+
+    def apply_resolved(self, job_id):
+        """Apply saved matches to this copy's existing destination playlist."""
+        job = self._jobs.get(job_id)
+        if not job or job["status"] not in ("done", "error", "stopped"):
+            return False
+        if not job.get("_source_tracks") or not job["dest"].get("playlist_id"):
+            return False
+        if not any(c["resolved"] and not c.get("applied") for c in job["conflicts"]):
+            return False
+        job.update(status="queued", error=None, _control="run", _apply_mode=True)
+        asyncio.create_task(self._run_resolved(job, job["_spec"]))
         return True
 
     def stop(self, job_id):
@@ -434,14 +473,18 @@ class TransferService:
         return True
 
     def resolve(self, job_id, key, dest_id):
-        """Accept a manual match for a conflict — write it to the destination's
-        resolution cache so a re-transfer resolves it."""
+        """Persist a manual match before marking it ready to apply."""
         job = self._jobs.get(job_id)
-        if not job:
+        if not job or job["status"] in ("queued", "running", "busy"):
+            return False
+        conflict = next((c for c in job["conflicts"] if c["key"] == key and not c.get("applied")), None)
+        if conflict is None:
             return False
         normalizer = job.get("_dest_id_normalizer")
         if normalizer:
             dest_id = normalizer(dest_id)
+        if not dest_id:
+            raise ValueError("Paste a destination track link or id.")
         cache_file = job.get("_dest_cache_file")
         if cache_file:
             cache = load_cache(cache_file)
@@ -450,11 +493,56 @@ class TransferService:
             # the user made from one the matcher guessed.
             cache["manual"].add(key)
             cache["dirty"] = True
-            save_cache(cache_file, cache)
-        for c in job["conflicts"]:
-            if c["key"] == key:
-                c["resolved"] = True
+            save_cache(cache_file, cache, manual_keys={key})
+        conflict.update(resolved=True, dest_id=dest_id)
         return True
+
+    async def _run_resolved(self, job, spec):
+        if job.get("_control") == "stop":
+            return
+        job["status"] = "running"
+        pending = {c["key"]: c["dest_id"] for c in job["conflicts"]
+                   if c["resolved"] and not c.get("applied")}
+
+        def work():
+            self._settings.apply_to_env()
+            opts = parse_args([])
+            opts.account_profiles = self._profiles
+            dst = self._build(spec["dest_account"], opts)
+            if dst is None:
+                raise RuntimeError("destination not connected")
+            dest_pl = self._find(dst, job["dest"]["playlist_id"])
+            if dest_pl is None:
+                raise RuntimeError("destination playlist not found")
+            # These are the exact saved choices for this job and account. A
+            # changed source playlist or another profile's cache cannot replace
+            # them. The full original snapshot also preserves chronology repair.
+            cache = load_cache(job["_dest_cache_file"])
+            cache["search"].update(pending)
+            cache["manual"].update(pending)
+            source = SimpleNamespace(source=job["source"]["provider"], playlist_tracks=lambda _: ())
+            return transfer(
+                source, dst, {}, dest_pl, cache, execute=True, max_adds=opts.max_adds,
+                preserve_order=job["preserve_order"], source_tracks=job["_source_tracks"],
+                only_keys=set(pending), should_continue=lambda: job.get("_control", "run"),
+            )
+
+        try:
+            result = await self._sync.run_exclusive(work)
+            job["added"] += result["added"]
+            job["chronology_replayed"] += result["chronology_replayed"]
+            rejected = {c["key"] for c in result["not_found"]}
+            for conflict in job["conflicts"]:
+                if conflict["key"] in result["applied_keys"]:
+                    conflict["applied"] = True
+                elif conflict["key"] in rejected:
+                    conflict["resolved"] = False
+            job["status"] = ("done" if result["completed"] else
+                             "stopped" if job.get("_control") == "stop" else "paused")
+            self._emit("summary", f"applied resolved tracks: +{result['added']}", "transfer", {"job_id": job["id"]})
+        except Exception as exc:
+            job["status"], job["error"] = "error", _friendly_error(exc)
+            self._emit("warn", f"could not apply resolved tracks: {job['error']}", "transfer")
 
     async def _run(self, job, spec):
         if job.get("_control") == "stop":  # stopped while still queued — never start
@@ -499,6 +587,8 @@ class TransferService:
                 # instead of creating another one.
                 job["dest"]["playlist_id"] = spec["dest_playlist_id"] = str(dest_id)
             cache = load_cache(dst.cache_file)
+            read_source = getattr(src, "playlist_tracks_for_transfer", src.playlist_tracks)
+            job["_source_tracks"] = list(read_source(src_pl))
             self._emit("section", f"transfer: {job['source']['playlist_name']} -> {dst.name}", "transfer")
 
             def on_progress(processed, total, added):
@@ -506,6 +596,7 @@ class TransferService:
 
             res = transfer(src, dst, src_pl, dest_pl, cache, execute=True, max_adds=opts.max_adds,
                            preserve_order=job["preserve_order"],
+                           source_tracks=job["_source_tracks"],
                            on_progress=on_progress, should_continue=lambda: job.get("_control", "run"))
             save_cache(dst.cache_file, cache)
             return res

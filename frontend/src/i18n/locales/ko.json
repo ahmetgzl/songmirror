@@ -1193,5 +1193,8 @@
   "Public history": "공개 청취 기록",
   "no playlists": "재생목록 없음",
   "Filled in automatically when you authorize; set it by hand to read a different public profile": "승인하면 자동으로 입력됩니다. 다른 공개 프로필을 읽으려면 직접 입력하세요",
-  "Reads your listening history. Authorize it to read a private profile and love tracks.": "재생 기록을 읽습니다. 승인하면 비공개 프로필 읽기와 트랙 좋아요를 사용할 수 있습니다."
+  "Reads your listening history. Authorize it to read a private profile and love tracks.": "재생 기록을 읽습니다. 승인하면 비공개 프로필 읽기와 트랙 좋아요를 사용할 수 있습니다.",
+  "Applied": "적용됨",
+  "Apply resolved tracks": "매칭된 트랙 적용",
+  "Saved matches are ready. Apply them to this destination playlist.": "저장된 매칭이 준비되었습니다. 이 대상 플레이리스트에 적용하세요."
 }

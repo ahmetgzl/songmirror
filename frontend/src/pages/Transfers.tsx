@@ -88,7 +88,16 @@ export default function Transfers() {
           </Card>
 
           {job && job.conflicts.length > 0 && (
-            <ConflictList jobId={job.id} conflicts={job.conflicts} onResolved={() => void refreshJob()} />
+            <ConflictList
+              jobId={job.id}
+              conflicts={job.conflicts}
+              busy={['queued', 'running', 'busy', 'paused'].includes(job.status)}
+              onResolved={() => void refreshJob()}
+              onApply={async () => {
+                await api.applyResolvedTracks(job.id)
+                await refreshJob()
+              }}
+            />
           )}
         </>
       )}

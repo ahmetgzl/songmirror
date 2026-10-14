@@ -1193,5 +1193,8 @@
   "Public history": "सार्वजनिक इतिहास",
   "no playlists": "कोई प्लेलिस्ट नहीं",
   "Filled in automatically when you authorize; set it by hand to read a different public profile": "अधिकृत करने पर स्वतः भर जाता है; किसी अन्य सार्वजनिक प्रोफ़ाइल को पढ़ने के लिए इसे स्वयं भरें",
-  "Reads your listening history. Authorize it to read a private profile and love tracks.": "आपका सुनने का इतिहास पढ़ता है। निजी प्रोफ़ाइल पढ़ने और ट्रैक पसंद करने के लिए इसे अधिकृत करें।"
+  "Reads your listening history. Authorize it to read a private profile and love tracks.": "आपका सुनने का इतिहास पढ़ता है। निजी प्रोफ़ाइल पढ़ने और ट्रैक पसंद करने के लिए इसे अधिकृत करें।",
+  "Applied": "लागू किया गया",
+  "Apply resolved tracks": "मिलान किए गए ट्रैक जोड़ें",
+  "Saved matches are ready. Apply them to this destination playlist.": "सहेजे गए मिलान तैयार हैं। उन्हें इस गंतव्य प्लेलिस्ट में जोड़ें।"
 }

@@ -16,10 +16,15 @@ export function useTransfer(jobId: string | null) {
   const [job, setJob] = useState<TransferJob | null>(null)
   const [error, setError] = useState<string | null>(null)
   const inFlight = useRef(false)
+  const refreshQueued = useRef(false)
   const statusRef = useRef<TransferStatus | null>(null)
 
-  const refresh = useCallback(async () => {
-    if (!jobId || inFlight.current) return
+  const refresh = useCallback(async (): Promise<void> => {
+    if (!jobId) return
+    if (inFlight.current) {
+      refreshQueued.current = true
+      return
+    }
     inFlight.current = true
     try {
       const data = await api.getTransfer(jobId)
@@ -27,9 +32,16 @@ export function useTransfer(jobId: string | null) {
       statusRef.current = data.status
       setError(null)
     } catch (err) {
+      // An explicit refresh may follow a restart of a terminal job. Retry
+      // failed reads instead of leaving its old terminal status as the gate.
+      statusRef.current = null
       setError(errorMessage(err))
     } finally {
       inFlight.current = false
+      if (refreshQueued.current) {
+        refreshQueued.current = false
+        void refresh()
+      }
     }
   }, [jobId])
 
@@ -42,7 +54,6 @@ export function useTransfer(jobId: string | null) {
     void refresh()
     const id = window.setInterval(() => {
       if (statusRef.current && TERMINAL_STATUSES.has(statusRef.current)) {
-        window.clearInterval(id)
         return
       }
       void refresh()

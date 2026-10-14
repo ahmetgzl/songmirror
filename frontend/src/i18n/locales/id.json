@@ -1193,5 +1193,8 @@
   "Public history": "Riwayat publik",
   "no playlists": "tanpa playlist",
   "Filled in automatically when you authorize; set it by hand to read a different public profile": "Terisi otomatis saat Anda mengotorisasi; setel manual untuk membaca profil publik lain",
-  "Reads your listening history. Authorize it to read a private profile and love tracks.": "Membaca riwayat mendengarkan Anda. Otorisasi untuk membaca profil pribadi dan menyukai lagu."
+  "Reads your listening history. Authorize it to read a private profile and love tracks.": "Membaca riwayat mendengarkan Anda. Otorisasi untuk membaca profil pribadi dan menyukai lagu.",
+  "Applied": "Diterapkan",
+  "Apply resolved tracks": "Terapkan lagu yang dicocokkan",
+  "Saved matches are ready. Apply them to this destination playlist.": "Kecocokan yang disimpan sudah siap. Terapkan ke playlist tujuan ini."
 }

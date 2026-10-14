@@ -78,11 +78,23 @@ def resolve_conflict(job_id: str, request: Request, body: dict = Body(...)):
         resolved = request.app.state.transfers.resolve(job_id, body["key"], body["dest_id"])
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not resolved:
+        raise HTTPException(status_code=409, detail="This conflict is unavailable. Refresh the transfer and try again.")
     return {"ok": resolved}
 
 
+@router.post("/api/transfers/{job_id}/apply-resolved")
+async def apply_resolved_tracks(job_id: str, request: Request):
+    svc = request.app.state.transfers
+    if svc.get(job_id) is None:
+        raise HTTPException(status_code=404, detail="Transfer not found.")
+    if not svc.apply_resolved(job_id):
+        raise HTTPException(status_code=409, detail="No saved matches can be applied while this transfer is in its current state.")
+    return JSONResponse({"ok": True}, status_code=202)
+
+
 @router.post("/api/transfers/{job_id}/{action}")
-def control_transfer(job_id: str, action: str, request: Request):
+async def control_transfer(job_id: str, action: str, request: Request):
     """Pause / resume / stop a transfer. Returns {ok} — ok is False when the
     action doesn't apply to the job's current state (e.g. resume on a done job)."""
     svc = request.app.state.transfers

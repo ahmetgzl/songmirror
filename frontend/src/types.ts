@@ -599,6 +599,9 @@ export interface TransferConflict {
   name: string
   artist: string
   resolved: boolean
+  /** Saved destination choice, pending application until applied is true. */
+  dest_id?: string
+  applied?: boolean
 }
 
 /** GET /api/transfers/{id} — a one-off "copy playlist A -> B" job. */

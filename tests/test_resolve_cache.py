@@ -102,6 +102,141 @@ def test_a_clean_cache_is_not_rewritten(tmp_path):
         open(path, encoding="utf-8")
 
 
+def test_stale_worker_preserves_manual_resolution_and_unrelated_entries(tmp_path, monkeypatch):
+    store, path = _store(tmp_path, monkeypatch, {"lost|artist": None, "history|artist": "11"})
+    worker = load_cache(path)
+    store.set("deezer", "lost|artist", "123")
+    other = load_cache(path)
+    other["search"]["another|artist"] = "22"
+    other["dirty"] = True
+    save_cache(path, other)
+
+    worker["search"]["new|artist"] = "33"
+    worker["dirty"] = True
+    save_cache(path, worker)
+
+    written = load_cache(path)
+    assert written["search"] == {
+        "lost|artist": "123", "history|artist": "11",
+        "another|artist": "22", "new|artist": "33",
+    }
+    assert written["manual"] == {"lost|artist"}
+
+
+def test_stale_worker_does_not_resurrect_deleted_manual_mapping(tmp_path, monkeypatch):
+    store, path = _store(tmp_path, monkeypatch, {"chosen|artist": "123"}, manual=["chosen|artist"])
+    worker = load_cache(path)
+    store.delete("deezer", "chosen|artist")
+    worker["search"]["new|artist"] = "456"
+    worker["dirty"] = True
+    save_cache(path, worker)
+    written = load_cache(path)
+    assert written["search"] == {"new|artist": "456"}
+    assert written["manual"] == set()
+
+
+def test_saving_a_partial_cache_preserves_existing_history(tmp_path, monkeypatch):
+    _store_obj, path = _store(tmp_path, monkeypatch, {"chosen|artist": "123", "old|artist": "456"}, manual=["chosen|artist"])
+    save_cache(path, {"search": {"new|artist": "789"}, "isrc": {}, "dirty": True})
+    written = load_cache(path)
+    assert written["search"] == {"chosen|artist": "123", "old|artist": "456", "new|artist": "789"}
+    assert written["manual"] == {"chosen|artist"}
+
+
+def test_stale_manual_value_does_not_overwrite_a_newer_choice(tmp_path, monkeypatch):
+    store, path = _store(tmp_path, monkeypatch, {"chosen|artist": "123"}, manual=["chosen|artist"])
+    worker = load_cache(path)
+    store.set("deezer", "chosen|artist", "456")
+    worker["search"]["new|artist"] = "789"
+    worker["dirty"] = True
+    save_cache(path, worker)
+    assert load_cache(path)["search"]["chosen|artist"] == "456"
+
+
+@pytest.mark.parametrize("delete", [False, True])
+def test_stale_manual_url_normalization_preserves_newer_edit(tmp_path, monkeypatch, delete):
+    from songmirror.engine.targets.deezer import DeezerTarget
+
+    key = "chosen|artist"
+    store, path = _store(tmp_path, monkeypatch, {key: "https://www.deezer.com/track/123"}, manual=[key])
+    worker = load_cache(path)
+    worker["search"][key] = DeezerTarget.normalize_manual_track_id(worker["search"][key])
+    worker["dirty"] = True
+    if delete:
+        store.delete("deezer", key)
+    else:
+        store.set("deezer", key, "456")
+    save_cache(path, worker)
+    assert load_cache(path)["search"] == ({} if delete else {key: "456"})
+
+
+@pytest.mark.parametrize("chosen", ["123", "789"])
+def test_explicit_manual_edit_wins_over_concurrent_match(tmp_path, monkeypatch, chosen):
+    store, path = _store(tmp_path, monkeypatch, {"chosen|artist": "123"}, manual=["chosen|artist"])
+    editing = load_cache(path)
+    store.set("deezer", "chosen|artist", "456")
+    # The user can also explicitly reaffirm the original choice.
+    editing["search"]["chosen|artist"] = chosen
+    editing["dirty"] = True
+    save_cache(path, editing, manual_keys={"chosen|artist"})
+    assert load_cache(path)["search"]["chosen|artist"] == chosen
+
+
+def test_failed_atomic_replace_preserves_cache_and_pending_changes(tmp_path, monkeypatch):
+    from songmirror.engine import resolve_cache
+
+    _store_obj, path = _store(tmp_path, monkeypatch, {"chosen|artist": "123"}, manual=["chosen|artist"])
+    original = open(path, "rb").read()
+    worker = load_cache(path)
+    worker["search"]["new|artist"] = "456"
+    worker["dirty"] = True
+
+    def fail_replace(*_args):
+        raise OSError("disk unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(resolve_cache.os, "replace", fail_replace)
+        with pytest.raises(OSError, match="disk unavailable"):
+            save_cache(path, worker)
+    assert open(path, "rb").read() == original
+    assert worker["dirty"] is True
+    assert not list(tmp_path.glob("*.tmp"))
+    save_cache(path, worker)
+    assert load_cache(path)["search"]["new|artist"] == "456"
+
+
+def test_corrupt_cache_is_not_replaced_with_a_partial_snapshot(tmp_path):
+    path = tmp_path / "cache.json"
+    path.write_text('{"search": {"chosen|artist":', encoding="utf-8")
+    before = path.read_bytes()
+    with pytest.raises(json.JSONDecodeError):
+        save_cache(path, {"search": {"new|artist": "123"}, "isrc": {}, "dirty": True})
+    assert path.read_bytes() == before
+
+
+def test_concurrent_cache_writers_keep_every_update(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    path = tmp_path / "cache.json"
+    ready = Barrier(8)
+
+    def write(index):
+        worker = load_cache(path)
+        ready.wait(timeout=5)
+        key = f"song{index}|artist"
+        worker["search"][key] = str(index)
+        worker["manual"].add(key)
+        worker["dirty"] = True
+        save_cache(path, worker)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(write, range(8)))
+    written = load_cache(path)
+    assert written["search"] == {f"song{index}|artist": str(index) for index in range(8)}
+    assert written["manual"] == set(written["search"])
+
+
 # -- the store ---------------------------------------------------------------
 class _Sync:
     def __init__(self, running=False):
