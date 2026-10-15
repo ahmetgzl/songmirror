@@ -1196,5 +1196,6 @@
   "⇄ N-WAY": "⇄ N-WAY",
   "≤{{jobMax}} adds / pass · append-only": "≤{{jobMax}} adds / pass · append-only",
   "≤{{jobMax}} adds / pass · removals not mirrored": "≤{{jobMax}} adds / pass · removals not mirrored",
-  "≤{{jobMax}} adds, ≤{{jobMax2}} removals / pass{{removalNote}}": "≤{{jobMax}} adds, ≤{{jobMax2}} removals / pass{{removalNote}}"
+  "≤{{jobMax}} adds, ≤{{jobMax2}} removals / pass{{removalNote}}": "≤{{jobMax}} adds, ≤{{jobMax2}} removals / pass{{removalNote}}",
+  "Copy between accounts on the same service, or paste a public playlist link from an old account.": "Copy between accounts on the same service, or paste a public playlist link from an old account."
 }

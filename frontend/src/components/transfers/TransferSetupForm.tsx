@@ -86,7 +86,6 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
   const sourceAccount = transferable.find((account) => account.id === sourceProvider)
   const destAccount = transferable.find((account) => account.id === destProvider)
   const canConfigureTransfer =
-    transferable.length >= 2 &&
     destProviderOptions.length > 0 &&
     (librarySources.length > 0 || publicSources.length > 0)
 
@@ -216,6 +215,9 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
         <h2 className="text-sm font-bold text-text">{t("Set up a transfer")}</h2>
         <p className="mt-1 text-xs text-text-3">
           {t("A one-off copy. Existing tracks on the destination are kept, this only adds.")}
+        </p>
+        <p className="mt-1 text-xs text-text-3">
+          {t("Copy between accounts on the same service, or paste a public playlist link from an old account.")}
         </p>
       </div>
 

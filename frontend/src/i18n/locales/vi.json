@@ -1196,5 +1196,6 @@
   "Reads your listening history. Authorize it to read a private profile and love tracks.": "Đọc lịch sử nghe của bạn. Cấp quyền để đọc trang cá nhân riêng tư và yêu thích bài hát.",
   "Applied": "Đã áp dụng",
   "Apply resolved tracks": "Áp dụng các bài đã khớp",
-  "Saved matches are ready. Apply them to this destination playlist.": "Các kết quả khớp đã lưu đã sẵn sàng. Hãy áp dụng chúng vào danh sách phát đích này."
+  "Saved matches are ready. Apply them to this destination playlist.": "Các kết quả khớp đã lưu đã sẵn sàng. Hãy áp dụng chúng vào danh sách phát đích này.",
+  "Copy between accounts on the same service, or paste a public playlist link from an old account.": "Sao chép giữa các tài khoản trên cùng dịch vụ, hoặc dán liên kết danh sách phát công khai từ tài khoản cũ."
 }

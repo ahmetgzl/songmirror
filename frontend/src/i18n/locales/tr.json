@@ -1196,5 +1196,6 @@
   "Reads your listening history. Authorize it to read a private profile and love tracks.": "Dinleme geçmişinizi okur. Özel bir profili okumak ve şarkıları beğenmek için yetkilendirin.",
   "Applied": "Uygulandı",
   "Apply resolved tracks": "Eşleştirilen şarkıları uygula",
-  "Saved matches are ready. Apply them to this destination playlist.": "Kaydedilen eşleştirmeler hazır. Bunları bu hedef çalma listesine uygulayın."
+  "Saved matches are ready. Apply them to this destination playlist.": "Kaydedilen eşleştirmeler hazır. Bunları bu hedef çalma listesine uygulayın.",
+  "Copy between accounts on the same service, or paste a public playlist link from an old account.": "Aynı hizmetteki hesaplar arasında kopyalayın veya eski bir hesaptaki herkese açık çalma listesinin bağlantısını yapıştırın."
 }

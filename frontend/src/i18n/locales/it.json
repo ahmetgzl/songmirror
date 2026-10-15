@@ -1228,5 +1228,6 @@
   "Reads your listening history. Authorize it to read a private profile and love tracks.": "Legge la tua cronologia di ascolto. Autorizzalo per leggere un profilo privato e aggiungere brani ai preferiti.",
   "Applied": "Applicato",
   "Apply resolved tracks": "Applica i brani risolti",
-  "Saved matches are ready. Apply them to this destination playlist.": "Le corrispondenze salvate sono pronte. Applicale a questa playlist di destinazione."
+  "Saved matches are ready. Apply them to this destination playlist.": "Le corrispondenze salvate sono pronte. Applicale a questa playlist di destinazione.",
+  "Copy between accounts on the same service, or paste a public playlist link from an old account.": "Copia tra account dello stesso servizio oppure incolla il link a una playlist pubblica di un vecchio account."
 }

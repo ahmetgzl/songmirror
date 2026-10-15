@@ -1324,5 +1324,6 @@
   "Reads your listening history. Authorize it to read a private profile and love tracks.": "يقرأ سجل استماعك. فوّضه لقراءة ملف خاص وإضافة المقطوعات إلى المفضلة.",
   "Applied": "تم التطبيق",
   "Apply resolved tracks": "تطبيق المقاطع التي تم حلها",
-  "Saved matches are ready. Apply them to this destination playlist.": "المطابقات المحفوظة جاهزة. طبّقها على قائمة التشغيل الوجهة هذه."
+  "Saved matches are ready. Apply them to this destination playlist.": "المطابقات المحفوظة جاهزة. طبّقها على قائمة التشغيل الوجهة هذه.",
+  "Copy between accounts on the same service, or paste a public playlist link from an old account.": "انسخ بين حسابات على الخدمة نفسها، أو الصق رابط قائمة تشغيل عامة من حساب قديم."
 }

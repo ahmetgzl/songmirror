@@ -129,7 +129,10 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
         keys = spotify_track_keys(norm)
         if only_keys is not None and key not in only_keys:
             continue
-        if only_keys is not None or not keys & seen:
+        # Within one catalog the id is authoritative. Matching titles/credits
+        # can belong to different videos, while the same video can change its
+        # metadata between reads or between a paused copy and its resume.
+        if only_keys is not None or same_provider or not keys & seen:
             if same_provider and only_keys is None:
                 tid = source.track_id(norm["_raw"])
             else:
@@ -167,6 +170,8 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
                     if only_keys is None or str(tid) not in queued_keys:
                         additions.append((tid, norm))
                     queued_keys.setdefault(str(tid), set()).add(key)
+                    if same_provider and only_keys is None:
+                        destination_ids.add(str(tid))
                 seen |= keys
                 if not already_present:
                     log_add(f"{norm['name']} - {norm['artist']}", dry=not execute, tag="transfer")

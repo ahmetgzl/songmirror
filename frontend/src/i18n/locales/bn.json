@@ -1196,5 +1196,6 @@
   "Reads your listening history. Authorize it to read a private profile and love tracks.": "আপনার শোনার ইতিহাস পড়ে। ব্যক্তিগত প্রোফাইল পড়তে এবং ট্র্যাক পছন্দ করতে অনুমোদন দিন।",
   "Applied": "প্রয়োগ করা হয়েছে",
   "Apply resolved tracks": "মেলানো গানগুলো যোগ করুন",
-  "Saved matches are ready. Apply them to this destination playlist.": "সংরক্ষিত মিলগুলো প্রস্তুত। এই গন্তব্য প্লেলিস্টে সেগুলো যোগ করুন।"
+  "Saved matches are ready. Apply them to this destination playlist.": "সংরক্ষিত মিলগুলো প্রস্তুত। এই গন্তব্য প্লেলিস্টে সেগুলো যোগ করুন।",
+  "Copy between accounts on the same service, or paste a public playlist link from an old account.": "একই পরিষেবার অ্যাকাউন্টগুলোর মধ্যে কপি করুন, অথবা পুরোনো অ্যাকাউন্টের পাবলিক প্লেলিস্টের লিঙ্ক পেস্ট করুন।"
 }

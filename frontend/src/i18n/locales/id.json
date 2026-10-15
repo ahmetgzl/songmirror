@@ -1196,5 +1196,6 @@
   "Reads your listening history. Authorize it to read a private profile and love tracks.": "Membaca riwayat mendengarkan Anda. Otorisasi untuk membaca profil pribadi dan menyukai lagu.",
   "Applied": "Diterapkan",
   "Apply resolved tracks": "Terapkan lagu yang dicocokkan",
-  "Saved matches are ready. Apply them to this destination playlist.": "Kecocokan yang disimpan sudah siap. Terapkan ke playlist tujuan ini."
+  "Saved matches are ready. Apply them to this destination playlist.": "Kecocokan yang disimpan sudah siap. Terapkan ke playlist tujuan ini.",
+  "Copy between accounts on the same service, or paste a public playlist link from an old account.": "Salin antar akun di layanan yang sama, atau tempel tautan playlist publik dari akun lama."
 }
