@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { LuArrowRight } from 'react-icons/lu'
 
 import { api, errorMessage } from '@/api'
+import { FeatureGuide } from '@/components/onboarding/FeatureGuide'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { LanguageSelector } from '@/components/layout/LanguageSelector'
 import { ScheduledPlaylistBackups } from '@/components/settings/ScheduledPlaylistBackups'
@@ -136,8 +137,10 @@ export default function Settings() {
         ))}
       </nav>
 
+      <FeatureGuide page={section === 'backups' ? 'backups' : section === 'downloads' ? 'downloads' : 'settings'} />
+
       {section === 'general' && (
-      <SettingsGroup label={t("APPEARANCE")}>
+      <SettingsGroup data-tour="settings-appearance" label={t("APPEARANCE")}>
         <ThemeToggle />
         <LanguageSelector />
         <p className="text-xs leading-relaxed text-text-3">
@@ -170,7 +173,7 @@ export default function Settings() {
           <div className="grid grid-cols-1 items-start gap-4">
             {section === 'general' && (
             <>
-            <SettingsGroup label={t("PROFILE")}>
+            <SettingsGroup data-tour="settings-profile" label={t("PROFILE")}>
               <TextField
                 label={t("Display name")}
                 help={t("Optional, used only for the dashboard's greeting.")}
@@ -201,19 +204,19 @@ export default function Settings() {
                 {t("Optional: where offline audio copies land for any sync that opts in (\"Download this sync's playlists\", on the Sync tab).")}
               </p>
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-                <FolderField
+                <div data-tour="download-folder"><FolderField
                   label={t("Download folder")}
                   help={t("Use a folder your Jellyfin music library can access. Enter an empty path to disable downloads.")}
                   value={form.DOWNLOAD_DIR ?? ''}
                   onChange={(value) => setField('DOWNLOAD_DIR', value)}
-                />
-                <SelectField
+                /></div>
+                <div data-tour="download-format"><SelectField
                   label={t("Audio format")}
                   help={t("Only used when a download folder is set above.")}
                   options={DOWNLOAD_FORMAT_OPTIONS}
                   value={form.LOCAL_MIRROR_FORMAT ?? ''}
                   onChange={(e) => setField('LOCAL_MIRROR_FORMAT', e.target.value)}
-                />
+                /></div>
               </div>
               <p className="text-xs text-text-3">{t("Downloads follow each sync's schedule. Choose its frequency on the Sync tab.")}</p>
             </SettingsGroup>
@@ -233,7 +236,7 @@ export default function Settings() {
                   {t("Discard")}
                 </Button>
               )}
-              <Button type="submit" size="sm" loading={saving} disabled={!dirty}>
+              <Button data-tour="settings-save" type="submit" size="sm" loading={saving} disabled={!dirty}>
                 {t("Save changes")}
               </Button>
             </div>

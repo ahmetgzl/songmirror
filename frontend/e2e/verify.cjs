@@ -2526,7 +2526,7 @@ async function main() {
       await page.waitForSelector('h1:has-text("Sync")')
       await page.waitForTimeout(200) // let accounts + syncs + sync status settle
 
-      const jobCount = await page.getByRole('heading', { level: 3 }).count()
+      const jobCount = await page.getByRole('heading', { level: 3, name: /^(Default|Workout)$/ }).count()
       console.log(`${jobCount === 2 ? 'ok        ' : 'FAIL      '} Sync list renders both fixture jobs (found ${jobCount})`)
       if (jobCount !== 2) results.push({ label: 'sync list count', overflow: true })
       const workoutBodyText = await page.locator('body').innerText()

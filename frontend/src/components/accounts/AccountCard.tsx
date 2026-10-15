@@ -108,7 +108,7 @@ export function AccountCard({ account, onChanged }: {
   }
 
   return (
-    <Card className={cn('flex flex-col gap-3.5 p-4 sm:p-5', borderClass(account.state))}>
+    <Card data-tour="account-card" className={cn('flex flex-col gap-3.5 p-4 sm:p-5', borderClass(account.state))}>
       <div className="flex flex-wrap items-center gap-2.5">
         {logoId ? (
           <span

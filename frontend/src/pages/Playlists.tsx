@@ -1,4 +1,5 @@
 import { t, useTranslation } from '@/i18n'
+import { FeatureGuide } from '@/components/onboarding/FeatureGuide'
 import { useMemo, useState } from 'react'
 import { LuPlus } from 'react-icons/lu'
 import { useNavigate } from 'react-router-dom'
@@ -47,6 +48,8 @@ export default function Playlists() {
         </Button>
       </div>
 
+      <FeatureGuide page="playlists" />
+
       <section className="flex flex-col gap-4">
         <h2 className="text-[17px] font-bold text-text">{t("Browse")}</h2>
 
@@ -75,7 +78,7 @@ export default function Playlists() {
             ))}
           </div>
         ) : (
-          <EmptyState title={t("No connectors available")} description={t("This installation has no configured services.")} />
+          <div data-tour="playlist-empty"><EmptyState title={t("No connectors available")} description={t("This installation has no configured services.")} /></div>
         )}
       </section>
 
@@ -90,6 +93,7 @@ export default function Playlists() {
             )}
           </div>
           <Button
+            data-tour="playlist-pairings"
             variant="secondary"
             onClick={() => setEditorTarget('new')}
             disabled={syncAccounts.length < 2}
@@ -99,7 +103,7 @@ export default function Playlists() {
           </Button>
         </div>
         <p className="text-sm text-text-3">
-          {t("Playlists that already share a name sync automatically. Add a pairing here to link differently-named playlists, or to scope a sync to only specific services.")}
+          {t("Pairings tell a sync which playlists belong together. Matching names need no pairing; create or run a sync on the Sync page to copy changes.")}
         </p>
 
         {linksError && (
@@ -130,7 +134,7 @@ export default function Playlists() {
         ) : (
           <EmptyState
             title={t("No pairings yet")}
-            description={t("Playlists with the same name already sync automatically. Pairings are for everything else.")}
+            description={t("Pair differently named playlists for a sync. A pairing alone does not start copying.")}
           />
         )}
       </section>

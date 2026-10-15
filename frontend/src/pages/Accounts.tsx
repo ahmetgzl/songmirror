@@ -3,6 +3,7 @@ import { useState } from 'react'
 
 import { api, errorMessage } from '@/api'
 import { AccountCard } from '@/components/accounts/AccountCard'
+import { FeatureGuide } from '@/components/onboarding/FeatureGuide'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -48,7 +49,9 @@ export default function Accounts() {
         </p>
       </div>
 
-      <Card className="grid grid-cols-1 items-end gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
+      <FeatureGuide page="accounts" />
+
+      <Card data-tour="account-add" className="grid grid-cols-1 items-end gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
         <SelectField
           label={t("Provider")}
           value={provider}

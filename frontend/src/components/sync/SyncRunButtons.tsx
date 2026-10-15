@@ -70,6 +70,7 @@ export function SyncRunButtons({ job, disabled, onChanged, size = 'sm' }: Props)
           {t("Sync now")}
         </Button>
         <Button
+          data-tour="sync-preview"
           variant="secondary"
           size={size}
           icon={<LuEye className="size-3.5" aria-hidden="true" />}

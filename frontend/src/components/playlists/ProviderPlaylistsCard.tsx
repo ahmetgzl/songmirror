@@ -45,7 +45,7 @@ export function ProviderPlaylistsCard({
           both fit on one line, and a flex row would either truncate a
           legible provider name or need finicky wrap tuning. Giving the
           title its own full-width line first avoids both. */}
-      <div className="flex flex-col items-start gap-1.5">
+      <div data-tour="playlist-browser" className="flex flex-col items-start gap-1.5">
         <div className="flex w-full items-center gap-2">
           {logoId && <ServiceLogo service={logoId} className={cn('size-4 shrink-0', tagText(account.provider))} />}
           <h3 className="min-w-0 flex-1 truncate text-base font-bold text-text">{account.name}</h3>

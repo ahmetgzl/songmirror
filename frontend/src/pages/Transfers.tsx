@@ -1,4 +1,5 @@
 import { t, useTranslation } from '@/i18n'
+import { FeatureGuide } from '@/components/onboarding/FeatureGuide'
 import { useMemo, useState } from 'react'
 
 import { api } from '@/api'
@@ -42,9 +43,11 @@ export default function Transfers() {
       <div>
         <h1 className="text-xl font-bold tracking-tight text-text sm:text-[22px]">{t("Transfers")}</h1>
         <p className="mt-1 text-sm text-text-3">
-          {t("Copy a single playlist from one connected service to another, one time. No ongoing sync.")}
+          {t('Copy a playlist once, including between two accounts on the same service.')}
         </p>
       </div>
+
+      <FeatureGuide page="transfers" />
 
       {accountsError && (
         <p className="rounded-control bg-danger-soft px-3 py-2 text-sm text-danger">{t("Could not load accounts: {{accountsError}}", { accountsError: accountsError })}</p>
