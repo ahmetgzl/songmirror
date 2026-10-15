@@ -16,6 +16,7 @@ from ...deezer_web import (
 )
 from ...oauth import read_token, token_path
 from ..config import REQUEST_TIMEOUT, polite_sleep
+from ..logs import log_warn
 from ..matching import normalize_text, romanized, track_key
 from .base import MirrorTarget, TargetAuthError, TargetTransientError
 from .provider_utils import best_candidate, compatible_isrc_candidates, source_playlist_details, title_with_version
@@ -579,9 +580,26 @@ class DeezerTarget(MirrorTarget):
                     self._web.remove(str(playlist["id"]), [target_id])
                 except DeezerWebAuthError as exc:
                     raise TargetAuthError(str(exc)) from exc
+                except (TargetAuthError, TargetTransientError):
+                    raise
+                except RuntimeError as exc:
+                    log_warn(
+                        f"Deezer refused removal of track {target_id} ({exc}); skipping",
+                        tag=self.tag,
+                    )
+                    return
                 polite_sleep(0.25)
                 return
-            self._request("DELETE", f"playlist/{playlist['id']}/tracks", params={"songs": target_id})
+            try:
+                self._request("DELETE", f"playlist/{playlist['id']}/tracks", params={"songs": target_id})
+            except (TargetAuthError, TargetTransientError):
+                raise
+            except RuntimeError as exc:
+                log_warn(
+                    f"Deezer refused removal of track {target_id} ({exc}); skipping",
+                    tag=self.tag,
+                )
+                return
             polite_sleep(0.25)
 
     def remove_occurrences(self, playlist, positioned):
