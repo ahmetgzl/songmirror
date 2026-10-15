@@ -1,4 +1,6 @@
 {
+  "Show feature guides": "إظهار أدلة الميزات",
+  "Show quick guides and tour buttons on all feature pages.": "إظهار الأدلة السريعة وأزرار الجولات في جميع صفحات الميزات.",
   " (large removals drained in batches)": " (تم تصفية عمليات الإزالة الكبيرة على دفعات)",
   "\"{{source}}\" will be copied from {{sourceAccount}} to \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "سيتم نسخ \"{{source}}\" من {{sourceAccount}} إلى \"{{destination}}\" على {{destinationAccount}}. يتم الاحتفاظ بالمسارات الموجودة على الوجهة، وهذا يضيف فقط.",
   "\"{{source}}\" will be copied from {{sourceAccount}} to a new playlist named \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "سيتم نسخ \"{{source}}\" من {{sourceAccount}} إلى قائمة تشغيل جديدة تسمى \"{{destination}}\" على {{destinationAccount}}. يتم الاحتفاظ بالمسارات الموجودة على الوجهة، وهذا يضيف فقط.",

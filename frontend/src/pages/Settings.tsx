@@ -14,6 +14,8 @@ import { SelectField } from '@/components/ui/SelectField'
 import { LoadingStatus, Skeleton } from '@/components/ui/Skeleton'
 import { SettingsGroup } from '@/components/ui/SettingsGroup'
 import { TextField } from '@/components/ui/TextField'
+import { Toggle } from '@/components/ui/Toggle'
+import { useFeatureGuides } from '@/hooks/useFeatureGuides'
 import { useSettings } from '@/hooks/useSettings'
 import { cn } from '@/lib/cn'
 import { DOWNLOAD_FORMAT_OPTIONS } from '@/lib/constants'
@@ -43,6 +45,7 @@ function settingsForm(settings: SettingsMap): SettingsMap {
 
 export default function Settings() {
   useTranslation()
+  const [guidesVisible, setGuidesVisible] = useFeatureGuides()
   const [params] = useSearchParams()
   const section = ['backups', 'downloads'].includes(params.get('section') ?? '') ? params.get('section')! : 'general'
   const { settings, loading, error, refresh } = useSettings()
@@ -143,6 +146,12 @@ export default function Settings() {
       <SettingsGroup data-tour="settings-appearance" label={t("APPEARANCE")}>
         <ThemeToggle />
         <LanguageSelector />
+        <Toggle
+          checked={guidesVisible}
+          onChange={setGuidesVisible}
+          label={t('Show feature guides')}
+          description={t('Show quick guides and tour buttons on all feature pages.')}
+        />
         <p className="text-xs leading-relaxed text-text-3">
           {t("Applies instantly and is remembered on this device, separate from your account settings.")}
         </p>

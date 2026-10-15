@@ -1,4 +1,6 @@
 {
+  "Show feature guides": "Özellik kılavuzlarını göster",
+  "Show quick guides and tour buttons on all feature pages.": "Tüm özellik sayfalarında hızlı kılavuzları ve tur düğmelerini göster.",
   " (large removals drained in batches)": " (büyük çaplı silmeler kademeli olarak uygulanır)",
   "\"{{source}}\" will be copied from {{sourceAccount}} to \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "\"{{source}}\" listesi {{sourceAccount}} üzerinden {{destinationAccount}} hesabındaki \"{{destination}}\" listesine kopyalanacak. Hedefteki mevcut şarkılar korunur; yalnızca yeni şarkılar eklenir.",
   "\"{{source}}\" will be copied from {{sourceAccount}} to a new playlist named \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "\"{{source}}\" listesi {{sourceAccount}} üzerinden {{destinationAccount}} hesabında açılacak \"{{destination}}\" adlı yeni listeye kopyalanacak. Hedefteki mevcut şarkılar korunur; yalnızca yeni şarkılar eklenir.",

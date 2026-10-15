@@ -1,4 +1,6 @@
 {
+  "Show feature guides": "ফিচারের নির্দেশিকা দেখান",
+  "Show quick guides and tour buttons on all feature pages.": "সব ফিচার পৃষ্ঠায় সংক্ষিপ্ত নির্দেশিকা ও ট্যুরের বোতাম দেখান।",
   " (large removals drained in batches)": " (বড় অপসারণ ব্যাচে নিষ্কাশন করা হয়েছে)",
   "\"{{source}}\" will be copied from {{sourceAccount}} to \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "{{destinationAccount}}-এ \"{{source}}\" {{sourceAccount}} থেকে \"{{destination}}\"-এ কপি করা হবে। গন্তব্যে বিদ্যমান ট্র্যাকগুলি রাখা হয়, এটি শুধুমাত্র যোগ করে।",
   "\"{{source}}\" will be copied from {{sourceAccount}} to a new playlist named \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "\"{{source}}\" {{sourceAccount}} থেকে {{destinationAccount}}-এ \"{{destination}}\" নামে একটি নতুন প্লেলিস্টে অনুলিপি করা হবে৷ গন্তব্যে বিদ্যমান ট্র্যাকগুলি রাখা হয়, এটি শুধুমাত্র যোগ করে।",

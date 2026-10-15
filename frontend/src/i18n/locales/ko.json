@@ -1,4 +1,6 @@
 {
+  "Show feature guides": "기능 가이드 표시",
+  "Show quick guides and tour buttons on all feature pages.": "모든 기능 페이지에 빠른 가이드와 둘러보기 버튼을 표시합니다.",
   " (large removals drained in batches)": " (대량 제거량이 일괄적으로 배출됨)",
   "\"{{source}}\" will be copied from {{sourceAccount}} to \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "\"{{source}}\"는 {{sourceAccount}}에서 {{destinationAccount}}의 \"{{destination}}\"로 복사됩니다. 대상의 기존 트랙은 유지되며 추가만 됩니다.",
   "\"{{source}}\" will be copied from {{sourceAccount}} to a new playlist named \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "\"{{source}}\"는 {{sourceAccount}}에서 {{destinationAccount}}의 \"{{destination}}\"라는 새 재생 목록으로 복사됩니다. 대상의 기존 트랙은 유지되며 추가만 됩니다.",

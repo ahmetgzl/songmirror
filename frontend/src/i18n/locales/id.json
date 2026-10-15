@@ -1,4 +1,6 @@
 {
+  "Show feature guides": "Tampilkan panduan fitur",
+  "Show quick guides and tour buttons on all feature pages.": "Tampilkan panduan singkat dan tombol tur di semua halaman fitur.",
   " (large removals drained in batches)": " (pembuangan dalam jumlah besar dikuras secara berkelompok)",
   "\"{{source}}\" will be copied from {{sourceAccount}} to \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "\"{{source}}\" akan disalin dari {{sourceAccount}} ke \"{{destination}}\" di {{destinationAccount}}. Jalur yang ada di tujuan tetap dipertahankan, ini hanya menambah.",
   "\"{{source}}\" will be copied from {{sourceAccount}} to a new playlist named \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "\"{{source}}\" akan disalin dari {{sourceAccount}} ke playlist baru bernama \"{{destination}}\" di {{destinationAccount}}. Jalur yang ada di tujuan tetap dipertahankan, ini hanya menambah.",

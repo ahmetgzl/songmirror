@@ -40,14 +40,14 @@ async function main() {
   const shots = path.join(__dirname, 'screenshots')
   fs.mkdirSync(shots, { recursive: true })
   try {
-    async function setup({ accounts = [ACCOUNT], blockedStorage = false, populated = false } = {}) {
+    async function setup({ accounts = [ACCOUNT], blockedStorage = false, populated = false, playlists = [] } = {}) {
       const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } })
       if (blockedStorage) {
         await context.addInitScript(() => {
           for (const method of ['getItem', 'setItem']) {
             const original = Storage.prototype[method]
             Storage.prototype[method] = function (key, ...args) {
-              if (key.startsWith('songmirror-guide-v1:') || key.startsWith('songmirror-tour-v1:')) throw new DOMException('Storage blocked', 'SecurityError')
+              if (key === 'songmirror-feature-guides' || key.startsWith('songmirror-guide-v1:') || key.startsWith('songmirror-tour-v1:')) throw new DOMException('Storage blocked', 'SecurityError')
               return original.call(this, key, ...args)
             }
           }
@@ -61,6 +61,7 @@ async function main() {
         if (request.method() !== 'GET') writes.push([request.method(), pathname])
         const send = body => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
         if (pathname === '/api/accounts') return send(accounts)
+        if (pathname === '/api/playlists') return send(playlists)
         if (pathname === '/api/settings') return send({ DISPLAY_NAME: '', DOWNLOAD_DIR: '', LOCAL_MIRROR_FORMAT: '', create_playlist_default_source: 'text' })
         if (pathname === '/api/sync/status') return send({ running: false, jobs: [], last: null })
         if (populated) {
@@ -164,6 +165,46 @@ async function main() {
     console.log('PASS: all 11 feature guides support keyboard use, mobile widths, hide/show, and saved preferences')
     console.log('PASS: all 11 interactive tours highlight real controls, navigate back/next, fit small screens, restore focus, and persist completion')
 
+    // Real-sized cards and short windows reproduce the clipped footer and
+    // square outline that were missed by the original tall-window coverage.
+    const compact = await setup({ playlists: [{ id: 'mix', name: 'My playlist', count: 150, image: '', owned: true }] })
+    const compactSession = await compact.context.newCDPSession(compact.page)
+    for (const [url, width, height, zoom] of [
+      ['/playlists', 1280, 720, 1], ['/playlists', 800, 600, 1],
+      ['/playlists', 701, 480, 1], ['/transfers', 954, 472, 1],
+      ['/transfers', 375, 360, 1], ['/playlists', 960, 640, 1.5],
+    ]) {
+      await compact.page.setViewportSize({ width, height })
+      await compact.page.goto(base + url, { waitUntil: 'networkidle' })
+      await compact.page.getByRole('button', { name: /^(Start|Replay) tour$/ }).click()
+      await compact.page.getByRole('dialog').getByRole('button', { name: 'Next', exact: true }).click()
+      await compactSession.send('Emulation.setPageScaleFactor', { pageScaleFactor: zoom })
+      await compact.page.waitForFunction(() => {
+        const popover = document.querySelector('.songmirror-tour')
+        const frame = document.querySelector('.songmirror-tour-highlight')
+        if (!popover?.dataset.placement || !frame || frame.hidden) return false
+        const box = popover.getBoundingClientRect(), footer = popover.querySelector('.driver-popover-footer').getBoundingClientRect()
+        const target = document.querySelector('.driver-active-element').getBoundingClientRect(), highlight = frame.getBoundingClientRect()
+        const viewport = visualViewport
+        return Math.abs(highlight.left - target.left + 6) < 1 && Math.abs(highlight.top - target.top + 6) < 1 &&
+          box.left >= viewport.offsetLeft && box.top >= viewport.offsetTop && box.right <= viewport.offsetLeft + viewport.width + 1 && box.bottom <= viewport.offsetTop + viewport.height + 1 && footer.top >= box.top && footer.bottom <= box.bottom + 1
+      })
+      const geometry = await compact.page.evaluate(() => {
+        const popover = document.querySelector('.songmirror-tour'), frame = document.querySelector('.songmirror-tour-highlight')
+        const p = popover.getBoundingClientRect(), t = document.querySelector('.driver-active-element').getBoundingClientRect()
+        return { side: popover.dataset.placement, overlaps: p.left < t.right && p.right > t.left && p.top < t.bottom && p.bottom > t.top,
+          frameRadius: getComputedStyle(frame).borderRadius, outline: getComputedStyle(document.querySelector('.driver-active-element')).outlineStyle }
+      })
+      if (geometry.side !== 'viewport') assert.equal(geometry.overlaps, false, 'Adjacent placement must not cover the highlighted area')
+      assert.equal(geometry.frameRadius, '8px')
+      assert.equal(geometry.outline, 'none', 'The target does not draw an outline that the spotlight can clip')
+      await compact.page.screenshot({ path: path.join(shots, `tour-layout-${url.slice(1)}-${width}-${height}-${zoom}.png`) })
+      await compact.page.keyboard.press('Escape')
+      await compact.page.locator('.songmirror-tour-highlight').waitFor({ state: 'detached' })
+    }
+    await compact.context.close()
+    console.log('PASS: tour tooltips and navigation fit short and zoomed windows; rounded highlights render independently of target clipping')
+
     // Switching Settings sections reuses the page without leaking guide state.
     await page.goto(base + '/settings', { waitUntil: 'networkidle' })
     await page.getByRole('region', { name: 'Quick guide: General' }).getByRole('button', { name: 'Hide guide' }).click()
@@ -176,6 +217,29 @@ async function main() {
     await backups.getByRole('button', { name: 'Show guide' }).waitFor()
     assert.equal(await backups.getByRole('button', { name: 'Show guide' }).isVisible(), true)
     console.log('PASS: Settings sections have independent guide state during client-side navigation')
+
+    // The device-wide preference removes the whole guide, including tour
+    // launchers, without overwriting each page's disclosure preference.
+    await page.goto(base + '/settings', { waitUntil: 'networkidle' })
+    const guidesSwitch = page.getByRole('switch', { name: /^Show feature guides/ })
+    await guidesSwitch.click()
+    assert.equal(await guidesSwitch.getAttribute('aria-checked'), 'false')
+    assert.equal(await page.locator('[data-tour-launcher]').count(), 0)
+    await page.reload({ waitUntil: 'networkidle' })
+    assert.equal(await guidesSwitch.getAttribute('aria-checked'), 'false')
+    for (const [url] of ROUTES) {
+      await page.goto(base + url, { waitUntil: 'networkidle' })
+      assert.equal(await page.locator('[data-tour-launcher]').count(), 0, `${url}: global preference hides the guide`)
+      assert.equal(await page.getByRole('button', { name: /^(Hide|Show) guide$/ }).count(), 0)
+    }
+    await page.goto(base + '/settings', { waitUntil: 'networkidle' })
+    await guidesSwitch.click()
+    await page.getByRole('region', { name: 'Quick guide: General' }).getByRole('button', { name: 'Show guide' }).waitFor()
+    await page.getByRole('link', { name: 'Playlist backups', exact: true }).click()
+    await backups.getByRole('button', { name: 'Show guide' }).waitFor()
+    await page.getByRole('link', { name: 'Downloads & Jellyfin', exact: true }).click()
+    await page.getByRole('region', { name: 'Quick guide: Downloads & Jellyfin' }).getByRole('button', { name: 'Hide guide' }).waitFor()
+    console.log('PASS: global guide switch persists across all 11 pages and restores individual disclosure preferences')
 
     await page.goto(base + '/transfers', { waitUntil: 'networkidle' })
     const transferGuide = page.getByRole('region', { name: 'Quick guide: Transfers' })
@@ -271,6 +335,15 @@ async function main() {
     await storage.page.keyboard.press('Escape')
     await storage.page.getByRole('dialog').waitFor({ state: 'detached' })
     assert.equal(await storage.page.locator('#root').evaluate(element => element.inert), false)
+    await storage.page.goto(base + '/settings', { waitUntil: 'networkidle' })
+    const storageSwitch = storage.page.getByRole('switch', { name: /^Show feature guides/ })
+    await storageSwitch.click()
+    assert.equal(await storage.page.locator('[data-tour-launcher]').count(), 0)
+    await storage.page.getByRole('link', { name: 'Playlist backups', exact: true }).click()
+    assert.equal(await storage.page.locator('[data-tour-launcher]').count(), 0)
+    await storage.page.getByRole('link', { name: 'General', exact: true }).click()
+    await storageSwitch.click()
+    await storage.page.locator('[data-tour-launcher]').waitFor()
     await storage.context.close()
     console.log('PASS: guides remain usable when preference storage is blocked')
 

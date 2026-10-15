@@ -8,6 +8,7 @@ import { t, useTranslation } from '@/i18n'
 
 import { featureGuide, type FeatureGuideId } from './guides'
 import { featureTour, findTourTarget } from './tours'
+import { layoutTour } from './tourLayout'
 
 const STORAGE_PREFIX = 'songmirror-tour-v1:'
 
@@ -37,32 +38,30 @@ export function useFeatureTour(page: FeatureGuideId) {
     }
     const root = document.getElementById('root')
     const previousInert = root?.inert ?? false
+    const frame = document.createElement('div')
+    frame.className = 'songmirror-tour-highlight'
+    frame.setAttribute('aria-hidden', 'true')
+    frame.hidden = true
+    document.body.appendChild(frame)
     let completed = false
     let cleaned = false
     let positionFrame: number | undefined
     function position() {
-      if (positionFrame !== undefined) cancelAnimationFrame(positionFrame)
+      if (cleaned || positionFrame !== undefined) return
+      // Driver positions on its own animation frame after scroll/resize. Apply
+      // our viewport-aware placement after that pass and after translated text fits.
       positionFrame = requestAnimationFrame(() => {
-        positionFrame = undefined
-        const element = tour.getActiveElement()
-        if (!tour.isActive() || !element) return
-        const box = element.getBoundingClientRect()
-        // Leave room below a small-screen target for its explanation. A
-        // resize can move a formerly visible desktop control off screen.
-        if (window.innerWidth < 1024) {
-          const headerBottom = document.querySelector('[data-tour="shell-header"]')?.getBoundingClientRect().bottom ?? 0
-          const top = headerBottom + 12
-          const popoverHeight = document.querySelector('.songmirror-tour')?.getBoundingClientRect().height ?? 0
-          if (box.top < top || box.bottom > window.innerHeight - popoverHeight - 28) {
-            window.scrollBy({ top: box.top - top, behavior: 'instant' })
-          }
-        } else if (box.top >= window.innerHeight || box.bottom <= 0) {
-          element.scrollIntoView({ block: 'center', behavior: 'instant' })
-        }
         tour.refresh()
+        positionFrame = requestAnimationFrame(() => {
+          positionFrame = undefined
+          const element = tour.getActiveElement()
+          const popover = document.querySelector<HTMLElement>('.songmirror-tour')
+          if (!tour.isActive() || !element || !popover) return
+          if (layoutTour(element, popover, frame)) position()
+        })
       })
     }
-    const resize = new ResizeObserver(() => active.current?.refresh())
+    const resize = new ResizeObserver(position)
     const mutation = new MutationObserver(() => {
       const element = active.current?.getActiveElement()
       if (element && (!element.isConnected || !element.getClientRects().length || element.closest('[hidden]'))) {
@@ -143,6 +142,7 @@ export function useFeatureTour(page: FeatureGuideId) {
       },
       onHighlighted(element) {
         if (element) resize.observe(element)
+        position()
       },
       onDoneClick() {
         completed = true
@@ -157,8 +157,12 @@ export function useFeatureTour(page: FeatureGuideId) {
       cleaned = true
       resize.disconnect()
       mutation.disconnect()
+      frame.remove()
       if (positionFrame !== undefined) cancelAnimationFrame(positionFrame)
       window.removeEventListener('resize', position)
+      window.removeEventListener('scroll', position, true)
+      window.visualViewport?.removeEventListener('resize', position)
+      window.visualViewport?.removeEventListener('scroll', position)
       window.removeEventListener('keyup', tourKeys, true)
       if (root) root.inert = previousInert
       active.current = null
@@ -184,6 +188,9 @@ export function useFeatureTour(page: FeatureGuideId) {
     active.current = tour
     stop.current = close
     window.addEventListener('resize', position)
+    window.addEventListener('scroll', position, { capture: true, passive: true })
+    window.visualViewport?.addEventListener('resize', position)
+    window.visualViewport?.addEventListener('scroll', position)
     window.addEventListener('keyup', tourKeys, true)
     if (root) root.inert = true
     mutation.observe(document.getElementById('main-content') ?? document.body, {

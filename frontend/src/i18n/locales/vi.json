@@ -1,4 +1,6 @@
 {
+  "Show feature guides": "Hiển thị hướng dẫn tính năng",
+  "Show quick guides and tour buttons on all feature pages.": "Hiển thị hướng dẫn nhanh và nút tham quan trên tất cả các trang tính năng.",
   " (large removals drained in batches)": " (số lượng lớn bị loại bỏ sẽ được xử lý theo đợt)",
   "\"{{source}}\" will be copied from {{sourceAccount}} to \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "\"{{source}}\" sẽ được sao chép từ {{sourceAccount}} sang \"{{destination}}\" trên {{destinationAccount}}. Các bản nhạc hiện có về đích sẽ được giữ lại, điều này chỉ bổ sung thêm.",
   "\"{{source}}\" will be copied from {{sourceAccount}} to a new playlist named \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "\"{{source}}\" sẽ được sao chép từ {{sourceAccount}} sang danh sách phát mới có tên \"{{destination}}\" trên {{destinationAccount}}. Các bản nhạc hiện có về đích sẽ được giữ lại, điều này chỉ bổ sung thêm.",

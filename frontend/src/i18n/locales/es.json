@@ -1,4 +1,6 @@
 {
+  "Show feature guides": "Mostrar guías de funciones",
+  "Show quick guides and tour buttons on all feature pages.": "Mostrar guías rápidas y botones de recorrido en todas las páginas de funciones.",
   " (large removals drained in batches)": " (grandes eliminaciones drenadas en lotes)",
   "\"{{source}}\" will be copied from {{sourceAccount}} to \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "\"{{source}}\" se copiará de {{sourceAccount}} a \"{{destination}}\" en {{destinationAccount}}. Las pistas existentes en el destino se mantienen, esto sólo añade.",
   "\"{{source}}\" will be copied from {{sourceAccount}} to a new playlist named \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "\"{{source}}\" se copiará de {{sourceAccount}} a una nueva lista de reproducción llamada \"{{destination}}\" en {{destinationAccount}}. Las pistas existentes en el destino se mantienen, esto sólo añade.",

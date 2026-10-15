@@ -1,4 +1,6 @@
 {
+  "Show feature guides": "सुविधाओं की मार्गदर्शिकाएँ दिखाएँ",
+  "Show quick guides and tour buttons on all feature pages.": "सभी सुविधा पृष्ठों पर त्वरित मार्गदर्शिकाएँ और टूर बटन दिखाएँ।",
   " (large removals drained in batches)": " (बड़े निष्कासन बैचों में निकाले गए)",
   "\"{{source}}\" will be copied from {{sourceAccount}} to \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "\"{{source}}\" को {{sourceAccount}} से {{destinationAccount}} पर \"{{destination}}\" में कॉपी किया जाएगा। गंतव्य पर मौजूदा ट्रैक रखे जाते हैं, यह केवल जोड़ता है।",
   "\"{{source}}\" will be copied from {{sourceAccount}} to a new playlist named \"{{destination}}\" on {{destinationAccount}}. Existing tracks on the destination are kept, this only adds.": "\"{{source}}\" को {{sourceAccount}} से {{destinationAccount}} पर \"{{destination}}\" नामक एक नई प्लेलिस्ट में कॉपी किया जाएगा। गंतव्य पर मौजूदा ट्रैक रखे जाते हैं, यह केवल जोड़ता है।",

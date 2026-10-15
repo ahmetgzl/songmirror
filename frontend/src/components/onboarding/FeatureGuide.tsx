@@ -6,6 +6,7 @@ import { LuChevronDown } from 'react-icons/lu'
 import { t, useTranslation } from '@/i18n'
 import { cn } from '@/lib/cn'
 import { formatNumber } from '@/lib/format'
+import { useFeatureGuides } from '@/hooks/useFeatureGuides'
 
 import { featureGuide, type FeatureGuideId } from './guides'
 import { useFeatureTour } from './useFeatureTour'
@@ -16,7 +17,8 @@ const STORAGE_PREFIX = 'songmirror-guide-v1:'
 /** A page keeps its own disclosure preference, including Settings sections.
  * Key the inner component so client-side navigation reads the correct preference. */
 export function FeatureGuide({ page }: { page: FeatureGuideId }) {
-  return <GuideDisclosure key={page} page={page} />
+  const [visible] = useFeatureGuides()
+  return visible ? <GuideDisclosure key={page} page={page} /> : null
 }
 
 function GuideDisclosure({ page }: { page: FeatureGuideId }) {
