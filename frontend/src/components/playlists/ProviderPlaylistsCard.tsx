@@ -121,10 +121,12 @@ export function ProviderPlaylistsCard({
                   {String(i + 1).padStart(2, '0')}
                 </span>
                 <CoverArt image={p.image} />
-                <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-text group-hover:text-accent">{p.name}</span>
-                {formatTrackCount(p.count) ? (
-                  <span className="shrink-0 font-mono text-[11.5px] text-text-3">{formatTrackCount(p.count)}</span>
-                ) : null}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13.5px] font-medium text-text group-hover:text-accent">{p.name}</span>
+                  {formatTrackCount(p.count) ? (
+                    <span className="block font-mono text-[11.5px] text-text-3">{formatTrackCount(p.count)}</span>
+                  ) : null}
+                </span>
                 <LuListMusic className="size-3.5 shrink-0 text-text-3 group-hover:text-accent" aria-hidden="true" />
               </button>
               {p.external_url ? (

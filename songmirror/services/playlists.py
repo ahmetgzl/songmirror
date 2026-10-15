@@ -288,18 +288,22 @@ class PlaylistService:
         if self._provider(provider_id) == "jellyfin":
             from ..engine import jellyfin
             activation = self._profiles.activate(provider_id) if self._profiles else nullcontext()
-            with activation:
-                if self._profiles is None:
-                    self._settings.apply_to_env()
-                server = (os.getenv("JELLYFIN_URL") or "").rstrip("/")
-                rows = [{
-                    **row,
-                    "owned": True,
-                    "external_url": (
-                        f"{server}/web/#/details?id={quote(str(row['id']), safe='')}"
-                        if server else ""
-                    ),
-                } for row in jellyfin.list_playlists()]
+            try:
+                with activation:
+                    if self._profiles is None:
+                        self._settings.apply_to_env()
+                    configured_url = os.getenv("JELLYFIN_URL")
+                    server = jellyfin.server_url(configured_url) if configured_url else ""
+                    rows = [{
+                        **row,
+                        "owned": True,
+                        "external_url": (
+                            f"{server}/web/#/details?id={quote(str(row['id']), safe='')}"
+                            if server else ""
+                        ),
+                    } for row in jellyfin.list_playlists()]
+            except jellyfin.JellyfinError as exc:
+                raise PlaylistBrowseError(str(exc)) from exc
             return sorted(rows, key=lambda r: (r["name"] or "").casefold())
         target = self._target(provider_id)
         try:
