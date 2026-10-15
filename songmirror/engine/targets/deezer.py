@@ -16,6 +16,7 @@ from ...deezer_web import (
 )
 from ...oauth import read_token, token_path
 from ..config import REQUEST_TIMEOUT, polite_sleep
+from ..logs import log_warn
 from ..matching import normalize_text, romanized, track_key
 from .base import MirrorTarget, TargetAuthError, TargetTransientError
 from .provider_utils import best_candidate, compatible_isrc_candidates, source_playlist_details, title_with_version
@@ -432,6 +433,14 @@ class DeezerTarget(MirrorTarget):
 
         raise ValueError("Paste a numeric Deezer track ID or a Deezer track URL.")
 
+    def validate_link(self, track, target_id, cache):
+        """Validate Deezer track ID or URL before queueing to avoid breaking sync."""
+        try:
+            normalized = self.normalize_manual_track_id(target_id)
+            return normalized, "link"
+        except (ValueError, TypeError):
+            return None, None
+
     def playlist_count(self, playlist):
         return playlist.get("nb_tracks", playlist.get("estimatedTracksCount"))
 
@@ -552,24 +561,38 @@ class DeezerTarget(MirrorTarget):
         return [candidate]
 
     def add(self, playlist, target_ids):
+        written = []
         if self._web is not None:
             try:
                 for target_id in target_ids:
+                    try:
+                        normalized = self.normalize_manual_track_id(target_id)
+                    except (ValueError, TypeError):
+                        log_warn(f"skipping invalid Deezer track ID: {target_id!r}", tag=self.tag)
+                        continue
                     self._web.add(
                         str(playlist["id"]),
-                        [self.normalize_manual_track_id(target_id)],
+                        [normalized],
                     )
+                    written.append(target_id)
                     polite_sleep(0.25)
-                return
+                return None if len(written) == len(target_ids) else written
             except DeezerWebAuthError as exc:
                 raise TargetAuthError(str(exc)) from exc
         for target_id in target_ids:
+            try:
+                normalized = self.normalize_manual_track_id(target_id)
+            except (ValueError, TypeError):
+                log_warn(f"skipping invalid Deezer track ID: {target_id!r}", tag=self.tag)
+                continue
             self._request(
                 "POST",
                 f"playlist/{playlist['id']}/tracks",
-                params={"songs": self.normalize_manual_track_id(target_id)},
+                params={"songs": normalized},
             )
+            written.append(target_id)
             polite_sleep(0.25)
+        return None if len(written) == len(target_ids) else written
 
     def remove(self, playlist, track):
         target_id = self.track_id(track)

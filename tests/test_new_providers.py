@@ -2337,6 +2337,58 @@ def test_deezer_web_adds_tracks_one_at_a_time_in_order(monkeypatch):
     ]
 
 
+def test_deezer_add_skips_invalid_track_ids(monkeypatch):
+    from songmirror.engine.targets import deezer
+    from songmirror.engine.targets.deezer import DeezerTarget
+
+    calls = []
+    target = DeezerTarget.__new__(DeezerTarget)
+    target.tag = "deezer"
+    target._web = type("Web", (), {
+        "add": lambda self, playlist_id, track_ids: calls.append((playlist_id, track_ids)),
+    })()
+    monkeypatch.setattr(deezer, "polite_sleep", lambda _: None)
+
+    # Web path: all valid returns None
+    assert target.add({"id": "playlist-1"}, ["12", "https://www.deezer.com/tr/track/34"]) is None
+
+    # Web path: mixed list containing valid IDs, URLs, and invalid IDs/None/spaces
+    calls.clear()
+    mixed = ["12", "invalid_id", None, "https://www.deezer.com/tr/track/34", "   ", "56"]
+    written = target.add({"id": "playlist-1"}, mixed)
+
+    assert calls == [
+        ("playlist-1", ["12"]),
+        ("playlist-1", ["34"]),
+        ("playlist-1", ["56"]),
+    ]
+    assert written == ["12", "https://www.deezer.com/tr/track/34", "56"]
+
+    # REST path: verify it also returns written requested IDs when invalid IDs are skipped
+    target._web = None
+    rest_calls = []
+    monkeypatch.setattr(target, "_request", lambda method, path, params: rest_calls.append((method, path, params)))
+    written_rest = target.add({"id": "playlist-2"}, mixed)
+
+    assert rest_calls == [
+        ("POST", "playlist/playlist-2/tracks", {"songs": "12"}),
+        ("POST", "playlist/playlist-2/tracks", {"songs": "34"}),
+        ("POST", "playlist/playlist-2/tracks", {"songs": "56"}),
+    ]
+    assert written_rest == ["12", "https://www.deezer.com/tr/track/34", "56"]
+
+
+def test_deezer_validate_link():
+    from songmirror.engine.targets.deezer import DeezerTarget
+
+    target = DeezerTarget.__new__(DeezerTarget)
+    assert target.validate_link({}, "12345", {}) == ("12345", "link")
+    assert target.validate_link({}, "https://www.deezer.com/tr/track/12345", {}) == ("12345", "link")
+    assert target.validate_link({}, "not-an-id", {}) == (None, None)
+    assert target.validate_link({}, None, {}) == (None, None)
+    assert target.validate_link({}, "", {}) == (None, None)
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
