@@ -36,7 +36,7 @@ from ..matching import (
     featured_artists, normalize_text, recording_version_signature,
     recording_versions_compatible, romanized, score_candidate, track_key,
 )
-from .base import MirrorTarget, TargetAuthError, TargetTransientError
+from .base import MirrorTarget, TargetAuthError, TargetCapabilityError, TargetTransientError
 from .provider_utils import source_playlist_details
 
 API = "https://www.googleapis.com/youtube/v3"
@@ -1123,6 +1123,8 @@ class YTMusicBrowserTarget(YTMusicTarget):
         from ytmusicapi import YTMusic
         self._ytm = YTMusic()                   # public search (used by inherited resolve/_search)
         self._api = YTMusic(browser_auth_file)  # authenticated reads + writes, no Data API quota
+        from ..youtube_browser import YouTubeBrowser
+        self._youtube = YouTubeBrowser(self._api)
 
     def _session_alive(self):
         """Whether the cookies still authenticate. Needed because the logged-out
@@ -1162,12 +1164,48 @@ class YTMusicBrowserTarget(YTMusicTarget):
         if result != "STATUS_SUCCEEDED":
             raise TargetAuthError(f"YouTube Music refused to update the playlist ({result!r}).")
 
+    def browse_playlists(self):
+        music = super().browse_playlists()
+        if not hasattr(self, "_youtube"):
+            return music
+        # Keep Music's order and metadata, supplementing it with video-only
+        # playlists and ownership from the signed-in YouTube library.
+        videos = {playlist["playlistId"]: playlist for playlist in self._youtube.playlists()}
+        result = []
+        for playlist in music:
+            video = videos.pop(playlist["playlistId"], {})
+            result.append({**playlist, **video})
+        return result + list(videos.values())
+
+    def playlist_tracks_for_transfer(self, playlist):
+        if not hasattr(self, "_youtube"):
+            return self.playlist_tracks(playlist)
+        return self._youtube.tracks(playlist["playlistId"])
+
     def create(self, sp_playlist):
         name, description = source_playlist_details(sp_playlist)
         privacy = _privacy(self._create_public(sp_playlist)).upper()
         pid = self._api.create_playlist(name, description, privacy_status=privacy)
-        if not isinstance(pid, str):  # ytmusicapi returns a status dict/response on failure
-            raise TargetAuthError(f"YouTube Music refused to create the playlist ({pid!r}).")
+        # An authenticated Google account can still need YouTube channel setup.
+        # This response is an action for the user, not an expired session.
+        actions = pid.get("actions") if isinstance(pid, dict) else None
+        if isinstance(actions, list) and any(
+            isinstance(action, dict) and "channelCreationFormEndpoint" in action
+            for action in actions
+        ):
+            raise TargetCapabilityError(
+                "YouTube requires a channel before this destination account can create the playlist. "
+                "Open YouTube with the destination account, select Create a channel, complete setup, "
+                "then return to SongMirror and retry the copy. If you already have a channel, "
+                "reconnect that account in Accounts using the correct YouTube channel."
+            )
+        if not isinstance(pid, str) or not pid.strip():
+            # Failure payloads can contain channel tokens and tracking data.
+            raise TargetAuthError(
+                "YouTube Music did not confirm playlist creation. Check that you can create a "
+                "playlist in YouTube Music with the destination account, then retry. If needed, "
+                "reconnect that account in Accounts."
+            )
         polite_sleep(2.0)
         return {"playlistId": pid, "title": name, "count": 0}
 
@@ -1253,8 +1291,13 @@ class YTMusicBrowserTarget(YTMusicTarget):
         # YouTube may stamp a whole batch alike and reorder it. Singleton writes
         # make its append chronology match every other provider's contract.
         for target_id in target_ids:
-            self._api.add_playlist_items(
+            result = self._api.add_playlist_items(
                 playlist["playlistId"], [target_id], duplicates=True)
+            if not isinstance(result, dict) or result.get("status") != "STATUS_SUCCEEDED":
+                raise TargetTransientError(
+                    "YouTube did not confirm adding a video. Check the destination playlist, "
+                    "then retry the copy into that existing playlist to add only missing videos."
+                )
             polite_sleep(1.0)
 
     def remove(self, playlist, track):

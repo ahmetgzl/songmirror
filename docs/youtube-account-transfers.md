@@ -2,6 +2,8 @@
 
 Use **Transfers** to copy a playlist from an old Google account into a new one. Select **YouTube Music** for YouTube and YouTube Music playlist links; the adapter uses their shared playlist and video IDs, so a copy keeps the original videos without searching for replacements.
 
+Browser-connected accounts include regular YouTube video playlists in **Your library**, even when YouTube Music does not show them. Transfers read both the source and destination through regular YouTube so non-music videos retain their IDs and a retry skips videos already copied. Music sync keeps its existing music-only reads.
+
 ## Public or unlisted source playlist
 
 1. Connect your new Google account under **Accounts → YouTube Music**.
@@ -16,8 +18,14 @@ Only the destination account needs to be connected. The old playlist must be rea
 
 Add two YouTube Music accounts on **Accounts**, label them so you can distinguish the old and new accounts, and connect each to its corresponding Google account. Under **Transfers → Your library**, choose the old account and its playlist, then select the new account as the destination.
 
+## YouTube asks to create a channel
+
+If YouTube requests channel setup when creating the destination playlist, open YouTube with the **destination** Google account and complete **Create a channel**, then return to SongMirror and retry the copy. Follow [YouTube's channel setup instructions](https://support.google.com/youtube/answer/1646861?hl=en). If that account already has a channel, reconnect it under **Accounts** using the correct YouTube channel. SongMirror leaves channel creation to you and keeps the playlist visibility you selected.
+
 ## Long playlists
 
 Transfers read the full playlist, including all continuation pages, and are not truncated by the per-pass sync add cap. Videos already present in the destination are skipped by their video IDs; distinct videos with the same title and artist are retained. A repeated copy therefore adds only missing videos and keeps the destination's existing content.
+
+YouTube may explicitly hide private or deleted videos. These appear in the transfer's unavailable count and are skipped; a failed or incomplete page instead stops the copy with an error.
 
 The OAuth connection uses the YouTube Data API and can exhaust its daily write quota during a long copy. For large migrations, connect the destination using the **No-quota mode** browser-header option in the YouTube Music connection dialog. If a copy fails after writing some videos, start another copy into that existing destination playlist to continue with the missing videos. Browser sessions can expire and may need fresh headers.

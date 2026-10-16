@@ -21,6 +21,7 @@ from ..engine.targets.base import (
     MirrorTarget,
     TargetAuthError,
     TargetCapabilityError,
+    TargetTransientError,
     _fit_chronology_writes,
     _normalize,
     _ordered_current_matches,
@@ -272,7 +273,7 @@ def _friendly_error(e):
     """Turn a raw provider exception into a message a user can act on. Falls back
     to repr() for anything unrecognized."""
     status = getattr(e, "http_status", None)
-    if isinstance(e, TargetCapabilityError):
+    if isinstance(e, (TargetAuthError, TargetCapabilityError, TargetTransientError)):
         return str(e)
     if status == 403:
         return ("The source service blocked reading this playlist (HTTP 403) — it's most "

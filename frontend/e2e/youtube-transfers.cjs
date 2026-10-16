@@ -30,7 +30,7 @@ async function main() {
   const browser = await chromium.launch({ headless: true })
   const errors = []
   try {
-    async function setup(accounts) {
+    async function setup(accounts, result = {}) {
       const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } })
       const page = await context.newPage()
       const submissions = [], previews = []
@@ -55,7 +55,7 @@ async function main() {
           return send({ id: 'copy1', status: 'done',
             source: { account: NEW_ACCOUNT.id, provider: 'ytmusic', name: NEW_ACCOUNT.name, playlist_id: 'PL_public', playlist_name: 'Old account videos' },
             dest: { account: NEW_ACCOUNT.id, provider: 'ytmusic', name: NEW_ACCOUNT.name, playlist_id: 'PL_copy', playlist_name: 'Old account videos' },
-            added: 1250, deferred: 0, unavailable: 0, conflicts: [], total: 1250, processed: 1250, error: null })
+            added: 1250, deferred: 0, unavailable: 0, conflicts: [], total: 1250, processed: 1250, error: null, ...result })
         }
         if (url.pathname === '/api/sync/status') return send({ running: false, jobs: [], last: null })
         if (['/api/transfers', '/api/syncs', '/api/links'].includes(url.pathname)) return send([])
@@ -113,6 +113,22 @@ async function main() {
     assert.equal(household.submissions[0].dest_account, NEW_ACCOUNT.id)
     await household.context.close()
     console.log('PASS: two YouTube accounts remain independently selectable for a library copy')
+
+    const videos = await setup([OLD_ACCOUNT, NEW_ACCOUNT], { added: 788, unavailable: 4, total: 795, processed: 795 })
+    const videoServices = videos.page.getByLabel('Service', { exact: true })
+    await videoServices.nth(0).selectOption(OLD_ACCOUNT.id)
+    await videos.page.getByRole('button', { name: 'Playlist', exact: true }).click()
+    await videos.page.getByRole('option', { name: /My videos/ }).click()
+    await videoServices.nth(1).selectOption(NEW_ACCOUNT.id)
+    await videos.page.getByRole('radio', { name: 'Create new', exact: true }).click()
+    await videos.page.getByRole('button', { name: 'Copy playlist', exact: true }).click()
+    await videos.page.getByRole('dialog').getByRole('button', { name: 'Copy playlist', exact: true }).click()
+    await videos.page.getByRole('dialog').waitFor({ state: 'detached' })
+    await videos.page.getByText('· 788 added', { exact: true }).waitFor()
+    await videos.page.getByText('· 4 unavailable skipped', { exact: true }).waitFor()
+    assert.equal(await videos.page.getByText(/unavailable TIDAL/).count(), 0)
+    await videos.context.close()
+    console.log('PASS: video transfers distinguish copied and unavailable entries without TIDAL-specific advice')
 
     const self = await setup([NEW_ACCOUNT])
     const selfServices = self.page.getByLabel('Service', { exact: true })

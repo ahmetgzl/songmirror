@@ -254,7 +254,7 @@ export function TransferProgress({
 
       {job.error && <p className="rounded-control bg-danger-soft px-3 py-2 text-sm text-danger">{job.error}</p>}
 
-      {unavailable > 0 && (
+      {unavailable > 0 && job.source.provider === 'tidal' && (
         <p className="rounded-control bg-warning-soft px-3 py-2 text-sm text-text-2">
           {t("Skipped {{count, number}} unavailable TIDAL entry. You can remove the hidden entry from the source playlist in the playlist inspector.", { count: unavailable, defaultValue_one: "Skipped {{count, number}} unavailable TIDAL entry. You can remove the hidden entry from the source playlist in the playlist inspector.", defaultValue_other: "Skipped {{count, number}} unavailable TIDAL entries. You can remove the hidden entries from the source playlist in the playlist inspector." })}
         </p>
