@@ -109,7 +109,7 @@ export default function Playlists() {
               <div className="flex min-w-0 flex-col gap-1.5">
                 <span id={`${layoutGroupId}-label`} className="text-[12.5px] font-semibold text-text-2">{t('Playlist layout')}</span>
                 <div role="group" aria-labelledby={`${layoutGroupId}-label`}
-                  className="flex h-11 items-stretch gap-0.5 rounded-control border border-border-strong bg-field p-[3px] text-base focus-within:border-accent md:h-[42px] md:text-sm">
+                  className="grid h-11 grid-cols-2 items-stretch gap-0.5 rounded-control border border-border-strong bg-field p-[3px] text-base focus-within:border-accent md:h-[42px] md:text-sm">
                   {(['grid', 'rows'] as const).map(value => (
                     <label key={value} className="-my-1 flex min-w-0 flex-1 cursor-pointer py-1">
                       <input type="radio" name={layoutGroupId} value={value} checked={layout === value}

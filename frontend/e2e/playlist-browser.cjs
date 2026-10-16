@@ -126,14 +126,18 @@ async function main() {
         const layoutLabel = document.getElementById(group.getAttribute('aria-labelledby'))
         const geometry = element => {
           const box = element.getBoundingClientRect(), style = getComputedStyle(element)
-          return { top: box.top, left: box.left, width: box.width, height: box.height, radius: style.borderRadius, fontSize: style.fontSize }
+          return { top: box.top, left: box.left, right: box.right, bottom: box.bottom, width: box.width, height: box.height, radius: style.borderRadius, fontSize: style.fontSize }
         }
         return { layout: geometry(group), sort: geometry(sort), layoutLabel: geometry(layoutLabel), sortLabel: geometry(sort.labels[0]),
-          choices: [...group.querySelectorAll('label')].map(geometry), text: geometry(group.querySelector('label span')) }
+          choices: [...group.querySelectorAll('label')].map(geometry), segments: [...group.querySelectorAll('label span')].map(geometry), text: geometry(group.querySelector('label span')) }
       })
       assert.equal(controls.layout.height, controls.sort.height, `Both controls have equal heights at ${width}px`)
       assert.equal(controls.layout.radius, controls.sort.radius, 'Control corners match')
       assert.equal(controls.text.fontSize, controls.sort.fontSize, 'Control text has consistent sizing')
+      for (const segment of controls.segments) {
+        assert.ok(segment.left >= controls.layout.left + 1 && segment.right <= controls.layout.right - 1, `Layout backgrounds stay inside the control at ${width}px`)
+        assert.ok(segment.top >= controls.layout.top + 1 && segment.bottom <= controls.layout.bottom - 1, 'Layout backgrounds retain a vertical inset')
+      }
       if (width >= 640) {
         assert.ok(Math.abs(controls.layout.top - controls.sort.top) <= 1, `Controls align at ${width}px`)
         assert.ok(Math.abs(controls.layoutLabel.top - controls.sortLabel.top) <= 1, 'Labels align above the controls')
@@ -171,7 +175,7 @@ async function main() {
     const readsBeforeLayout = reads.length
     await layoutSwitch.getByText('Rows', { exact: true }).click()
     assert.deepEqual(await ids(), sorted, 'Changing layout retains the current sorting')
-    for (const width of [1280, 375, 320]) {
+    for (const width of [1280, 768, 755, 640, 375, 320]) {
       await page.setViewportSize({ width, height: 900 })
       await checkToolbar(width)
       assert.equal(await main.evaluate(element => Math.abs(element.getBoundingClientRect().width - element.parentElement.getBoundingClientRect().width) < 1), true, 'Rows use the full available width')
