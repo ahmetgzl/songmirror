@@ -1,4 +1,10 @@
 {
+  "Sort playlists": "प्लेलिस्ट क्रमबद्ध करें",
+  "Service order": "सेवा का क्रम",
+  "Name (A–Z)": "नाम (आरोही)",
+  "Name (Z–A)": "नाम (अवरोही)",
+  "No connected playlist accounts": "कोई प्लेलिस्ट खाता जुड़ा नहीं है",
+  "Connect an account with library access on the Accounts page to browse playlists.": "प्लेलिस्ट देखने के लिए खाते पृष्ठ पर लाइब्रेरी तक पहुँच वाला खाता जोड़ें।",
   "Show feature guides": "सुविधाओं की मार्गदर्शिकाएँ दिखाएँ",
   "Show quick guides and tour buttons on all feature pages.": "सभी सुविधा पृष्ठों पर त्वरित मार्गदर्शिकाएँ और टूर बटन दिखाएँ।",
   " (large removals drained in batches)": " (बड़े निष्कासन बैचों में निकाले गए)",

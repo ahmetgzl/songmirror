@@ -1,4 +1,10 @@
 {
+  "Sort playlists": "Ordenar listas",
+  "Service order": "Orden del servicio",
+  "Name (A–Z)": "Nombre (A–Z)",
+  "Name (Z–A)": "Nombre (Z–A)",
+  "No connected playlist accounts": "No hay cuentas de listas conectadas",
+  "Connect an account with library access on the Accounts page to browse playlists.": "Conecta una cuenta con acceso a la biblioteca en la página Cuentas para explorar listas.",
   "Show feature guides": "Mostrar guías de funciones",
   "Show quick guides and tour buttons on all feature pages.": "Mostrar guías rápidas y botones de recorrido en todas las páginas de funciones.",
   " (large removals drained in batches)": " (grandes eliminaciones drenadas en lotes)",

@@ -1,4 +1,10 @@
 {
+  "Sort playlists": "Sắp xếp danh sách phát",
+  "Service order": "Thứ tự của dịch vụ",
+  "Name (A–Z)": "Tên (A–Z)",
+  "Name (Z–A)": "Tên (Z–A)",
+  "No connected playlist accounts": "Chưa có tài khoản danh sách phát nào được kết nối",
+  "Connect an account with library access on the Accounts page to browse playlists.": "Kết nối tài khoản có quyền truy cập thư viện trên trang Tài khoản để duyệt danh sách phát.",
   "Show feature guides": "Hiển thị hướng dẫn tính năng",
   "Show quick guides and tour buttons on all feature pages.": "Hiển thị hướng dẫn nhanh và nút tham quan trên tất cả các trang tính năng.",
   " (large removals drained in batches)": " (số lượng lớn bị loại bỏ sẽ được xử lý theo đợt)",

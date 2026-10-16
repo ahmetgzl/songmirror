@@ -1,4 +1,10 @@
 {
+  "Sort playlists": "ترتيب قوائم التشغيل",
+  "Service order": "ترتيب الخدمة",
+  "Name (A–Z)": "الاسم (تصاعديًا)",
+  "Name (Z–A)": "الاسم (تنازليًا)",
+  "No connected playlist accounts": "لا توجد حسابات قوائم تشغيل متصلة",
+  "Connect an account with library access on the Accounts page to browse playlists.": "اربط حسابًا يتيح الوصول إلى المكتبة في صفحة الحسابات لتصفح قوائم التشغيل.",
   "Show feature guides": "إظهار أدلة الميزات",
   "Show quick guides and tour buttons on all feature pages.": "إظهار الأدلة السريعة وأزرار الجولات في جميع صفحات الميزات.",
   " (large removals drained in batches)": " (تم تصفية عمليات الإزالة الكبيرة على دفعات)",

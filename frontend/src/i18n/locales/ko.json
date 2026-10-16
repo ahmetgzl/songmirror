@@ -1,4 +1,10 @@
 {
+  "Sort playlists": "플레이리스트 정렬",
+  "Service order": "서비스 순서",
+  "Name (A–Z)": "이름 (오름차순)",
+  "Name (Z–A)": "이름 (내림차순)",
+  "No connected playlist accounts": "연결된 플레이리스트 계정이 없습니다",
+  "Connect an account with library access on the Accounts page to browse playlists.": "플레이리스트를 보려면 계정 페이지에서 라이브러리에 접근할 수 있는 계정을 연결하세요.",
   "Show feature guides": "기능 가이드 표시",
   "Show quick guides and tour buttons on all feature pages.": "모든 기능 페이지에 빠른 가이드와 둘러보기 버튼을 표시합니다.",
   " (large removals drained in batches)": " (대량 제거량이 일괄적으로 배출됨)",

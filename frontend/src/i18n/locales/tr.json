@@ -1,4 +1,10 @@
 {
+  "Sort playlists": "Çalma listelerini sırala",
+  "Service order": "Hizmet sırası",
+  "Name (A–Z)": "Ad (A–Z)",
+  "Name (Z–A)": "Ad (Z–A)",
+  "No connected playlist accounts": "Bağlı çalma listesi hesabı yok",
+  "Connect an account with library access on the Accounts page to browse playlists.": "Çalma listelerine göz atmak için Hesaplar sayfasında kitaplık erişimi olan bir hesap bağlayın.",
   "Show feature guides": "Özellik kılavuzlarını göster",
   "Show quick guides and tour buttons on all feature pages.": "Tüm özellik sayfalarında hızlı kılavuzları ve tur düğmelerini göster.",
   " (large removals drained in batches)": " (büyük çaplı silmeler kademeli olarak uygulanır)",

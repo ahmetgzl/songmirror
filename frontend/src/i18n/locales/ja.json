@@ -1,4 +1,10 @@
 {
+  "Sort playlists": "プレイリストの並べ替え",
+  "Service order": "サービスの順序",
+  "Name (A–Z)": "名前（昇順）",
+  "Name (Z–A)": "名前（降順）",
+  "No connected playlist accounts": "接続されたプレイリスト用アカウントがありません",
+  "Connect an account with library access on the Accounts page to browse playlists.": "プレイリストを表示するには、アカウントページでライブラリにアクセスできるアカウントを接続してください。",
   "Show feature guides": "機能ガイドを表示",
   "Show quick guides and tour buttons on all feature pages.": "すべての機能ページにクイックガイドとツアーボタンを表示します。",
   " (large removals drained in batches)": " (大量の除去はバッチで排出される)",

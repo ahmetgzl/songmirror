@@ -1,4 +1,10 @@
 {
+  "Sort playlists": "排序播放列表",
+  "Service order": "服务顺序",
+  "Name (A–Z)": "名称（升序）",
+  "Name (Z–A)": "名称（降序）",
+  "No connected playlist accounts": "没有已连接的播放列表账户",
+  "Connect an account with library access on the Accounts page to browse playlists.": "请在账户页面连接具有媒体库访问权限的账户，以浏览播放列表。",
   "Show feature guides": "显示功能指南",
   "Show quick guides and tour buttons on all feature pages.": "在所有功能页面上显示快速指南和导览按钮。",
   " (large removals drained in batches)": " （大量清除量分批排出）",
