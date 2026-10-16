@@ -54,7 +54,7 @@ async function main() {
         if (blocked) for (const method of ['getItem', 'setItem']) {
           const original = Storage.prototype[method]
           Storage.prototype[method] = function (key, ...args) {
-            if (key === 'songmirror-playlist-sort') throw new DOMException('Storage blocked', 'SecurityError')
+            if (key === 'songmirror-playlist-sort' || key === 'songmirror-playlist-layout') throw new DOMException('Storage blocked', 'SecurityError')
             return original.call(this, key, ...args)
           }
         }
@@ -89,6 +89,10 @@ async function main() {
     await main.getByRole('button', { name: 'Open Zulu inside SongMirror', exact: true }).waitFor()
     const ids = () => main.locator('ul button').evaluateAll(rows => rows.map(row => row.getAttribute('aria-label')))
     const original = await ids()
+    const layoutSwitch = page.getByRole('group', { name: 'Playlist layout', exact: true })
+    const grid = layoutSwitch.getByRole('radio', { name: 'Grid', exact: true })
+    const rows = layoutSwitch.getByRole('radio', { name: 'Rows', exact: true })
+    assert.equal(await grid.isChecked(), true, 'Grid is the default')
     assert.equal(original.length, PLAYLISTS.length)
     for (const active of ACCOUNTS.slice(0, 5)) await page.getByRole('region', { name: active.name, exact: true }).waitFor()
     for (const inactive of ACCOUNTS.slice(5)) assert.equal(await page.getByRole('region', { name: inactive.name, exact: true }).count(), 0)
@@ -132,16 +136,42 @@ async function main() {
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
       if (width === 1536 || width === 375) await page.screenshot({ path: path.join(shots, `playlist-browser-${width}.png`) })
     }
-    await context.close()
     console.log('PASS: compact grid uses four, three, two, and one columns with readable titles and no desktop or mobile overflow')
+
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await select.selectOption('name-asc')
+    const sorted = await ids()
+    const readsBeforeLayout = reads.length
+    await layoutSwitch.getByText('Rows', { exact: true }).click()
+    assert.deepEqual(await ids(), sorted, 'Changing layout retains the current sorting')
+    for (const width of [1280, 375, 320]) {
+      await page.setViewportSize({ width, height: 900 })
+      assert.equal(await main.evaluate(element => Math.abs(element.getBoundingClientRect().width - element.parentElement.getBoundingClientRect().width) < 1), true, 'Rows use the full available width')
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+      await page.screenshot({ path: path.join(shots, `playlist-rows-${width}.png`) })
+    }
+    assert.equal(reads.length, readsBeforeLayout, 'Changing layout does not refetch playlists')
+    await page.reload({ waitUntil: 'networkidle' })
+    assert.equal(await rows.isChecked(), true, 'Rows preference survives reload')
+    assert.equal(await select.inputValue(), 'name-asc', 'Layout preference is independent of sorting')
+    await rows.focus()
+    await page.keyboard.press('ArrowLeft')
+    assert.equal(await grid.isChecked(), true, 'Native radio navigation switches layout with the keyboard')
+    await page.reload({ waitUntil: 'networkidle' })
+    assert.equal(await grid.isChecked(), true, 'Returning to Grid is also remembered')
+    console.log('PASS: layout defaults to Grid; Rows fits desktop/mobile, retains sorting without refetching, persists after reload, and supports keyboard navigation')
+    await context.close()
 
     const blocked = await setup({ blockedStorage: true })
     await blocked.page.getByRole('combobox', { name: 'Sort playlists' }).selectOption('name-asc')
+    await blocked.page.getByText('Rows', { exact: true }).click()
+    assert.equal(await blocked.page.getByRole('radio', { name: 'Rows', exact: true }).isChecked(), true)
     assert.equal(await blocked.page.getByRole('region', { name: 'Spotify · Main', exact: true }).locator('ul button').first().getAttribute('aria-label'), 'Open alpha inside SongMirror')
     await blocked.context.close()
     const empty = await setup({ accounts: ACCOUNTS.slice(5) })
     await empty.page.getByText('No connected playlist accounts', { exact: true }).waitFor()
     assert.equal(await empty.page.getByRole('combobox', { name: 'Sort playlists' }).count(), 0)
+    assert.equal(await empty.page.getByRole('group', { name: 'Playlist layout' }).count(), 0)
     await empty.page.getByRole('main').getByRole('link', { name: 'Accounts', exact: true }).click()
     assert.equal(new URL(empty.page.url()).pathname, '/accounts')
     await empty.context.close()

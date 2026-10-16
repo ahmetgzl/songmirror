@@ -20,6 +20,7 @@ import { ServiceLogo } from '../ui/ServiceLogo'
 import { BUTTON_BASE_CLASSES, BUTTON_SIZE_CLASSES, BUTTON_VARIANT_CLASSES } from '../ui/buttonStyles'
 
 export type PlaylistSort = 'service' | 'name-asc' | 'name-desc'
+export type PlaylistLayout = 'grid' | 'rows'
 
 /** One provider's playlists for the Browse section. Handles all four states
  * explicitly: not connected, loading, errored, and loaded (possibly empty). */
@@ -27,12 +28,14 @@ export function ProviderPlaylistsCard({
   account,
   entry,
   sort,
+  layout,
   onOpenPlaylist,
   onRetry,
 }: {
   account: Account
   entry: ProviderPlaylistsEntry | undefined
   sort: PlaylistSort
+  layout: PlaylistLayout
   onOpenPlaylist: (playlist: ProviderPlaylist) => void
   onRetry: () => void
 }) {
@@ -50,10 +53,10 @@ export function ProviderPlaylistsCard({
 
   return (
     <Card role="region" aria-label={account.name} className="flex flex-col gap-3 p-4 sm:p-5">
-      <div data-tour="playlist-browser" className="flex w-full flex-col items-start gap-1.5">
-        <div className="flex w-full min-w-0 items-center gap-2">
+      <div data-tour="playlist-browser" className={cn('flex w-full', layout === 'grid' ? 'flex-col items-start gap-1.5' : 'flex-wrap items-center justify-between gap-3')}>
+        <div className={cn('flex min-w-0 items-center gap-2', layout === 'grid' ? 'w-full' : 'flex-1 basis-60')}>
           {logoId && <ServiceLogo service={logoId} className={cn('size-4 shrink-0', tagText(account.provider))} />}
-          <h3 title={account.name} className="min-w-0 flex-1 truncate text-base font-bold text-text">{account.name}</h3>
+          <h3 title={account.name} className={cn('min-w-0 flex-1 text-base font-bold text-text', layout === 'grid' ? 'truncate' : 'break-words')}>{account.name}</h3>
           {connected && entry && entry.playlists.length > 0 && (
             <span className="shrink-0 font-mono text-[11px] text-text-3">
               {t("{{count, number}} playlist", { count: entry.playlists.length, defaultValue_one: "{{count, number}} playlist", defaultValue_other: "{{count, number}} playlists" })}
@@ -65,7 +68,7 @@ export function ProviderPlaylistsCard({
             href={homeUrl}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex min-h-8 items-center gap-1.5 self-end rounded-control px-2 text-[11.5px] font-semibold text-text-3 hover:bg-surface-2 hover:text-text-2"
+            className={cn('inline-flex min-h-8 items-center gap-1.5 rounded-control px-2 text-[11.5px] font-semibold text-text-3 hover:bg-surface-2 hover:text-text-2', layout === 'grid' && 'self-end')}
           >
             {t("Open service")}
             <LuExternalLink className="size-3" aria-hidden="true" />
@@ -124,7 +127,7 @@ export function ProviderPlaylistsCard({
                 </span>
                 <CoverArt image={p.image} />
                 <span className="min-w-0 flex-1">
-                  <span title={p.name} className="block truncate text-[13.5px] font-medium text-text group-hover:text-accent">{p.name}</span>
+                  <span title={p.name} className={cn('block text-[13.5px] font-medium text-text group-hover:text-accent', layout === 'grid' ? 'truncate' : 'break-words')}>{p.name}</span>
                   {formatTrackCount(p.count) ? (
                     <span className="block font-mono text-[11.5px] text-text-3">{formatTrackCount(p.count)}</span>
                   ) : null}

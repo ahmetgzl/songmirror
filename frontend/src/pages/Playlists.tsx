@@ -1,6 +1,6 @@
 import { t, useTranslation } from '@/i18n'
 import { FeatureGuide } from '@/components/onboarding/FeatureGuide'
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { LuPlus } from 'react-icons/lu'
 import { Link, useNavigate } from 'react-router-dom'
 
@@ -8,7 +8,7 @@ import { LinkCard } from '@/components/playlists/LinkCard'
 import { LinkEditorModal } from '@/components/playlists/LinkEditorModal'
 import { PlaylistDetailModal } from '@/components/playlists/PlaylistDetailModal'
 import { ProviderPlaylistsCard } from '@/components/playlists/ProviderPlaylistsCard'
-import type { PlaylistSort } from '@/components/playlists/ProviderPlaylistsCard'
+import type { PlaylistLayout, PlaylistSort } from '@/components/playlists/ProviderPlaylistsCard'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingStatus, Skeleton } from '@/components/ui/Skeleton'
@@ -22,6 +22,16 @@ import { cn } from '@/lib/cn'
 import type { Account, PlaylistLink, ProviderPlaylist } from '@/types'
 
 const SORT_STORAGE_KEY = 'songmirror-playlist-sort'
+const LAYOUT_STORAGE_KEY = 'songmirror-playlist-layout'
+
+function savedLayout(): PlaylistLayout {
+  try {
+    if (window.localStorage.getItem(LAYOUT_STORAGE_KEY) === 'rows') return 'rows'
+  } catch {
+    // Use the default grid when browser preferences are unavailable.
+  }
+  return 'grid'
+}
 
 function savedSort(): PlaylistSort {
   try {
@@ -48,6 +58,8 @@ export default function Playlists() {
 
   const [editorTarget, setEditorTarget] = useState<PlaylistLink | 'new' | null>(null)
   const [playlistSort, setPlaylistSort] = useState<PlaylistSort>(savedSort)
+  const [layout, setLayout] = useState<PlaylistLayout>(savedLayout)
+  const layoutGroupId = useId()
   const [viewerTarget, setViewerTarget] = useState<{
     account: Account
     playlist: ProviderPlaylist
@@ -61,6 +73,19 @@ export default function Playlists() {
       // Keep the selected order even if the device cannot save it.
     }
   }
+
+  function changeLayout(value: PlaylistLayout) {
+    setLayout(value)
+    try {
+      window.localStorage.setItem(LAYOUT_STORAGE_KEY, value)
+    } catch {
+      // The layout can still be changed for the current visit.
+    }
+  }
+
+  const accountLayout = layout === 'grid'
+    ? 'grid grid-cols-1 items-start gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4'
+    : 'flex flex-col gap-4'
 
   return (
     <div className="flex flex-col gap-8">
@@ -80,17 +105,34 @@ export default function Playlists() {
         <div className="flex flex-wrap items-end justify-between gap-3">
           <h2 className="text-[17px] font-bold text-text">{t("Browse")}</h2>
           {connectedAccounts.length > 0 && (
-            <div className="w-full sm:w-56">
-              <SelectField
-                label={t('Sort playlists')}
-                value={playlistSort}
-                onChange={(event) => changeSort(event.target.value as PlaylistSort)}
-                options={[
-                  { value: 'service', label: t('Service order') },
-                  { value: 'name-asc', label: t('Name (A–Z)') },
-                  { value: 'name-desc', label: t('Name (Z–A)') },
-                ]}
-              />
+            <div className="flex w-full flex-wrap items-end gap-3 sm:w-auto">
+              <fieldset className="min-w-0">
+                <legend className="mb-1.5 text-[12.5px] font-semibold text-text-2">{t('Playlist layout')}</legend>
+                <div className="inline-flex gap-0.5 rounded-[9px] border border-border bg-inset p-[3px]">
+                  {(['grid', 'rows'] as const).map(value => (
+                    <label key={value} className="cursor-pointer">
+                      <input type="radio" name={layoutGroupId} value={value} checked={layout === value}
+                        onChange={() => changeLayout(value)} className="peer sr-only" />
+                      <span className={cn('inline-flex min-h-11 items-center rounded-[7px] border px-3.5 text-[12.5px] md:min-h-[30px] peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent',
+                        layout === value ? 'border-border-strong bg-surface-2 font-semibold text-text' : 'border-transparent font-medium text-text-3 hover:text-text-2')}>
+                        {value === 'grid' ? t('Grid') : t('Rows')}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <div className="w-full sm:w-56">
+                <SelectField
+                  label={t('Sort playlists')}
+                  value={playlistSort}
+                  onChange={(event) => changeSort(event.target.value as PlaylistSort)}
+                  options={[
+                    { value: 'service', label: t('Service order') },
+                    { value: 'name-asc', label: t('Name (A–Z)') },
+                    { value: 'name-desc', label: t('Name (Z–A)') },
+                  ]}
+                />
+              </div>
             </div>
           )}
         </div>
@@ -101,20 +143,21 @@ export default function Playlists() {
 
         {accountsLoading && !accounts ? (
           <LoadingStatus label={t("Loading accounts…")}>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            <div className={accountLayout}>
               {[0, 1, 2, 3].map((i) => (
                 <Skeleton key={i} className="h-40 w-full rounded-card" />
               ))}
             </div>
           </LoadingStatus>
         ) : connectedAccounts.length > 0 ? (
-          <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          <div className={accountLayout}>
             {connectedAccounts.map((account) => (
               <ProviderPlaylistsCard
                 key={account.id}
                 account={account}
                 entry={entries[account.id]}
                 sort={playlistSort}
+                layout={layout}
                 onOpenPlaylist={(playlist) => setViewerTarget({ account, playlist })}
                 onRetry={() => void refreshPlaylists()}
               />
