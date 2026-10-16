@@ -1276,5 +1276,6 @@
   "View details": "বিস্তারিত দেখুন",
   "View transfer": "স্থানান্তর দেখুন",
   "Refresh {{label}}": "{{label}} রিফ্রেশ করুন",
-  "Showing saved playlists while updating…": "আপডেট চলাকালে সংরক্ষিত প্লেলিস্ট দেখানো হচ্ছে…"
+  "Showing saved playlists while updating…": "আপডেট চলাকালে সংরক্ষিত প্লেলিস্ট দেখানো হচ্ছে…",
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "অন্য সিঙ্ক বা স্থানান্তর শেষ হওয়ার অপেক্ষায়। এই কপি স্বয়ংক্রিয়ভাবে শুরু হবে।"
 }

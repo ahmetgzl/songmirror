@@ -1404,5 +1404,6 @@
   "View details": "عرض التفاصيل",
   "View transfer": "عرض عملية النقل",
   "Refresh {{label}}": "تحديث {{label}}",
-  "Showing saved playlists while updating…": "عرض قوائم التشغيل المحفوظة أثناء التحديث…"
+  "Showing saved playlists while updating…": "عرض قوائم التشغيل المحفوظة أثناء التحديث…",
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "في انتظار انتهاء مزامنة أو نقل آخر. ستبدأ هذه النسخة تلقائيًا."
 }

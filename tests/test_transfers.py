@@ -809,6 +809,91 @@ def test_run_exclusive_queues_behind_sync(monkeypatch, tmp_path):
     assert order == ["sync-start", "sync-end", "transfer"]  # the transfer waited for the sync
 
 
+@pytest.mark.parametrize("stop_queued", [False, True])
+def test_transfer_stays_queued_without_provider_work_until_engine_is_available(monkeypatch, tmp_path, stop_queued):
+    async def scenario():
+        _service(monkeypatch, tmp_path)
+        import threading
+        event_loop_thread = threading.get_ident()
+        bus = EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        settings = SettingsStore(dir=tmp_path)
+        sync = SyncService(settings, bus)
+        service = TransferService(settings, bus, sync)
+        setup_calls = []
+        original_build = service._build
+
+        def build(*args):
+            assert threading.get_ident() != event_loop_thread, "Blocking setup must run off the event loop"
+            setup_calls.append(args[0])
+            return original_build(*args)
+
+        monkeypatch.setattr(service, "_build", build)
+        await sync._lock.acquire()
+        try:
+            job = service.submit({"source_provider": "apple", "source_playlist_id": "p1",
+                                  "dest_provider": "ytmusic", "dest_playlist_id": "p1"})
+            await asyncio.sleep(0)
+            assert job["status"] == "queued", "Waiting for a sync is not a running source read"
+            assert job.get("started_at") is None
+            assert setup_calls == [], "Provider setup must wait behind the engine queue too"
+            assert service.history.get(job["id"])["status"] == "queued"
+            assert [j["id"] for j in service.list_active()] == [job["id"]]
+            if stop_queued:
+                assert service.stop(job["id"])
+                assert job["status"] == "stopped"
+                assert service.list_active() == []
+        finally:
+            sync._lock.release()
+        if stop_queued:
+            await asyncio.sleep(0)
+            assert setup_calls == [], "Stopping a queued job must not create or read a playlist"
+            assert job.get("started_at") is None
+        else:
+            await _await_job(service, job["id"])
+            assert job["status"] == "done", job["error"]
+            assert setup_calls == ["apple", "ytmusic"]
+            assert job["started_at"]
+
+    asyncio.run(scenario())
+
+
+def test_transfer_waits_for_another_transfer_before_starting(monkeypatch, tmp_path):
+    import threading
+
+    async def scenario():
+        source, _ = _service(monkeypatch, tmp_path)
+        started, release = threading.Event(), threading.Event()
+        settings, bus = SettingsStore(dir=tmp_path), EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        service = TransferService(settings, bus, SyncService(settings, bus))
+        original_read = source.playlist_tracks
+
+        def read(playlist):
+            started.set()
+            assert release.wait(2)
+            return original_read(playlist)
+
+        source.playlist_tracks = read
+        spec = {"source_provider": "apple", "source_playlist_id": "p1",
+                "dest_provider": "ytmusic", "dest_playlist_id": "p1"}
+        first = service.submit(spec)
+        assert await asyncio.to_thread(started.wait, 1)
+        try:
+            second = service.submit(spec)
+            await asyncio.sleep(0)
+            assert first["status"] == "running"
+            assert second["status"] == "queued"
+            assert second.get("started_at") is None
+        finally:
+            release.set()
+        await _await_job(service, first["id"])
+        await _await_job(service, second["id"])
+        assert first["status"] == second["status"] == "done"
+
+    asyncio.run(scenario())
+
+
 class _Prov:
     def __init__(self, cache_file, tracks, source="apple"):
         self.name, self.source, self.cache_file = "Prov", source, cache_file

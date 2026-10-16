@@ -1276,5 +1276,6 @@
   "View details": "세부 정보 보기",
   "View transfer": "전송 보기",
   "Refresh {{label}}": "{{label}} 새로고침",
-  "Showing saved playlists while updating…": "업데이트하는 동안 저장된 재생목록을 표시합니다…"
+  "Showing saved playlists while updating…": "업데이트하는 동안 저장된 재생목록을 표시합니다…",
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "다른 동기화 또는 전송이 끝나기를 기다리는 중입니다. 이 복사는 자동으로 시작됩니다."
 }

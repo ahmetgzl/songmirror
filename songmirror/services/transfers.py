@@ -457,14 +457,25 @@ class TransferService:
             "added": 0, "deferred": 0, "chronology_replayed": 0,
             "unavailable": 0, "conflicts": [], "error": None,
             "total": 0, "processed": 0,  # live progress: source tracks examined / total
-            "phase": "reading", "written": 0, "write_total": 0,
+            "phase": "waiting", "written": 0, "write_total": 0,
             "_spec": normalized_spec,  # kept so resume re-runs the same account pair
             "_control": "run",  # "run" | "pause" | "stop" — polled by the running loop
         }
         self._jobs[job["id"]] = job
         self._record(job)
-        asyncio.create_task(self._run(job, normalized_spec))
+        self._schedule(job, self._run)
         return job
+
+    @staticmethod
+    def _schedule(job, run):
+        task = asyncio.create_task(run(job, job["_spec"]))
+        job["_task"] = task
+
+        def finished(done):
+            if job.get("_task") is done:
+                job.pop("_task", None)
+
+        task.add_done_callback(finished)
 
     def get(self, job_id):
         live = self._jobs.get(job_id)
@@ -482,7 +493,7 @@ class TransferService:
         """Active jobs (queued/running/paused) for the dashboard. Terminal jobs
         (done/stopped/error) are dropped so the in-memory list can't grow without
         bound in any view — the Transfers page still fetches its own job by id."""
-        active = {"queued", "running", "paused"}
+        active = {"queued", "busy", "running", "paused"}
         return [self.public(j) for j in self._jobs.values() if j["status"] in active]
 
     def pause(self, job_id):
@@ -502,10 +513,10 @@ class TransferService:
         if not job or job["status"] != "paused":
             return False
         job["_control"] = "run"
-        job["status"] = "queued"
+        job.update(status="queued", phase="waiting")
         self._record(job, kind="resumed")
         run = self._run_resolved if job.get("_apply_mode") else self._run
-        asyncio.create_task(run(job, job["_spec"]))
+        self._schedule(job, run)
         return True
 
     def apply_resolved(self, job_id):
@@ -517,9 +528,9 @@ class TransferService:
             return False
         if not any(c["resolved"] and not c.get("applied") for c in job["conflicts"]):
             return False
-        job.update(status="queued", error=None, _control="run", _apply_mode=True)
+        job.update(status="queued", phase="waiting", error=None, _control="run", _apply_mode=True)
         self._record(job, kind="apply_matches")
-        asyncio.create_task(self._run_resolved(job, job["_spec"]))
+        self._schedule(job, self._run_resolved)
         return True
 
     def stop(self, job_id):
@@ -529,8 +540,11 @@ class TransferService:
         if not job or job["status"] in ("done", "error", "stopped"):
             return False
         job["_control"] = "stop"
-        if job["status"] in ("queued", "paused"):
+        if job["status"] in ("queued", "busy", "paused"):
             job["status"] = "stopped"  # no running worker will react — mark it now
+            task = job.get("_task")
+            if task:
+                task.cancel()
         self._record(job, kind="stop_requested")
         return True
 
@@ -571,11 +585,15 @@ class TransferService:
             job["status"] = "stopped"
             self._record(job)
             return
-        job.update(status="running", phase="reading", written=0, write_total=0,
-                   started_at=job.get("started_at") or utc_now())
-        self._record(job)
         try:
-            await worker(job, spec)
+            async with self._sync.engine_slot():
+                if job.get("_control") == "stop":
+                    job["status"] = "stopped"
+                    return
+                job.update(status="running", phase="reading", written=0, write_total=0,
+                           started_at=job.get("started_at") or utc_now())
+                self._record(job)
+                await worker(job, spec)
         except Exception as exc:
             # Setup failures (building a client or reading settings) also belong
             # in the audit trail, even before the engine worker is acquired.
@@ -621,7 +639,7 @@ class TransferService:
             )
 
         try:
-            result = await self._sync.run_exclusive(work)
+            result = await asyncio.to_thread(work)
             job["added"] = base_added + result["added"]
             job["chronology_replayed"] += result["chronology_replayed"]
             rejected = {c["key"] for c in result["not_found"]}
@@ -641,34 +659,23 @@ class TransferService:
         if job.get("_control") == "stop":  # stopped while still queued — never start
             job["status"] = "stopped"
             return
-        job["_control"] = "run"
-        job["status"] = "running"
-        job.update(phase="reading", written=0, write_total=0)
-        self._settings.apply_to_env()
-        opts = parse_args([])
-        opts.account_profiles = self._profiles
-        for side, account_id in (("source", spec["source_account"]), ("destination", spec["dest_account"])):
-            if not is_peer(account_id, opts):  # e.g. Jellyfin — browse-only
-                job["status"], job["error"] = "error", f"'{account_id}' can't be a transfer {side} — it's a browse-only service."
-                self._emit("warn", f"transfer: {job['error']}", "transfer")
-                return
-        src = self._build(spec["source_account"], opts)
-        dst = self._build(spec["dest_account"], opts)
-        if src is None or dst is None:
-            job["status"], job["error"] = "error", "source or destination not connected"
-            self._emit("warn", f"transfer: {job['error']}", "transfer")
-            return
-        job["_dest_cache_file"] = dst.cache_file
-        job["_dest_id_normalizer"] = getattr(
-            dst,
-            "normalize_manual_track_id",
-            MirrorTarget.normalize_manual_track_id,
-        )
         # Adds already on the destination from an earlier (paused) run — this
         # run's transfer() skips them via dedup, so keep the counter cumulative.
         base_added = job["added"]
 
         def work():
+            self._settings.apply_to_env()
+            opts = parse_args([])
+            opts.account_profiles = self._profiles
+            for side, account_id in (("source", spec["source_account"]), ("destination", spec["dest_account"])):
+                if not is_peer(account_id, opts):
+                    raise TargetCapabilityError(f"'{account_id}' can't be a transfer {side} — it's a browse-only service.")
+            src = self._build(spec["source_account"], opts)
+            dst = self._build(spec["dest_account"], opts)
+            if src is None or dst is None:
+                raise TargetAuthError("source or destination not connected")
+            job["_dest_cache_file"] = dst.cache_file
+            job["_dest_id_normalizer"] = getattr(dst, "normalize_manual_track_id", MirrorTarget.normalize_manual_track_id)
             src_pl = self._find(src, spec["source_playlist_id"])
             if src_pl is None:
                 raise RuntimeError("source playlist not found")
@@ -705,7 +712,7 @@ class TransferService:
             return res
 
         try:
-            res = await self._sync.run_exclusive(work)
+            res = await asyncio.to_thread(work)
             job["added"] = base_added + res["added"]
             job["deferred"] = res["deferred"]
             job["chronology_replayed"] = res.get("chronology_replayed", 0)

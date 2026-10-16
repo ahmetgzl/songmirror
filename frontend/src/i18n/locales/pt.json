@@ -1308,5 +1308,6 @@
   "View details": "Ver detalhes",
   "View transfer": "Ver transferência",
   "Refresh {{label}}": "Atualizar {{label}}",
-  "Showing saved playlists while updating…": "Exibindo playlists salvas durante a atualização…"
+  "Showing saved playlists while updating…": "Exibindo playlists salvas durante a atualização…",
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "Aguardando outra sincronização ou transferência terminar. Esta cópia começará automaticamente."
 }

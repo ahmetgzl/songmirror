@@ -1276,5 +1276,6 @@
   "View details": "विवरण देखें",
   "View transfer": "ट्रांसफ़र देखें",
   "Refresh {{label}}": "{{label}} रीफ़्रेश करें",
-  "Showing saved playlists while updating…": "अपडेट के दौरान सहेजी गई प्लेलिस्ट दिखाई जा रही हैं…"
+  "Showing saved playlists while updating…": "अपडेट के दौरान सहेजी गई प्लेलिस्ट दिखाई जा रही हैं…",
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "दूसरे सिंक या ट्रांसफ़र के पूरा होने की प्रतीक्षा है। यह कॉपी अपने आप शुरू होगी।"
 }

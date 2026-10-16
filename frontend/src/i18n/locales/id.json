@@ -1276,5 +1276,6 @@
   "View details": "Lihat detail",
   "View transfer": "Lihat transfer",
   "Refresh {{label}}": "Segarkan {{label}}",
-  "Showing saved playlists while updating…": "Menampilkan playlist tersimpan sambil memperbarui…"
+  "Showing saved playlists while updating…": "Menampilkan playlist tersimpan sambil memperbarui…",
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "Menunggu sinkronisasi atau transfer lain selesai. Penyalinan ini akan dimulai otomatis."
 }

@@ -1276,5 +1276,6 @@
   "View details": "Xem chi tiết",
   "View transfer": "Xem lượt chuyển",
   "Refresh {{label}}": "Làm mới {{label}}",
-  "Showing saved playlists while updating…": "Đang hiển thị danh sách phát đã lưu trong khi cập nhật…"
+  "Showing saved playlists while updating…": "Đang hiển thị danh sách phát đã lưu trong khi cập nhật…",
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "Đang chờ lượt đồng bộ hoặc chuyển khác kết thúc. Bản sao này sẽ tự động bắt đầu."
 }

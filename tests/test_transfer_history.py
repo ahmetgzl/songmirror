@@ -75,8 +75,10 @@ def test_service_persists_client_setup_failures_and_excludes_private_runtime(tmp
     from songmirror.services.events import EventBus
     from songmirror.services.settings import SettingsStore
     from songmirror.services.transfers import TransferService
+    from songmirror.services.sync_service import SyncService
 
-    service = TransferService(SettingsStore(dir=tmp_path), EventBus(), None)
+    settings, bus = SettingsStore(dir=tmp_path), EventBus()
+    service = TransferService(settings, bus, SyncService(settings, bus))
 
     def fail(*_args):
         raise RuntimeError("Account could not connect")
@@ -86,7 +88,10 @@ def test_service_persists_client_setup_failures_and_excludes_private_runtime(tmp
     async def scenario():
         submitted = service.submit({"source_provider": "ytmusic", "dest_provider": "ytmusic",
                                     "source_playlist_id": "source", "dest_name": "Copy"})
-        await asyncio.sleep(0)
+        for _ in range(100):
+            if submitted["status"] == "error":
+                break
+            await asyncio.sleep(0.01)
         return submitted["id"]
 
     id = asyncio.run(scenario())

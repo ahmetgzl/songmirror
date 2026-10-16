@@ -1276,5 +1276,6 @@
   "View details": "詳細を表示",
   "View transfer": "転送を表示",
   "Refresh {{label}}": "{{label}}を更新",
-  "Showing saved playlists while updating…": "更新中は保存済みのプレイリストを表示しています…"
+  "Showing saved playlists while updating…": "更新中は保存済みのプレイリストを表示しています…",
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "別の同期または転送が完了するまで待機中です。このコピーは自動的に開始されます。"
 }

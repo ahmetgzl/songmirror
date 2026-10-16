@@ -7,6 +7,7 @@ import { errorMessage } from '@/api'
 import { serviceLogoId, tagDot, tagLabel, tagText, TRANSFER_STATUS_STYLES } from '@/lib/constants'
 import { cn } from '@/lib/cn'
 import { playlistExternalUrl } from '@/lib/playlistLinks'
+import { useTransferQueueStatus } from '@/hooks/useTransferQueueStatus'
 import type { TransferJob, TransferStatus } from '@/types'
 
 import { Button } from '../ui/Button'
@@ -161,6 +162,7 @@ export function TransferProgress({
   controls?: TransferControlHandlers
 }) {
   useTranslation()
+  const queueStatus = useTransferQueueStatus(job ? [job] : [])
   if (!job) {
     return (
       <Card className="p-4 sm:p-6">
@@ -178,10 +180,12 @@ export function TransferProgress({
     )
   }
 
-  const style = TRANSFER_STATUS_STYLES[job.status]
+  const status = queueStatus(job)
+  const style = TRANSFER_STATUS_STYLES[status]
   const unresolvedConflicts = job.conflicts.filter((c) => !c.resolved).length
-  const isRunning = job.status === 'running'
-  const isPaused = job.status === 'paused'
+  const isRunning = status === 'running'
+  const isPaused = status === 'paused'
+  const isWaiting = status === 'queued' || status === 'busy'
   // Paused reuses the exact same bar + readouts as running - the numbers
   // just stop moving because the backend stops advancing them, not because
   // of anything special here.
@@ -209,7 +213,7 @@ export function TransferProgress({
     <Card className="flex flex-col gap-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
-          <EndpointBadge provider={job.source.provider} accountName={job.source.name} playlistName={job.source.playlist_name} />
+          <EndpointBadge provider={job.source.provider} accountName={job.source.name} playlistName={job.source.playlist_name || job.source.playlist_id || t('Playlist')} />
           <LuArrowRight className="size-3.5 shrink-0 text-text-3 rtl:-scale-x-100" aria-hidden="true" />
           <EndpointBadge provider={job.dest.provider} accountName={job.dest.name} playlistName={job.dest.playlist_name} />
         </div>
@@ -221,7 +225,7 @@ export function TransferProgress({
               <LuExternalLink className="size-3.5 shrink-0" aria-hidden="true" />
             </LinkButton>
           ) : null}
-          {controls && <TransferControls status={job.status} onPause={controls.onPause} onResume={controls.onResume} onStop={controls.onStop} />}
+          {controls && <TransferControls status={status} onPause={controls.onPause} onResume={controls.onResume} onStop={controls.onStop} />}
         </div>
       </div>
 
@@ -267,7 +271,12 @@ export function TransferProgress({
         </p>
       )}
 
-      {isActive ? (
+      {isWaiting ? (
+        <div className="flex flex-col gap-2 text-sm text-text-2">
+          <p role="status">{t('Waiting for another sync or transfer to finish. This copy will start automatically.')}</p>
+          {job.added > 0 && <p>{t('· {{jobAdded, number}} added', { jobAdded: job.added })}</p>}
+        </div>
+      ) : isActive ? (
         <div className="flex flex-wrap items-end gap-4">
           {(job.added > 0 || isPaused) && !legacyCopying ? (
             <div className="flex items-baseline gap-2">

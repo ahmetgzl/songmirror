@@ -1276,5 +1276,6 @@
   "View details": "查看详情",
   "View transfer": "查看传输",
   "Refresh {{label}}": "刷新{{label}}",
-  "Showing saved playlists while updating…": "正在更新，暂时显示已保存的播放列表…"
+  "Showing saved playlists while updating…": "正在更新，暂时显示已保存的播放列表…",
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "正在等待其他同步或传输完成。本次复制将自动开始。"
 }

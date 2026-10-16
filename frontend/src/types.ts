@@ -625,7 +625,7 @@ export interface TransferJob {
   /** Source tracks examined so far (0..total) — drives the determinate bar. */
   processed: number
   /** Writing progress is separate from reading and matching the source. */
-  phase?: 'reading' | 'matching' | 'copying'
+  phase?: 'waiting' | 'reading' | 'matching' | 'copying'
   written?: number
   write_total?: number
   conflicts: TransferConflict[]

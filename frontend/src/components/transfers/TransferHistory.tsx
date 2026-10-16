@@ -6,6 +6,7 @@ import { t, useTranslation } from '@/i18n'
 import { tagLabel, TRANSFER_STATUS_STYLES } from '@/lib/constants'
 import { formatNumber } from '@/lib/format'
 import type { TransferAuditEvent, TransferStatus } from '@/types'
+import { useTransferQueueStatus } from '@/hooks/useTransferQueueStatus'
 
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
@@ -61,6 +62,7 @@ export function TransferHistory({ onOpen }: { onOpen: (id: string) => void }) {
   const { data, error, isLoading, mutate } = useSWR(['transfer-history', query], () => api.transferHistory(query), { refreshInterval: 5000 })
   const { data: detail, error: detailError } = useSWR(selected ? ['transfer-audit', selected] : null,
     () => api.transferHistoryDetail(selected!), { refreshInterval: 5000 })
+  const queueStatus = useTransferQueueStatus(data?.items ?? [])
   const statuses: TransferStatus[] = ['done', 'error', 'stopped', 'running', 'paused', 'queued', 'busy']
   const hasFilters = Object.values(filters).some(Boolean)
 
@@ -110,7 +112,7 @@ export function TransferHistory({ onOpen }: { onOpen: (id: string) => void }) {
                 <p className="mt-1 break-words text-xs text-text-3">{job.dest.playlist_name || job.dest.playlist_id || '—'}</p>
               </div>
               <div className="min-w-0 sm:col-start-1 lg:col-start-auto">
-                <p className={`text-sm font-semibold ${TRANSFER_STATUS_STYLES[job.status].text}`}>{TRANSFER_STATUS_STYLES[job.status].label}
+                <p className={`text-sm font-semibold ${TRANSFER_STATUS_STYLES[queueStatus(job)].text}`}>{TRANSFER_STATUS_STYLES[queueStatus(job)].label}
                   <span className="font-normal text-text-2"> {t('· {{jobAdded, number}} added', { jobAdded: job.added })}</span></p>
                 <time dateTime={job.created_at} className="mt-1 block text-xs text-text-3">{dateTime(job.created_at)}</time>
                 {job.error && <p className="mt-1 line-clamp-2 break-words text-xs text-danger">{job.error}</p>}

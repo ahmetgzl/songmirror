@@ -1276,5 +1276,6 @@
   "View details": "Ayrıntıları görüntüle",
   "View transfer": "Aktarımı görüntüle",
   "Refresh {{label}}": "{{label}} yenile",
-  "Showing saved playlists while updating…": "Güncellenirken kayıtlı çalma listeleri gösteriliyor…"
+  "Showing saved playlists while updating…": "Güncellenirken kayıtlı çalma listeleri gösteriliyor…",
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "Başka bir eşitlemenin veya aktarımın bitmesi bekleniyor. Bu kopyalama otomatik olarak başlayacak."
 }

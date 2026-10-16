@@ -1071,6 +1071,7 @@
   "WAITING": "WAITING",
   "WAV (uncompressed)": "WAV (uncompressed)",
   "Waiting for a sync or transfer to finish. Backups never run at the same time as them.": "Waiting for a sync or transfer to finish. Backups never run at the same time as them.",
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "Waiting for another sync or transfer to finish. This copy will start automatically.",
   "Waiting for authorization, checking automatically every {{count, number}} second.": "Waiting for authorization, checking automatically every {{count, number}} second.",
   "Waiting for authorization, checking automatically every {{count, number}} second._one": "Waiting for authorization, checking automatically every {{count, number}} second.",
   "Waiting for authorization, checking automatically every {{count, number}} second._other": "Waiting for authorization, checking automatically every {{count, number}} seconds.",
