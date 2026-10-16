@@ -1,4 +1,4 @@
-// Playlist browsing shows readable connected accounts in full-width lists.
+// Playlist browsing shows readable connected accounts in a compact responsive grid.
 // Sorting changes presentation only; provider order and playlist contents stay intact.
 const assert = require('node:assert/strict')
 const http = require('node:http')
@@ -116,20 +116,24 @@ async function main() {
     await main.getByRole('button', { name: 'Export all Spotify · Main playlists', exact: true }).waitFor()
     console.log('PASS: natural name sorting, descending order, saved preference, original order, playlist details, external links, and exports remain usable')
 
-    for (const width of [1536, 1024, 768, 375, 320]) {
+    for (const [width, columns] of [[1536, 4], [1280, 3], [1024, 2], [768, 2], [375, 1], [320, 1]]) {
       await page.setViewportSize({ width, height: 900 })
-      const fullWidth = await main.evaluate(element => {
+      const layout = await main.evaluate(element => {
         const own = element.getBoundingClientRect(), container = element.parentElement.getBoundingClientRect()
         const title = [...element.querySelectorAll('ul button span')].find(span => span.textContent.startsWith('Very long playlist title'))
-        return { width: own.width, container: container.width, titleFits: title.scrollWidth <= title.clientWidth + 1 }
+        return { width: own.width, container: container.width,
+          columns: getComputedStyle(element.parentElement).gridTemplateColumns.split(' ').length,
+          fullTitle: title.querySelector('[title]')?.getAttribute('title') ?? title.getAttribute('title') }
       })
-      assert.ok(Math.abs(fullWidth.width - fullWidth.container) <= 1, `Provider list uses the full available width at ${width}px`)
-      assert.equal(fullWidth.titleFits, true, 'Long names wrap instead of truncating or overflowing')
+      assert.equal(layout.columns, columns, `Compact grid uses ${columns} columns at ${width}px`)
+      assert.equal(layout.fullTitle, PLAYLISTS.at(-1).name, 'Long names remain available through the title and accessible button label')
+      if (columns === 1) assert.ok(Math.abs(layout.width - layout.container) <= 1)
+      else assert.ok(layout.width < layout.container / 1.5, 'Desktop providers share a row')
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
       if (width === 1536 || width === 375) await page.screenshot({ path: path.join(shots, `playlist-browser-${width}.png`) })
     }
     await context.close()
-    console.log('PASS: full-width provider lists and long playlist names fit desktop, tablet, and mobile screens')
+    console.log('PASS: compact grid uses four, three, two, and one columns with readable titles and no desktop or mobile overflow')
 
     const blocked = await setup({ blockedStorage: true })
     await blocked.page.getByRole('combobox', { name: 'Sort playlists' }).selectOption('name-asc')

@@ -101,14 +101,14 @@ export default function Playlists() {
 
         {accountsLoading && !accounts ? (
           <LoadingStatus label={t("Loading accounts…")}>
-            <div className="flex flex-col gap-4">
-              {[0, 1].map((i) => (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {[0, 1, 2, 3].map((i) => (
                 <Skeleton key={i} className="h-40 w-full rounded-card" />
               ))}
             </div>
           </LoadingStatus>
         ) : connectedAccounts.length > 0 ? (
-          <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {connectedAccounts.map((account) => (
               <ProviderPlaylistsCard
                 key={account.id}
