@@ -102,26 +102,27 @@ export default function Playlists() {
       <FeatureGuide page="playlists" />
 
       <section className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-[17px] font-bold text-text">{t("Browse")}</h2>
           {connectedAccounts.length > 0 && (
-            <div className="flex w-full flex-wrap items-end gap-3 sm:w-auto">
-              <fieldset className="min-w-0">
-                <legend className="mb-1.5 text-[12.5px] font-semibold text-text-2">{t('Playlist layout')}</legend>
-                <div className="inline-flex gap-0.5 rounded-[9px] border border-border bg-inset p-[3px]">
+            <div className="grid w-full grid-cols-1 items-start gap-3 sm:w-auto sm:grid-cols-[max-content_14rem]">
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <span id={`${layoutGroupId}-label`} className="text-[12.5px] font-semibold text-text-2">{t('Playlist layout')}</span>
+                <div role="group" aria-labelledby={`${layoutGroupId}-label`}
+                  className="flex h-11 items-stretch gap-0.5 rounded-control border border-border-strong bg-field p-[3px] text-base focus-within:border-accent md:h-[42px] md:text-sm">
                   {(['grid', 'rows'] as const).map(value => (
-                    <label key={value} className="cursor-pointer">
+                    <label key={value} className="-my-1 flex min-w-0 flex-1 cursor-pointer py-1">
                       <input type="radio" name={layoutGroupId} value={value} checked={layout === value}
                         onChange={() => changeLayout(value)} className="peer sr-only" />
-                      <span className={cn('inline-flex min-h-11 items-center rounded-[7px] border px-3.5 text-[12.5px] md:min-h-[30px] peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent',
+                      <span className={cn('flex flex-1 items-center justify-center whitespace-nowrap rounded-[calc(var(--radius-control)-4px)] border px-3 peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent',
                         layout === value ? 'border-border-strong bg-surface-2 font-semibold text-text' : 'border-transparent font-medium text-text-3 hover:text-text-2')}>
                         {value === 'grid' ? t('Grid') : t('Rows')}
                       </span>
                     </label>
                   ))}
                 </div>
-              </fieldset>
-              <div className="w-full sm:w-56">
+              </div>
+              <div className="min-w-0">
                 <SelectField
                   label={t('Sort playlists')}
                   value={playlistSort}

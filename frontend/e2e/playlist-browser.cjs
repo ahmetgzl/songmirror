@@ -120,8 +120,35 @@ async function main() {
     await main.getByRole('button', { name: 'Export all Spotify · Main playlists', exact: true }).waitFor()
     console.log('PASS: natural name sorting, descending order, saved preference, original order, playlist details, external links, and exports remain usable')
 
-    for (const [width, columns] of [[1536, 4], [1280, 3], [1024, 2], [768, 2], [375, 1], [320, 1]]) {
+    async function checkToolbar(width) {
+      const controls = await layoutSwitch.evaluate(group => {
+        const sort = [...document.querySelectorAll('select')].find(element => [...element.labels].some(label => label.textContent === 'Sort playlists'))
+        const layoutLabel = document.getElementById(group.getAttribute('aria-labelledby'))
+        const geometry = element => {
+          const box = element.getBoundingClientRect(), style = getComputedStyle(element)
+          return { top: box.top, left: box.left, width: box.width, height: box.height, radius: style.borderRadius, fontSize: style.fontSize }
+        }
+        return { layout: geometry(group), sort: geometry(sort), layoutLabel: geometry(layoutLabel), sortLabel: geometry(sort.labels[0]),
+          choices: [...group.querySelectorAll('label')].map(geometry), text: geometry(group.querySelector('label span')) }
+      })
+      assert.equal(controls.layout.height, controls.sort.height, `Both controls have equal heights at ${width}px`)
+      assert.equal(controls.layout.radius, controls.sort.radius, 'Control corners match')
+      assert.equal(controls.text.fontSize, controls.sort.fontSize, 'Control text has consistent sizing')
+      if (width >= 640) {
+        assert.ok(Math.abs(controls.layout.top - controls.sort.top) <= 1, `Controls align at ${width}px`)
+        assert.ok(Math.abs(controls.layoutLabel.top - controls.sortLabel.top) <= 1, 'Labels align above the controls')
+      } else {
+        assert.equal(controls.layout.height, 44, 'Mobile controls retain a 44px height')
+        assert.ok(controls.choices.every(choice => choice.height >= 44), 'Each mobile layout option has a full-height click target')
+        assert.ok(Math.abs(controls.layout.width - controls.sort.width) <= 1, 'Stacked mobile fields have equal widths')
+        assert.ok(Math.abs(controls.layout.left - controls.sort.left) <= 1, 'Stacked mobile fields share the same left edge')
+        assert.ok(controls.sortLabel.top >= controls.layout.top + controls.layout.height, 'Mobile labels do not overlap the preceding control')
+      }
+    }
+
+    for (const [width, columns] of [[1536, 4], [1280, 3], [1024, 2], [768, 2], [640, 2], [375, 1], [320, 1]]) {
       await page.setViewportSize({ width, height: 900 })
+      await checkToolbar(width)
       const layout = await main.evaluate(element => {
         const own = element.getBoundingClientRect(), container = element.parentElement.getBoundingClientRect()
         const title = [...element.querySelectorAll('ul button span')].find(span => span.textContent.startsWith('Very long playlist title'))
@@ -136,7 +163,7 @@ async function main() {
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
       if (width === 1536 || width === 375) await page.screenshot({ path: path.join(shots, `playlist-browser-${width}.png`) })
     }
-    console.log('PASS: compact grid uses four, three, two, and one columns with readable titles and no desktop or mobile overflow')
+    console.log('PASS: aligned labels, equal control heights, consistent type and corners, full-height mobile targets, and compact grid columns without overflow')
 
     await page.setViewportSize({ width: 1280, height: 900 })
     await select.selectOption('name-asc')
@@ -146,6 +173,7 @@ async function main() {
     assert.deepEqual(await ids(), sorted, 'Changing layout retains the current sorting')
     for (const width of [1280, 375, 320]) {
       await page.setViewportSize({ width, height: 900 })
+      await checkToolbar(width)
       assert.equal(await main.evaluate(element => Math.abs(element.getBoundingClientRect().width - element.parentElement.getBoundingClientRect().width) < 1), true, 'Rows use the full available width')
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
       await page.screenshot({ path: path.join(shots, `playlist-rows-${width}.png`) })
