@@ -15,6 +15,7 @@ const PLAYLISTS = [
   { id: 'mix', name: 'Jellyfin mix', count: 7, image: '', owned: true, external_url: 'http://jellyfin.test/web/#/details?id=mix' },
   { id: 'chill', name: 'Quiet evenings', count: null, image: '', owned: true, external_url: 'http://jellyfin.test/web/#/details?id=chill' },
 ]
+const ACCOUNT_IDS = ['profile_default_jellyfin', 'jellyfin']
 const TRACKS = Array.from({ length: 7 }, (_, position) => ({
   position, id: `track-${position}`, name: `Jellyfin track ${position + 1}`, artist: 'Local artist',
   album: 'Local album', image: '', duration_ms: 120000, external_url: '', occurrence_id: '', isrc: '', added_at: '',
@@ -46,17 +47,18 @@ async function main() {
       if (req.method() !== 'GET') writes.push(req.url())
       if (url.pathname === '/api/accounts') return send([ACCOUNT])
       if (url.pathname === '/api/playlists') {
-        assert.equal(url.searchParams.get('provider'), ACCOUNT.id)
+        assert.ok(ACCOUNT_IDS.includes(url.searchParams.get('provider')), 'Both aliases resolve to the same Jellyfin account')
         reads++
         return fail
           ? send({ detail: 'Jellyfin rejected access. Check the API key and user permissions in Accounts.' }, 502)
           : send(playlists)
       }
-      if (url.pathname === `/api/playlists/${ACCOUNT.id}/mix`) {
+      const detail = url.pathname.match(/^\/api\/playlists\/([^/]+)\/mix$/)
+      if (detail && ACCOUNT_IDS.includes(detail[1])) {
         assert.equal(url.searchParams.get('page_size'), '20', 'Jellyfin uses progressive inspection for every account identity')
         const offset = Number(url.searchParams.get('offset') || 0)
-        detailReads.push({ account: ACCOUNT.id, offset, refresh: url.searchParams.get('refresh') })
-        return send({ ...PLAYLISTS[0], provider: ACCOUNT.id, editable: false, description: '',
+        detailReads.push({ account: detail[1], offset, refresh: url.searchParams.get('refresh') })
+        return send({ ...PLAYLISTS[0], provider: detail[1], editable: false, description: '',
           tracks: offset === 0 ? TRACKS.slice(0, 3) : TRACKS.slice(3),
           next_cursor: offset === 0 ? '3' : null, complete: offset !== 0 })
       }
@@ -86,7 +88,7 @@ async function main() {
     await page.screenshot({ path: path.join(__dirname, 'screenshots/jellyfin-browse.png'), fullPage: true })
     console.log('PASS: Jellyfin error is visible and Retry restores playlists with known and unknown counts')
 
-    for (const identity of ['profile_default_jellyfin', 'jellyfin']) {
+    for (const identity of ACCOUNT_IDS) {
       ACCOUNT.id = identity
       if (identity === 'jellyfin') await visit()
       await page.getByRole('button', { name: 'Open Jellyfin mix inside SongMirror', exact: true }).click()
