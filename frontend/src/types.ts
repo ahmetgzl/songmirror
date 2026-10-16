@@ -630,6 +630,31 @@ export interface TransferJob {
   write_total?: number
   conflicts: TransferConflict[]
   error: string | null
+  created_at?: string
+  started_at?: string | null
+  finished_at?: string | null
+  updated_at?: string
+  historical?: boolean
+}
+
+export interface TransferAuditEvent {
+  at: string
+  kind: string
+  status: TransferStatus
+  phase?: TransferJob['phase']
+  added: number
+  error: string | null
+}
+
+export interface TransferHistoryDetail extends TransferJob {
+  events: TransferAuditEvent[]
+}
+
+export interface TransferHistoryPage {
+  items: TransferJob[]
+  total: number
+  accounts: { id: string; name: string }[]
+  providers: string[]
 }
 
 /** POST /api/transfers body. `dest_playlist_id: null` creates a new playlist

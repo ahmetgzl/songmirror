@@ -1,6 +1,9 @@
 """One-off playlist transfers + conflict resolution."""
 
-from fastapi import APIRouter, Body, HTTPException, Request
+from datetime import datetime, timezone
+from typing import Literal
+
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from ...services.playlists import MAX_PLAYLIST_DESCRIPTION
@@ -60,6 +63,39 @@ async def start_transfer(request: Request, body: dict = Body(...)):
 def list_transfers(request: Request):
     """Active transfers (queued/running/paused) — the dashboard's ongoing list."""
     return request.app.state.transfers.list_active()
+
+
+@router.get("/api/transfers/history")
+def transfer_history(
+    request: Request,
+    status: Literal["queued", "busy", "running", "paused", "done", "stopped", "error"] | None = None,
+    account: str | None = Query(None, max_length=200),
+    provider: str | None = Query(None, max_length=100),
+    search: str = Query("", max_length=300),
+    after: datetime | None = None, before: datetime | None = None,
+    limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0),
+):
+    def utc(value):
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat()
+
+    if after and before and utc(after) >= utc(before):
+        raise HTTPException(status_code=422, detail="The end date must be after the start date.")
+    return request.app.state.transfers.history.list(
+        status=status, account=account, provider=provider, search=search,
+        after=utc(after), before=utc(before), limit=limit, offset=offset,
+    )
+
+
+@router.get("/api/transfers/history/{job_id}")
+def transfer_history_detail(job_id: str, request: Request):
+    saved = request.app.state.transfers.history.get(job_id)
+    if saved is None:
+        raise HTTPException(status_code=404, detail="Transfer not found.")
+    return saved
 
 
 @router.get("/api/transfers/{job_id}")

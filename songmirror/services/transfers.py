@@ -28,6 +28,7 @@ from ..engine.targets.base import (
     _split_add_results,
 )
 from .playlists import playlist_image
+from .transfer_history import TransferHistory, utc_now
 from .playlist_links import (
     PLAYLIST_LINK_HINT, PlaylistLinkError, external_url, parse_playlist_link, provider_label,
 )
@@ -324,7 +325,7 @@ class TransferPreviewError(ValueError):
 
 class TransferService:
     """One-off cross-service copies, serialized with syncs via SyncService. Jobs
-    are in-memory and transient."""
+    retain durable audit snapshots alongside their live worker state."""
 
     def __init__(self, settings, bus, sync, profiles=None):
         self._settings = settings
@@ -332,6 +333,20 @@ class TransferService:
         self._sync = sync
         self._profiles = profiles
         self._jobs = {}
+        self.history = TransferHistory(settings.data_dir)
+
+    def recover_history(self):
+        self.history.recover()
+
+    def _record(self, job, *, kind=None, progress=False):
+        now = time.monotonic()
+        signature = (job["status"], job.get("phase"))
+        if progress and signature == job.get("_history_state") and now - job.get("_history_saved", 0) < 1:
+            return
+        snapshot = self.history.save(job, kind=kind)
+        for field in ("created_at", "updated_at", "finished_at"):
+            job[field] = snapshot[field]
+        job["_history_saved"], job["_history_state"] = now, signature
 
     def preview(self, url, account_id=None):
         """Resolve a pasted playlist link into a startable transfer source.
@@ -432,7 +447,7 @@ class TransferService:
             if self._profiles else provider_label(dest_provider)
         )
         job = {
-            "id": uuid.uuid4().hex[:8], "status": "queued",
+            "id": uuid.uuid4().hex, "status": "queued", "created_at": utc_now(),
             "source": {"account": source_account, "provider": source_provider, "name": source_name,
                        "playlist_id": spec["source_playlist_id"], "playlist_name": ""},
             "dest": {"account": dest_account, "provider": dest_provider, "name": dest_name,
@@ -447,11 +462,16 @@ class TransferService:
             "_control": "run",  # "run" | "pause" | "stop" — polled by the running loop
         }
         self._jobs[job["id"]] = job
+        self._record(job)
         asyncio.create_task(self._run(job, normalized_spec))
         return job
 
     def get(self, job_id):
-        return self._jobs.get(job_id)
+        live = self._jobs.get(job_id)
+        if live is not None:
+            return live
+        saved = self.history.get(job_id)
+        return {**saved, "historical": True} if saved else None
 
     @staticmethod
     def public(job):
@@ -472,6 +492,7 @@ class TransferService:
         if not job or job["status"] != "running":
             return False
         job["_control"] = "pause"
+        self._record(job, kind="pause_requested")
         return True
 
     def resume(self, job_id):
@@ -482,6 +503,7 @@ class TransferService:
             return False
         job["_control"] = "run"
         job["status"] = "queued"
+        self._record(job, kind="resumed")
         run = self._run_resolved if job.get("_apply_mode") else self._run
         asyncio.create_task(run(job, job["_spec"]))
         return True
@@ -496,6 +518,7 @@ class TransferService:
         if not any(c["resolved"] and not c.get("applied") for c in job["conflicts"]):
             return False
         job.update(status="queued", error=None, _control="run", _apply_mode=True)
+        self._record(job, kind="apply_matches")
         asyncio.create_task(self._run_resolved(job, job["_spec"]))
         return True
 
@@ -508,6 +531,7 @@ class TransferService:
         job["_control"] = "stop"
         if job["status"] in ("queued", "paused"):
             job["status"] = "stopped"  # no running worker will react — mark it now
+        self._record(job, kind="stop_requested")
         return True
 
     def resolve(self, job_id, key, dest_id):
@@ -533,9 +557,33 @@ class TransferService:
             cache["dirty"] = True
             save_cache(cache_file, cache, manual_keys={key})
         conflict.update(resolved=True, dest_id=dest_id)
+        self._record(job, kind="match_saved")
         return True
 
     async def _run_resolved(self, job, spec):
+        await self._execute(job, spec, self._run_resolved_impl)
+
+    async def _run(self, job, spec):
+        await self._execute(job, spec, self._run_impl)
+
+    async def _execute(self, job, spec, worker):
+        if job.get("_control") == "stop":
+            job["status"] = "stopped"
+            self._record(job)
+            return
+        job.update(status="running", started_at=job.get("started_at") or utc_now())
+        self._record(job)
+        try:
+            await worker(job, spec)
+        except Exception as exc:
+            # Setup failures (building a client or reading settings) also belong
+            # in the audit trail, even before the engine worker is acquired.
+            job.update(status="error", error=_friendly_error(exc))
+            self._emit("warn", f"transfer failed: {job['error']}", "transfer")
+        finally:
+            self._record(job)
+
+    async def _run_resolved_impl(self, job, spec):
         if job.get("_control") == "stop":
             return
         job["status"] = "running"
@@ -545,6 +593,7 @@ class TransferService:
 
         def write_progress(written, total):
             job.update(phase="copying", written=written, write_total=total, added=base_added + written)
+            self._record(job, progress=True)
 
         def work():
             self._settings.apply_to_env()
@@ -587,7 +636,7 @@ class TransferService:
             job["status"], job["error"] = "error", _friendly_error(exc)
             self._emit("warn", f"could not apply resolved tracks: {job['error']}", "transfer")
 
-    async def _run(self, job, spec):
+    async def _run_impl(self, job, spec):
         if job.get("_control") == "stop":  # stopped while still queued — never start
             job["status"] = "stopped"
             return
@@ -640,9 +689,11 @@ class TransferService:
                 if job["phase"] != "copying":
                     job["phase"] = "matching"
                 job["processed"], job["total"], job["added"] = processed, total, base_added + added
+                self._record(job, progress=True)
 
             def write_progress(written, total):
                 job.update(phase="copying", written=written, write_total=total, added=base_added + written)
+                self._record(job, progress=True)
 
             res = transfer(src, dst, src_pl, dest_pl, cache, execute=True, max_adds=opts.max_adds,
                            preserve_order=job["preserve_order"],

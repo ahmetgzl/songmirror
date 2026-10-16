@@ -989,12 +989,22 @@ def test_service_tracks_confirmed_writes_and_resumes_without_double_counting(mon
         assert job["status"] == "paused"
         assert job["added"] == job["written"] == 1
         assert job["write_total"] == 3
+        paused = service.history.get(job["id"])
+        assert paused["status"] == "paused" and paused["added"] == 1
+        assert paused["finished_at"] is None
         assert service.resume(job["id"])
         await _await_job(service, job["id"])
         assert job["status"] == "done", job["error"]
         assert job["added"] == 3
         assert job["written"] == job["write_total"] == 2
         assert written == ["dest-Song 0", "dest-Song 1", "dest-Song 2"]
+        saved = service.history.get(job["id"])
+        assert saved["added"] == 3 and saved["status"] == "done"
+        assert saved["finished_at"]
+        assert saved["source"]["playlist_name"] == "X"
+        assert saved["dest"]["playlist_id"] == "p1"
+        assert any(event["kind"] == "resumed" for event in saved["events"])
+        assert saved["events"][-1]["status"] == "done"
 
     asyncio.run(scenario())
 
