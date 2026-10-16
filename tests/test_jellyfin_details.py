@@ -1,6 +1,8 @@
 """Read-only Jellyfin inspection uses the same API-key scope as browsing."""
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 import requests
@@ -160,3 +162,71 @@ def test_details_use_each_profiles_server_and_credentials(tmp_path, monkeypatch)
     assert service.detail_page("jellyfin", "mix")["external_url"].startswith(SERVER)
     assert service.detail_page(other.id, "mix")["external_url"].startswith("http://other.test/")
     assert service.detail_page("jellyfin", "mix")["external_url"].startswith(SERVER)
+
+
+def test_jellyfin_browse_details_and_cache_do_not_wait_for_an_active_profile(tmp_path, monkeypatch):
+    # Deployment-only credentials must remain available while a custom account
+    # owns the environment lock and temporarily exposes different credentials.
+    monkeypatch.setenv("JELLYFIN_URL", SERVER)
+    monkeypatch.setenv("JELLYFIN_API_KEY", KEY)
+    settings = SettingsStore(dir=tmp_path, project_env=False)
+    app = create_app(settings=settings)
+    profiles = app.state.account_profiles
+    other = profiles.create("jellyfin", "Other server")
+    profiles.settings_for(other.id).save({"JELLYFIN_URL": "http://other.test", "JELLYFIN_API_KEY": "other-key"})
+    active, release = threading.Event(), threading.Event()
+
+    def hold_profile():
+        with profiles.activate(other.id):
+            active.set()
+            release.wait(timeout=10)
+
+    def get(url, headers=None, params=None, **kw):
+        assert url == SERVER + "/Items"
+        assert f'Token="{KEY}"' in headers["Authorization"]
+        if params.get("IncludeItemTypes") == "Playlist":
+            return response(url, {"Items": [PLAYLIST], "TotalRecordCount": 1})
+        return response(url, {"Items": [] if params["Limit"] == 0 else TRACKS, "TotalRecordCount": 5})
+
+    monkeypatch.setattr(jellyfin.requests, "get", get)
+    service = PlaylistService(settings, profiles)
+
+    def inspect():
+        assert service.browse("jellyfin")[0]["count"] == 5
+        assert len(service.detail_page("jellyfin", "mix")["tracks"]) == 5
+        assert len(service.detail("jellyfin", "mix")["tracks"]) == 5
+        assert service.detail_page("jellyfin", "mix")["complete"] is True
+
+    holder = threading.Thread(target=hold_profile)
+    holder.start()
+    try:
+        assert active.wait(timeout=2)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(inspect)
+            try:
+                future.result(timeout=2)
+            finally:
+                release.set()
+    finally:
+        release.set()
+        holder.join(timeout=2)
+    assert not holder.is_alive()
+
+
+def test_default_connection_includes_env_loaded_during_startup(tmp_path, monkeypatch):
+    def deployment_env():
+        monkeypatch.setenv("JELLYFIN_URL", SERVER)
+        monkeypatch.setenv("JELLYFIN_API_KEY", KEY)
+
+    monkeypatch.setattr("songmirror.web.load_dotenv", deployment_env)
+
+    def get(url, headers=None, params=None, **kw):
+        assert url == SERVER + "/Items"
+        assert f'Token="{KEY}"' in headers["Authorization"]
+        return response(url, {"Items": [PLAYLIST]} if "Ids" in params else {"Items": TRACKS, "TotalRecordCount": 5})
+
+    monkeypatch.setattr(jellyfin.requests, "get", get)
+    with TestClient(create_app(settings=SettingsStore(dir=tmp_path, project_env=False))) as client:
+        result = client.get("/api/playlists/jellyfin/mix", params={"page_size": 20})
+    assert result.status_code == 200
+    assert len(result.json()["tracks"]) == 5

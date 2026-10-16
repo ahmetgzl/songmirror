@@ -214,6 +214,7 @@ class AccountProfileStore:
     def __init__(self, settings: SettingsStore, providers=None):
         self.settings = settings
         self._providers = tuple(providers or PROVIDER_KEYS)
+        self.capture_environment()
         self._path = Path(settings.data_dir) / "profiles.json"
         self._profiles_dir = Path(settings.data_dir) / "profiles"
         self._profiles_dir.mkdir(parents=True, exist_ok=True)
@@ -268,6 +269,31 @@ class AccountProfileStore:
         if profile is None:
             raise KeyError(f"unknown account profile: {identity}")
         return ProfileSettings(self, profile)
+
+    def capture_environment(self):
+        """Retain deployment defaults before temporary profile activation."""
+        environment = os.environ.copy()
+        self._base_environment = {
+            key: environment[key] for provider in self._providers
+            for key in PROVIDER_KEYS[provider] if key in environment
+        }
+
+    def environment_snapshot(self, identity):
+        """Configuration for adapters that take credentials as arguments.
+
+        Reading persisted settings and startup defaults needs no process-wide
+        environment switch, so an unrelated provider cannot block the request.
+        Never inherit another profile's temporary environment values.
+        """
+        profile = self.resolve(identity)
+        if profile is None:
+            raise KeyError(f"unknown account profile: {identity}")
+        keys = PROVIDER_KEYS[profile.provider]
+        values = SettingsStore(dir=self.profile_dir(profile.id), project_env=False).load()
+        if profile.is_default:
+            values.update({key: value for key, value in self._base_environment.items() if key in keys})
+            values.update({key: value for key, value in self.settings.load().items() if key in keys})
+        return {key: str(value) for key, value in values.items() if key in keys and value is not None}
 
     def create(self, provider, label=None):
         if provider not in self._providers:

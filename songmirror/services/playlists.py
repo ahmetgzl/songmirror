@@ -10,7 +10,6 @@ import os
 import sqlite3
 import uuid
 from dataclasses import asdict, dataclass, field
-from contextlib import nullcontext
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import quote
@@ -215,8 +214,7 @@ class PlaylistService:
 
     def _with_cache(self, callback):
         """Run a short operation against the configured persistent song DB."""
-        self._settings.apply_to_env()
-        cache_file = os.getenv("SONG_CACHE_FILE") or str(
+        cache_file = self._settings.get("SONG_CACHE_FILE") or os.getenv("SONG_CACHE_FILE") or str(
             self._settings.data_dir / "song_cache.db"
         )
         conn = archive.connect_playlist_cache(
@@ -282,6 +280,15 @@ class PlaylistService:
         except Exception as exc:
             self._cache_warning("pruning", exc)
 
+    def _jellyfin_config(self, provider_id):
+        if self._profiles is not None:
+            return self._profiles.environment_snapshot(provider_id)
+        values = {key: os.environ[key] for key in (
+            "JELLYFIN_URL", "JELLYFIN_API_KEY", "JELLYFIN_USER_ID",
+        ) if key in os.environ}
+        values.update(self._settings.load())
+        return values
+
     def browse(self, provider_id):
         """[{id, name, count, image, owned}] for one connected provider (empty if
         unconfigured). Provider-agnostic: every service is listed through its
@@ -291,21 +298,18 @@ class PlaylistService:
         Jellyfin is browse-only and lists via its own API."""
         if self._provider(provider_id) == "jellyfin":
             from ..engine import jellyfin
-            activation = self._profiles.activate(provider_id) if self._profiles else nullcontext()
             try:
-                with activation:
-                    if self._profiles is None:
-                        self._settings.apply_to_env()
-                    configured_url = os.getenv("JELLYFIN_URL")
-                    server = jellyfin.server_url(configured_url) if configured_url else ""
-                    rows = [{
-                        **row,
-                        "owned": True,
-                        "external_url": (
-                            f"{server}/web/#/details?id={quote(str(row['id']), safe='')}"
-                            if server else ""
-                        ),
-                    } for row in jellyfin.list_playlists()]
+                config = self._jellyfin_config(provider_id)
+                configured_url = config.get("JELLYFIN_URL")
+                server = jellyfin.server_url(configured_url) if configured_url else ""
+                rows = [{
+                    **row,
+                    "owned": True,
+                    "external_url": (
+                        f"{server}/web/#/details?id={quote(str(row['id']), safe='')}"
+                        if server else ""
+                    ),
+                } for row in jellyfin.list_playlists(config=config)]
             except jellyfin.JellyfinError as exc:
                 raise PlaylistBrowseError(str(exc)) from exc
             return sorted(rows, key=lambda r: (r["name"] or "").casefold())
@@ -431,12 +435,10 @@ class PlaylistService:
     def _jellyfin_page(self, provider_id, playlist_id, *, offset=0, limit=20):
         from ..engine import jellyfin
 
-        activation = self._profiles.activate(provider_id) if self._profiles else nullcontext()
         try:
-            with activation:
-                if self._profiles is None:
-                    self._settings.apply_to_env()
-                page = jellyfin.playlist_page(playlist_id, offset=offset, limit=limit)
+            page = jellyfin.playlist_page(
+                playlist_id, offset=offset, limit=limit, config=self._jellyfin_config(provider_id),
+            )
         except jellyfin.JellyfinError as exc:
             raise PlaylistBrowseError(str(exc)) from exc
         if page is None:

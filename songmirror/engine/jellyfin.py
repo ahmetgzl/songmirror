@@ -124,17 +124,18 @@ def _track_count(url, key, playlist_id, uid=None):
         return None
 
 
-def playlist_page(playlist_id, *, offset=0, limit=20):
+def playlist_page(playlist_id, *, offset=0, limit=20, config=None):
     """Read playlist metadata and ordered audio children without a sync target.
 
     /Items supports API keys with or without a User ID across server versions.
     Leave SortBy unset so Jellyfin retains its pre-sorted playlist order.
     """
-    url, key = os.getenv("JELLYFIN_URL"), os.getenv("JELLYFIN_API_KEY")
+    values = os.environ if config is None else config
+    url, key = values.get("JELLYFIN_URL"), values.get("JELLYFIN_API_KEY")
     if not (url and key):
         raise JellyfinError("Jellyfin is not configured. Connect the account in Accounts and retry.")
     url = server_url(url)
-    user = (os.getenv("JELLYFIN_USER_ID") or "").strip()
+    user = (values.get("JELLYFIN_USER_ID") or "").strip()
     scope = {"UserId": user} if user else {}
     playlist_id = str(playlist_id)
     metadata = get_json(url, key, "/Items", params={
@@ -241,16 +242,17 @@ def push_covers(playlists):
         log_warn(f"cover push failed: {e!r}", tag=TAG)
 
 
-def list_playlists():
+def list_playlists(*, config=None):
     """[{id, name, count, image}] of playlists on the Jellyfin server, for the
     web Browse view. Read-only — Jellyfin isn't a sync target, so it's not in the
     targets registry; this lists what's there. Empty list if unconfigured;
     configured failures raise JellyfinError so Browse can offer a retry."""
-    url, key = os.getenv("JELLYFIN_URL"), os.getenv("JELLYFIN_API_KEY")
+    values = os.environ if config is None else config
+    url, key = values.get("JELLYFIN_URL"), values.get("JELLYFIN_API_KEY")
     if not (url and key):
         return []
     url = server_url(url)
-    uid = (os.getenv("JELLYFIN_USER_ID") or "").strip()
+    uid = (values.get("JELLYFIN_USER_ID") or "").strip()
     rows = []
     for item in _playlist_items(url, key, uid):
         iid, name = item.get("Id"), (item.get("Name") or "").strip()
