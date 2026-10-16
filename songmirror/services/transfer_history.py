@@ -124,7 +124,7 @@ class TransferHistory:
                 FROM transfers ORDER BY created_at,id""").fetchall()
             providers = db.execute("""SELECT source_provider FROM transfers
                 UNION SELECT dest_provider FROM transfers ORDER BY 1""").fetchall()
-        # A renamed account remains filterable once, using its latest saved label.
+        # A renamed account remains filterable once, using its most recent transfer's label.
         return {"items": [json.loads(row[0]) for row in rows], "total": total,
                 "accounts": sorted({id: {"id": id, "name": name or id}
                                     for row in accounts for id, name in (tuple(row[:2]), tuple(row[2:]))

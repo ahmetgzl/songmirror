@@ -571,7 +571,8 @@ class TransferService:
             job["status"] = "stopped"
             self._record(job)
             return
-        job.update(status="running", started_at=job.get("started_at") or utc_now())
+        job.update(status="running", phase="reading", written=0, write_total=0,
+                   started_at=job.get("started_at") or utc_now())
         self._record(job)
         try:
             await worker(job, spec)

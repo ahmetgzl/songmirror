@@ -1004,6 +1004,8 @@ def test_service_tracks_confirmed_writes_and_resumes_without_double_counting(mon
         assert saved["source"]["playlist_name"] == "X"
         assert saved["dest"]["playlist_id"] == "p1"
         assert any(event["kind"] == "resumed" for event in saved["events"])
+        resumed = next(i for i, event in enumerate(saved["events"]) if event["kind"] == "resumed")
+        assert saved["events"][resumed + 1]["phase"] == "reading"
         assert saved["events"][-1]["status"] == "done"
 
     asyncio.run(scenario())
