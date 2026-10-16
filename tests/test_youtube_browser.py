@@ -246,6 +246,23 @@ def test_playlist_api_preserves_music_priority_and_category(monkeypatch, tmp_pat
     ]
 
 
+def test_same_named_music_playlists_both_keep_music_priority():
+    target = ytmusic.YTMusicBrowserTarget.__new__(ytmusic.YTMusicBrowserTarget)
+    target._api = SimpleNamespace(get_library_playlists=lambda limit: [
+        {"playlistId": "first", "title": "Mix", "count": 3},
+        {"playlistId": "second", "title": "Mix", "count": 4},
+    ])
+    target._youtube = SimpleNamespace(playlists=lambda: [
+        {"playlistId": "second", "title": "Mix", "_owned": False},
+        {"playlistId": "videos", "title": "Videos", "_owned": True},
+    ])
+    assert [(p["playlistId"], p["_library_kind"]) for p in target.browse_playlists()] == [
+        ("first", "music"), ("second", "music"), ("videos", "video"),
+    ]
+    # Automatic sync still uses its name-keyed Music directory.
+    assert len(target.list_playlists()) == 1
+
+
 @pytest.mark.parametrize("status", [302, 401, 403, 429, 500])
 def test_failed_http_reads_do_not_return_a_partial_library(status):
     response = _Response({})

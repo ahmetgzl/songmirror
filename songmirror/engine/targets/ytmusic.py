@@ -1135,20 +1135,25 @@ class YTMusicBrowserTarget(YTMusicTarget):
         except Exception:
             return False
 
-    def list_playlists(self):
-        out = {}
+    def _music_playlists(self):
+        out = []
         for pl in _expired(lambda: self._api.get_library_playlists(limit=None), "the library"):
             title = (pl.get("title") or "").strip()
-            key = title.casefold()
-            if key and key not in out:
-                out[key] = {"playlistId": pl.get("playlistId"), "title": title, "count": pl.get("count"),
-                            "thumbnails": pl.get("thumbnails")}  # cover art for browse
+            if title:
+                out.append({"playlistId": pl.get("playlistId"), "title": title, "count": pl.get("count"),
+                            "thumbnails": pl.get("thumbnails")})
         # An empty read must fail the pass, not report "no playlists" — the caller
         # creates whatever it can't find, so a degraded read would duplicate every
         # playlist. Only a live session is allowed to answer "genuinely empty".
         if not out and not self._session_alive():
             raise TargetAuthError("YouTube Music returned an empty library on a logged-out session; "
                                   "re-export the browser cookies (Settings -> YouTube Music).")
+        return out
+
+    def list_playlists(self):
+        out = {}
+        for playlist in self._music_playlists():
+            out.setdefault(playlist["title"].casefold(), playlist)
         return out
 
     def update_details(self, playlist, changes):
@@ -1165,7 +1170,7 @@ class YTMusicBrowserTarget(YTMusicTarget):
             raise TargetAuthError(f"YouTube Music refused to update the playlist ({result!r}).")
 
     def browse_playlists(self):
-        music = super().browse_playlists()
+        music = self._music_playlists()
         if not hasattr(self, "_youtube"):
             return music
         # Keep Music's order and metadata, supplementing it with video-only
