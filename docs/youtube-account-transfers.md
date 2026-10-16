@@ -30,4 +30,6 @@ Transfers read the full playlist, including all continuation pages, and are not 
 
 YouTube may explicitly hide private or deleted videos. These appear in the transfer's unavailable count and are skipped; a failed or incomplete page instead stops the copy with an error.
 
+Reading and matching finish before the copy writes videos. During **Copying tracks…**, the progress bar and added count advance only after YouTube confirms each video. Long copies can take several minutes. **Pause** and **Stop** take effect between videos, and resuming skips entries already copied.
+
 The OAuth connection uses the YouTube Data API and can exhaust its daily write quota during a long copy. For large migrations, connect the destination using the **No-quota mode** browser-header option in the YouTube Music connection dialog. If a copy fails after writing some videos, start another copy into that existing destination playlist to continue with the missing videos. Browser sessions can expire and may need fresh headers.

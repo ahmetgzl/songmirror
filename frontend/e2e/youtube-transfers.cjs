@@ -168,6 +168,33 @@ async function main() {
     await grouped.context.close()
     console.log('PASS: Music playlists stay first in labeled picker and browser groups; search and destination ownership remain correct')
 
+    for (const legacy of [false, true]) {
+      const liveState = { status: 'running', total: 795, processed: 795, added: legacy ? 788 : 2,
+        ...(legacy ? {} : { phase: 'copying', written: 2, write_total: 788 }) }
+      const live = await setup([NEW_ACCOUNT], liveState)
+      const liveServices = live.page.getByLabel('Service', { exact: true })
+      await liveServices.nth(0).selectOption(NEW_ACCOUNT.id)
+      await live.page.getByRole('button', { name: 'Playlist', exact: true }).click()
+      await live.page.getByRole('option', { name: /My videos/ }).click()
+      await liveServices.nth(1).selectOption(NEW_ACCOUNT.id)
+      await live.page.getByRole('radio', { name: 'Create new', exact: true }).click()
+      await live.page.getByRole('button', { name: 'Copy playlist', exact: true }).click()
+      await live.page.getByRole('dialog').getByRole('button', { name: 'Copy playlist', exact: true }).click()
+      await live.page.getByRole('dialog').waitFor({ state: 'detached' })
+      await live.page.getByText('Copying tracks…', { exact: false }).first().waitFor()
+      const progressBar = live.page.getByRole('progressbar')
+      assert.equal(await progressBar.getAttribute('aria-valuenow'), legacy ? null : '2')
+      assert.equal(await progressBar.getAttribute('aria-valuemax'), legacy ? null : '788')
+      assert.equal(await live.page.getByText('+788', { exact: true }).count(), 0)
+      if (!legacy) {
+        liveState.added = liveState.written = 3
+        await live.page.getByText('+3', { exact: true }).waitFor()
+        assert.equal(await progressBar.getAttribute('aria-valuenow'), '3')
+      }
+      await live.context.close()
+    }
+    console.log('PASS: writing progress counts acknowledged videos; older servers cannot display queued videos as already added')
+
     const self = await setup([NEW_ACCOUNT])
     const selfServices = self.page.getByLabel('Service', { exact: true })
     await selfServices.nth(0).selectOption(NEW_ACCOUNT.id)

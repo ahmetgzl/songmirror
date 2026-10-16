@@ -34,7 +34,8 @@ from .playlist_links import (
 
 
 def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserve_order=False,
-             on_progress=None, should_continue=None, source_tracks=None, only_keys=None):
+             on_progress=None, should_continue=None, source_tracks=None, only_keys=None,
+             on_write_progress=None):
     """Copy `src_pl` (on `source`) into `dest_pl` (on `dest`). Returns
     {added, deferred, chronology_replayed, unavailable,
     not_found: [{name, artist, key}], completed}.
@@ -121,6 +122,7 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
     applied_keys = set()
     queued_keys = {}
     completed = True
+    processed = unavailable_count
     ordered_source = tracks_oldest_first(src)
     for i, norm in enumerate(ordered_source, unavailable_count + 1):
         if should_continue and should_continue() != "run":
@@ -174,14 +176,15 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
                     if same_provider and only_keys is None:
                         destination_ids.add(str(tid))
                 seen |= keys
-                if not already_present:
+                if not already_present and not execute:
                     log_add(f"{norm['name']} - {norm['artist']}", dry=not execute, tag="transfer")
             else:
                 not_found.append({"name": norm["name"], "artist": norm["artist"],
                                   "key": key})
                 log_miss(f"no match: {norm['name']} - {norm['artist']}", tag="transfer")
+        processed = i
         if on_progress:
-            on_progress(i, total, len(additions))
+            on_progress(i, total, len(additions) if not execute else 0)
 
     current_by_source = _ordered_current_matches(
         ordered_source,
@@ -233,11 +236,39 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
             tag="transfer",
         )
     if execute and additions:
+        write_total = len(additions)
+        if on_write_progress:
+            on_write_progress(0, write_total)
         if chronology_replay:
             result = dest.replay_chronology(dest_pl, chronology_replay)
+            additions, rejected = _split_add_results(additions, result, lambda item: item[0])
+            for _tid, norm in additions:
+                log_add(f"{norm['name']} - {norm['artist']}", tag="transfer")
+            if on_write_progress:
+                on_write_progress(len(additions), write_total)
+            if on_progress:
+                on_progress(processed, total, len(additions))
         else:
-            result = dest.add(dest_pl, [target_id for target_id, _norm in additions])
-        additions, rejected = _split_add_results(additions, result, lambda item: item[0])
+            queued, additions, rejected = additions, [], []
+            batch_size = getattr(dest, "transfer_batch_size", None)
+            chunked = isinstance(batch_size, int) and batch_size > 0
+            if not chunked:
+                batch_size = len(queued)
+            for offset in range(0, len(queued), batch_size):
+                if chunked and should_continue and should_continue() != "run":
+                    completed = False
+                    break
+                batch = queued[offset:offset + batch_size]
+                result = dest.add(dest_pl, [target_id for target_id, _norm in batch])
+                confirmed, refused = _split_add_results(batch, result, lambda item: item[0])
+                additions.extend(confirmed)
+                rejected.extend(refused)
+                for _tid, norm in confirmed:
+                    log_add(f"{norm['name']} - {norm['artist']}", tag="transfer")
+                if on_progress:
+                    on_progress(processed, total, len(additions))
+                if on_write_progress:
+                    on_write_progress(len(additions), write_total)
         for _target_id, norm in rejected:
             not_found.append({"name": norm["name"], "artist": norm["artist"],
                               "key": track_key(norm["name"], norm["artist"])})
@@ -411,6 +442,7 @@ class TransferService:
             "added": 0, "deferred": 0, "chronology_replayed": 0,
             "unavailable": 0, "conflicts": [], "error": None,
             "total": 0, "processed": 0,  # live progress: source tracks examined / total
+            "phase": "reading", "written": 0, "write_total": 0,
             "_spec": normalized_spec,  # kept so resume re-runs the same account pair
             "_control": "run",  # "run" | "pause" | "stop" — polled by the running loop
         }
@@ -509,6 +541,10 @@ class TransferService:
         job["status"] = "running"
         pending = {c["key"]: c["dest_id"] for c in job["conflicts"]
                    if c["resolved"] and not c.get("applied")}
+        base_added = job["added"]
+
+        def write_progress(written, total):
+            job.update(phase="copying", written=written, write_total=total, added=base_added + written)
 
         def work():
             self._settings.apply_to_env()
@@ -531,11 +567,12 @@ class TransferService:
                 source, dst, {}, dest_pl, cache, execute=True, max_adds=opts.max_adds,
                 preserve_order=job["preserve_order"], source_tracks=job["_source_tracks"],
                 only_keys=set(pending), should_continue=lambda: job.get("_control", "run"),
+                on_write_progress=write_progress,
             )
 
         try:
             result = await self._sync.run_exclusive(work)
-            job["added"] += result["added"]
+            job["added"] = base_added + result["added"]
             job["chronology_replayed"] += result["chronology_replayed"]
             rejected = {c["key"] for c in result["not_found"]}
             for conflict in job["conflicts"]:
@@ -556,6 +593,7 @@ class TransferService:
             return
         job["_control"] = "run"
         job["status"] = "running"
+        job.update(phase="reading", written=0, write_total=0)
         self._settings.apply_to_env()
         opts = parse_args([])
         opts.account_profiles = self._profiles
@@ -595,15 +633,22 @@ class TransferService:
             cache = load_cache(dst.cache_file)
             read_source = getattr(src, "playlist_tracks_for_transfer", src.playlist_tracks)
             job["_source_tracks"] = list(read_source(src_pl))
+            job["unavailable"] = sum(bool(track.get("unavailable")) for track in job["_source_tracks"])
             self._emit("section", f"transfer: {job['source']['playlist_name']} -> {dst.name}", "transfer")
 
             def on_progress(processed, total, added):
+                if job["phase"] != "copying":
+                    job["phase"] = "matching"
                 job["processed"], job["total"], job["added"] = processed, total, base_added + added
+
+            def write_progress(written, total):
+                job.update(phase="copying", written=written, write_total=total, added=base_added + written)
 
             res = transfer(src, dst, src_pl, dest_pl, cache, execute=True, max_adds=opts.max_adds,
                            preserve_order=job["preserve_order"],
                            source_tracks=job["_source_tracks"],
-                           on_progress=on_progress, should_continue=lambda: job.get("_control", "run"))
+                           on_progress=on_progress, should_continue=lambda: job.get("_control", "run"),
+                           on_write_progress=write_progress)
             save_cache(dst.cache_file, cache)
             return res
 

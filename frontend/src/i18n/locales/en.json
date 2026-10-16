@@ -221,6 +221,7 @@
   "Copy the complete JSON from the config.json Response tab; request headers/cURL also work": "Copy the complete JSON from the config.json Response tab; request headers/cURL also work",
   "Copy the complete headers or cURL for a signed-in config.json request; SongMirror preserves its browser context and verifies /pandaToken renewal": "Copy the complete headers or cURL for a signed-in config.json request; SongMirror preserves its browser context and verifies /pandaToken renewal",
   "Copy this playlist?": "Copy this playlist?",
+  "Copying tracks…": "Copying tracks…",
   "Correct or retry": "Correct or retry",
   "Could not add profile: {{addError}}": "Could not add profile: {{addError}}",
   "Could not connect with those values. Double-check them and try again.": "Could not connect with those values. Double-check them and try again.",

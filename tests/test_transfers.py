@@ -244,7 +244,7 @@ def test_transfer_skips_unavailable_tidal_entries_without_aborting():
     assert result["unavailable"] == 1
     assert result["not_found"] == []
     assert added == ["apple-track"]
-    assert progress == [(1, 2, 0), (2, 2, 1)]
+    assert progress == [(1, 2, 0), (2, 2, 0), (2, 2, 1)]
 
 
 def test_transfer_ignores_unavailable_tidal_destination_entries_during_dedup():
@@ -729,7 +729,8 @@ def test_transfer_reports_progress():
              {"search": {}, "isrc": {}, "dirty": False}, execute=True, max_adds=100,
              on_progress=lambda p, t, a: calls.append((p, t, a)))
     assert calls[0] == (0, 3, 0)                            # total published before matching
-    assert [p for p, _, _ in calls] == [0, 1, 2, 3]        # monotonic scan over all 3 tracks
+    assert sorted(set(p for p, _, _ in calls)) == [0, 1, 2, 3]
+    assert [p for p, _, _ in calls] == sorted(p for p, _, _ in calls)
     assert calls[-1] == (3, 3, 1)                           # every track scanned, 1 added
 
 
@@ -954,6 +955,48 @@ def test_created_destination_is_recorded_and_reused_after_a_pause(monkeypatch, t
     assert out["done"]["status"] == "done"
     assert list(created) == ["new-1"]  # resuming must not create a second playlist
     assert added == [("new-1", ["dest-track"])]
+
+
+def test_service_tracks_confirmed_writes_and_resumes_without_double_counting(monkeypatch, tmp_path):
+    async def scenario():
+        src, dst = _service(monkeypatch, tmp_path)
+        src._tracks = [{**src._tracks[0], "id": f"s{i}", "name": f"Song {i}"} for i in range(3)]
+        dst.transfer_batch_size = 1
+        dst.resolve = lambda track, _cache: ("dest-" + track["name"], "search")
+        written = []
+        bus = EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        settings = SettingsStore(dir=tmp_path)
+        service = TransferService(settings, bus, SyncService(settings, bus))
+
+        def add(_playlist, ids):
+            # Before the write, the job counts only previous acknowledgements.
+            assert job["added"] == len(written)
+            assert job["phase"] == "copying"
+            written.extend(ids)
+            dst._tracks.append({"id": ids[0], "videoId": ids[0], "name": ids[0].removeprefix("dest-"),
+                                "artists": ["A"]})
+            if len(written) == 1:
+                service.pause(job["id"])
+
+        dst.add = add
+        job = service.submit({"source_provider": "apple", "source_playlist_id": "p1",
+                              "dest_provider": "ytmusic", "dest_playlist_id": "p1"})
+        for _ in range(100):
+            if job["status"] == "paused":
+                break
+            await asyncio.sleep(0.01)
+        assert job["status"] == "paused"
+        assert job["added"] == job["written"] == 1
+        assert job["write_total"] == 3
+        assert service.resume(job["id"])
+        await _await_job(service, job["id"])
+        assert job["status"] == "done", job["error"]
+        assert job["added"] == 3
+        assert job["written"] == job["write_total"] == 2
+        assert written == ["dest-Song 0", "dest-Song 1", "dest-Song 2"]
+
+    asyncio.run(scenario())
 
 
 def test_transfer_service_resolve_writes_cache(monkeypatch, tmp_path):

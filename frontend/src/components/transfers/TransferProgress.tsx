@@ -193,7 +193,14 @@ export function TransferProgress({
   // bar go determinate. `processed` counts source tracks examined, not tracks
   // added (misses and already-present tracks still advance the scan).
   const hasTotal = job.total > 0
-  const pct = hasTotal ? Math.min(100, Math.round((job.processed / job.total) * 100)) : 0
+  const isCopying = job.phase === 'copying'
+  // Older servers counted queued additions as if they had already been written.
+  // Show an indeterminate writing phase until confirmed counts are available.
+  const legacyCopying = !job.phase && hasTotal && job.processed >= job.total
+  const progressMax = isCopying ? (job.write_total ?? 0) : job.total
+  const progressNow = isCopying ? (job.written ?? 0) : job.processed
+  const determinate = progressMax > 0 && !legacyCopying
+  const pct = determinate ? Math.min(100, Math.round((progressNow / progressMax) * 100)) : 0
   // Edits SongMirror can't make (name, description, visibility, order) happen
   // in the destination service itself.
   const destUrl = job.dest.playlist_id ? playlistExternalUrl(job.dest.provider, 'playlist', job.dest.playlist_id) : ''
@@ -219,13 +226,13 @@ export function TransferProgress({
       </div>
 
       {isActive &&
-        (hasTotal ? (
+        (determinate ? (
           <div
             role="progressbar"
             aria-label={t("Transfer progress")}
-            aria-valuenow={job.processed}
+            aria-valuenow={progressNow}
             aria-valuemin={0}
-            aria-valuemax={job.total}
+            aria-valuemax={progressMax}
             className="relative h-1.5 w-full overflow-hidden rounded-full bg-inset"
           >
             <div
@@ -240,7 +247,7 @@ export function TransferProgress({
           <div
             role="progressbar"
             aria-label={t("Transfer in progress")}
-            aria-valuetext={t("Reading the source playlist")}
+            aria-valuetext={legacyCopying ? t('Copying tracks…') : t("Reading the source playlist")}
             className="relative h-1.5 w-full overflow-hidden rounded-full bg-inset"
           >
             <div
@@ -262,12 +269,12 @@ export function TransferProgress({
 
       {isActive ? (
         <div className="flex flex-wrap items-end gap-4">
-          {job.added > 0 || isPaused ? (
+          {(job.added > 0 || isPaused) && !legacyCopying ? (
             <div className="flex items-baseline gap-2">
               <span className="font-mono text-[28px] font-bold leading-none text-success">+{formatNumber(job.added)}</span>
               <span className="font-mono text-[10px] tracking-[0.1em] text-text-3">{t("ADDED SO FAR")}</span>
             </div>
-          ) : (
+          ) : !isCopying ? (
             // Nothing's landed yet — a prominent "+0" reads as broken, so this
             // stays a subtle status line until the count has something to show,
             // then the live counter above takes over. The label distinguishes
@@ -276,7 +283,13 @@ export function TransferProgress({
             // always shows the plain (possibly "+0") count instead of a spinner.
             <div className="flex items-center gap-2 text-sm text-text-2">
               <Spinner className="size-3.5 shrink-0" aria-hidden="true" />
-              {hasTotal ? t("Matching tracks…") : t("Reading source playlist…")}
+              {legacyCopying ? t('Copying tracks…') : hasTotal ? t("Matching tracks…") : t("Reading source playlist…")}
+            </div>
+          ) : null}
+          {isCopying && (
+            <div className="flex items-center gap-2 text-sm text-text-2">
+              {isRunning && <Spinner className="size-3.5 shrink-0" aria-hidden="true" />}
+              <span>{t('Copying tracks…')} <span className="font-mono">{formatNumber(progressNow)} / {formatNumber(progressMax)}</span></span>
             </div>
           )}
           {hasTotal && (

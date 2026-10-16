@@ -564,6 +564,7 @@ class YTMusicTarget(MirrorTarget):
     tag = "yt"
     source = "ytmusic"
     stable_occurrence_ids = True
+    transfer_batch_size = 1  # Confirm and check Pause/Stop between video writes.
     favorite_tracks_name = "Liked Music"
 
     @classmethod
