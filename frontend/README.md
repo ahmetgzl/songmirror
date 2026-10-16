@@ -18,6 +18,8 @@ pnpm test:e2e
 
 The browser tests intercept backend requests and run against the production bundle. They do not connect to music services or modify real playlists. Install Chromium once with `pnpm exec playwright install chromium`.
 
+To refresh the six README screenshots, build the frontend and run `node e2e/capture-readme.cjs` from this directory. It serves the production bundle on a temporary local port, uses the regression suite's sample accounts and playlists, and writes the gallery to `.github/assets` at the repository root. API calls are mocked and external requests are blocked, so captures contain no personal account data. Review the images before committing them.
+
 ## Translations
 
 The app ships English, Arabic, Turkish, Spanish, Simplified Chinese, French, Portuguese, German, Japanese, Hindi, Bengali, Indonesian, Korean, Italian, and Vietnamese. The same languages have project documentation linked from the [main README](../README.md#app-language).

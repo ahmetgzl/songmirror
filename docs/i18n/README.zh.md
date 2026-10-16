@@ -37,9 +37,52 @@
 
 <sup>设置一次 - 您策划的每个播放列表都会按照添加日期的顺序在每个服务中保持镜像。</sup>
 
-<a href="../../.github/assets/songmirror-demo.mp4"><img src="../../.github/assets/songmirror-demo.gif" alt="SongMirror 演示 — 徽标显示、仪表板、单向和双向同步设置、实时播放列表传输以及 ISRC 跨七个音乐服务的准确匹配" width="88%"></a>
+</div>
 
-<sup>▶ <a href="../../.github/assets/songmirror-demo.mp4">观看1080p版本</a></sup>
+<a id="quick-start"></a>
+
+## 🚀 快速入门
+
+运行它的最快方法是 Docker — Compose 拉取已发布的图像、提供 Web UI 服务并按计划运行同步。
+
+对于具有自动重启功能的持久安装：
+
+```bash
+git clone https://github.com/ahnafnafee/songmirror.git
+cd songmirror
+docker compose up -d
+```
+
+打开 **http://localhost:8888**，在**账户**中连接你使用的服务。选择**迁移**进行一次性复制，或选择**同步**按计划更新播放列表。每个功能页面都有**开始导览**按钮，逐步突出显示相关控件。
+
+或者直接尝试公共 GHCR 映像而不克隆存储库：
+
+```bash
+docker run --rm -d --name songmirror -p 127.0.0.1:8888:8080 ghcr.io/ahnafnafee/songmirror:latest
+```
+
+然后打开`http://localhost:8888`并在浏览器中连接您的服务。 Compose 设置无需 `.env` 即可启动；一切都在 UI 中配置并保存在 `./data` 下。
+
+直接 `docker run` 选项是一次性的：`docker stop songmirror` 删除容器及其配置。使用 Compose 进行具有持久凭证、缓存和下载的持久安装，或者查看 [容器镜像指南](../docker-image.md) 进行标签和摘要固定。
+
+更喜欢在没有 Docker 的情况下运行它？
+
+```bash
+uv sync
+uv run uvicorn songmirror.web:app --host 0.0.0.0 --port 8080   # then open http://127.0.0.1:8080
+```
+
+> 需要[`uv`](https://docs.astral.sh/uv/)（Python 3.13+）。对于本地下载镜像，PATH 上还有`uv tool install spotdl` 和`ffmpeg`。
+
+<a id="app-language"></a>
+
+### 应用语言
+
+SongMirror支持英语、阿拉伯语、土耳其语、西班牙语、简体中文、法语、葡萄牙语、德语、日语、印地语、孟加拉语、印度尼西亚语、韩语、意大利语和越南语。 首次启动时，应用会依次检查浏览器的语言偏好（包括地区变体），使用其中第一个受支持的语言；如果没有匹配项，则使用英语。可在 **设置 → 常规 → 语言** 中更改语言。选择会保存在此浏览器中，重新加载页面后仍然有效。选择 **自动（浏览器）** 可重新跟随浏览器的语言偏好。阿拉伯语界面采用从右到左的布局。播放列表名称、艺术家姓名、服务名称、凭据和诊断日志保留原始值。
+
+<div align="right">
+
+[![][back-to-top]](#readme-top)
 
 </div>
 
@@ -51,10 +94,10 @@
 
 #### 总有机碳
 
-- [✨ 特点](#features)
-- [📸 截图](#screenshots)
 - [🚀 快速入门](#quick-start)
   - [应用语言](#app-language)
+- [✨ 特点](#features)
+- [📸 截图](#screenshots)
 - [🐳 一直在奔跑：Docker](#always-running-docker)
 - [⚙️ 它是如何运作的](#how-it-works)
   - [配套](#matching)
@@ -100,7 +143,9 @@ SongMirror 使您的播放列表在任何地方都保持相同，无需手动重
 - ♥ **喜欢和最喜欢的曲目** - 将所有七个音乐提供商的每个服务的内置喜欢收藏同步到目的地自己的收藏夹或新命名的播放列表中。
 - 🎯 **通过 ISRC 进行准确匹配** — 准确的录音身份（如果可用），以及大约与 Unicode 兼容的标题/艺术家/持续时间后备（特色艺术家制作人员名单中的差异、“- 2015 Remaster”后缀、非拉丁脚本、仅视频上传 — 全部处理）。
 - 🎛️ **多个命名同步** — 根据需要设置多个独立同步，每个同步都有自己的服务、播放列表、时间表和安全上限。
-- ↪️ **一次性传输** — 使用实时进度条将任何播放列表从一项服务复制到另一项服务；暂停、恢复或停止复制过程，并手动解决不匹配的轨道。
+- ↪️ **一次性传输** — 在不同服务或同一服务的两个账户之间复制，支持完整的 YouTube 视频播放列表。YouTube Music 播放列表优先显示，随后是视频列表；目标必须是你拥有的播放列表。支持暂停、继续或停止，以及检查未匹配的曲目。再次打开时立即显示已保存的列表，并在后台刷新。
+- **传输审计历史** — 查看已完成、失败、已停止及中断的尝试，包括确认的数量和状态记录。按播放列表、状态、账户、服务或日期筛选。历史保存在应用数据卷中，更换容器后仍然保留。[历史与恢复](../transfer-history.md)。
+- **每个功能页面都有指南** — 快速说明与可选导览逐步突出显示控件。可在**设置 → 常规 → 显示功能指南**中隐藏所有指南。主题、语言、指南显示、播放列表布局及排序保存在当前浏览器中；账户设置与传输历史保存在持久化应用数据目录中。
 - 🕒 **追加轨道或保留轨道顺序** - 默认情况下，快速且可附加地复制目的地末尾的陆地。打开“保留最近添加的顺序”以在最旧的新曲目之后重写曲目，以便添加日期的顺序与源匹配。
 - 🔗 **从链接传输** — 从任何连接的服务粘贴公共播放列表 URL 并直接复制。无需先保存或遵循它。
 - 🌐 **关注的播放列表** — 同步和传输您关注但不拥有的播放列表，而不仅仅是您创建的播放列表。
@@ -127,6 +172,10 @@ SongMirror 使您的播放列表在任何地方都保持相同，无需手动重
 
 <div align="center">
 
+<a href="../../.github/assets/songmirror-demo.mp4"><img src="../../.github/assets/songmirror-demo.gif" alt="SongMirror 演示 — 徽标显示、仪表板、单向和双向同步设置、实时播放列表传输以及 ISRC 跨七个音乐服务的准确匹配" width="88%"></a>
+
+<sup>▶ <a href="../../.github/assets/songmirror-demo.mp4">观看1080p版本</a></sup>
+
 **每个图书馆都有一个仪表板 — 同步状态、作业、实时活动和服务运行状况**
 
 <img src="../../.github/assets/dashboard.png" alt="SongMirror 仪表板显示Spotify、TIDAL、Qobuz、Deezer、Amazon Music、Apple Music、的同步状态、已配置作业、实时活动和运行状况， YouTube Music和Jellyfin" width="82%">
@@ -143,52 +192,15 @@ SongMirror 使您的播放列表在任何地方都保持相同，无需手动重
 
 <img src="../../.github/assets/playlists.png" alt="浏览互联服务中的播放列表以及封面艺术和曲目数量" width="82%">
 
+**在账户之间复制播放列表，也支持同一服务**
+
+<img src="../../.github/assets/transfers.png" alt="在账户之间复制播放列表，也支持同一服务" width="82%">
+
+**通过筛选器和审计记录查看每次传输尝试**
+
+<img src="../../.github/assets/transfer-history.png" alt="通过筛选器和审计记录查看每次传输尝试" width="82%">
+
 </div>
-
-<div align="right">
-
-[![][back-to-top]](#readme-top)
-
-</div>
-
-<a id="quick-start"></a>
-
-## 🚀 快速入门
-
-运行它的最快方法是 Docker — Compose 拉取已发布的图像、提供 Web UI 服务并按计划运行同步。
-
-对于具有自动重启功能的持久安装：
-
-```bash
-git clone https://github.com/ahnafnafee/songmirror.git
-cd songmirror
-docker compose up -d
-```
-
-或者直接尝试公共 GHCR 映像而不克隆存储库：
-
-```bash
-docker run --rm -d --name songmirror -p 127.0.0.1:8888:8080 ghcr.io/ahnafnafee/songmirror:latest
-```
-
-然后打开`http://localhost:8888`并在浏览器中连接您的服务。 Compose 设置无需 `.env` 即可启动；一切都在 UI 中配置并保存在 `./data` 下。
-
-直接 `docker run` 选项是一次性的：`docker stop songmirror` 删除容器及其配置。使用 Compose 进行具有持久凭证、缓存和下载的持久安装，或者查看 [容器镜像指南](../docker-image.md) 进行标签和摘要固定。
-
-更喜欢在没有 Docker 的情况下运行它？
-
-```bash
-uv sync
-uv run uvicorn songmirror.web:app --host 0.0.0.0 --port 8080   # then open http://127.0.0.1:8080
-```
-
-> 需要[`uv`](https://docs.astral.sh/uv/)（Python 3.13+）。对于本地下载镜像，PATH 上还有`uv tool install spotdl` 和`ffmpeg`。
-
-<a id="app-language"></a>
-
-### 应用语言
-
-SongMirror支持英语、阿拉伯语、土耳其语、西班牙语、简体中文、法语、葡萄牙语、德语、日语、印地语、孟加拉语、印度尼西亚语、韩语、意大利语和越南语。 首次启动时，应用会依次检查浏览器的语言偏好（包括地区变体），使用其中第一个受支持的语言；如果没有匹配项，则使用英语。可在 **设置 → 常规 → 语言** 中更改语言。选择会保存在此浏览器中，重新加载页面后仍然有效。选择 **自动（浏览器）** 可重新跟随浏览器的语言偏好。阿拉伯语界面采用从右到左的布局。播放列表名称、艺术家姓名、服务名称、凭据和诊断日志保留原始值。
 
 <div align="right">
 
@@ -498,6 +510,8 @@ SongMirror在本地导出相同的`AmznMusic`授权值，并在到期前或身�
 3. 在应用程序中，粘贴客户端 ID + 密钥并完成屏幕上的设备代码。
 
 > 配额：Data API允许10,000个单位/天（搜索费用100，添加/删除50）。稳态维护成本低廉；大量的首次积压可能会达到上限并在第二天恢复。
+
+在 Google 账户之间迁移私人列表时，请连接两个账户；对于公开列表，只需连接目标账户并粘贴链接。浏览器模式包含普通 YouTube 视频播放列表，并读取所有分页。大型复制建议使用**无配额模式**；Data API 连接仍有每日配额。如果 YouTube 要求创建频道，请使用目标账户完成设置后重试。请参阅[账户迁移指南](../youtube-account-transfers.md)。
 
 <div align="right">
 

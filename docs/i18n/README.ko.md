@@ -37,9 +37,52 @@ Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music 및 YouTube Music에 �
 
 <sup>한 번 설정하면 귀하가 관리하는 모든 재생목록이 날짜가 추가된 순서대로 모든 서비스에 미러링됩니다.</sup>
 
-<a href="../../.github/assets/songmirror-demo.mp4"><img src="../../.github/assets/songmirror-demo.gif" alt="SongMirror 데모 — 로고 공개, 대시보드, 단방향 및 양방향 동기화 설정, 라이브 재생 목록 전송 및 7개 음악 서비스 전반에 걸친 ISRC의 정확한 매칭" width="88%"></a>
+</div>
 
-<sup>▶ <a href="../../.github/assets/songmirror-demo.mp4">1080p 버전 보기</a></sup>
+<a id="quick-start"></a>
+
+## 🚀 빠른 시작
+
+가장 빠른 실행 방법은 Docker입니다. Compose는 게시된 이미지를 가져오고 웹 UI를 제공하며 일정에 따라 동기화를 실행합니다.
+
+자동 재시작을 통한 영구 설치의 경우:
+
+```bash
+git clone https://github.com/ahnafnafee/songmirror.git
+cd songmirror
+docker compose up -d
+```
+
+**http://localhost:8888** 을 열고 **계정**에서 사용하는 서비스를 연결하세요. 한 번 복사하려면 **전송**, 일정에 따라 업데이트하려면 **동기화**를 선택하세요. 각 기능 페이지의 **둘러보기 시작** 버튼으로 조작할 부분을 단계별로 확인할 수 있습니다.
+
+또는 저장소를 복제하지 않고 직접 공개 GHCR 이미지를 사용해 보세요.
+
+```bash
+docker run --rm -d --name songmirror -p 127.0.0.1:8888:8080 ghcr.io/ahnafnafee/songmirror:latest
+```
+
+그런 다음 `http://localhost:8888`를 열고 브라우저에서 서비스를 연결하세요. Compose 설정을 시작하려면 `.env`가 필요하지 않습니다. 모든 것이 UI에서 구성되고 `./data` 아래에 저장됩니다.
+
+직접 `docker run` 옵션은 일회용입니다. `docker stop songmirror`는 컨테이너와 해당 구성을 제거합니다. 영구 자격 증명, 캐시 및 다운로드가 포함된 내구성 있는 설치를 위해 Compose를 사용하거나 태그 및 다이제스트 고정을 위해 [컨테이너 이미지 가이드](../docker-image.md)를 참조하세요.
+
+Docker 없이 실행하는 것을 선호하시나요?
+
+```bash
+uv sync
+uv run uvicorn songmirror.web:app --host 0.0.0.0 --port 8080   # then open http://127.0.0.1:8080
+```
+
+> [`uv`](https://docs.astral.sh/uv/)(Python 3.13+)가 필요합니다. 로컬 다운로드 미러의 경우 `uv tool install spotdl`도 있고 PATH에는 `ffmpeg`가 있습니다.
+
+<a id="app-language"></a>
+
+### 앱 언어
+
+SongMirror는 영어, 아랍어, 터키어, 스페인어, 중국어 간체, 프랑스어, 포르투갈어, 독일어, 일본어, 힌디어, 벵골어, 인도네시아어, 한국어, 이탈리아어, 베트남어를 지원합니다. 처음 실행할 때 지역별 변형을 포함한 브라우저 언어 기본 설정을 순서대로 확인하고, 처음으로 지원되는 언어를 사용합니다. 지원되는 언어가 없으면 영어를 사용합니다. **설정 → 일반 → 언어**에서 언어를 바꿀 수 있습니다. 선택은 이 브라우저에 저장되며 페이지를 새로고침해도 유지됩니다. **자동 (브라우저)**을 선택하면 다시 브라우저 기본 설정을 따릅니다. 아랍어 화면은 오른쪽에서 왼쪽으로 표시됩니다. 재생 목록, 아티스트와 서비스의 이름, 인증 정보 및 진단 로그는 원래 값을 유지합니다.
+
+<div align="right">
+
+[![][back-to-top]](#readme-top)
 
 </div>
 
@@ -51,10 +94,10 @@ Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music 및 YouTube Music에 �
 
 #### 목차
 
-- [✨ 특징](#features)
-- [📸 스크린샷](#screenshots)
 - [🚀 빠른 시작](#quick-start)
   - [앱 언어](#app-language)
+- [✨ 특징](#features)
+- [📸 스크린샷](#screenshots)
 - [🐳 항상 실행 중: Docker](#always-running-docker)
 - [⚙️ 작동 원리](#how-it-works)
   - [매칭](#matching)
@@ -100,7 +143,9 @@ SongMirror 수동으로 다시 추가하거나 하나씩 복사하거나 라이�
 - ♥ **좋아요 및 즐겨찾는 트랙** — 7개 음악 제공업체 전체에서 각 서비스에 내장된 좋아요 컬렉션을 대상의 즐겨찾기 또는 새로운 이름의 재생목록에 동기화합니다.
 - 🎯 **ISRC에 의한 정확한 일치** — 가능한 경우 정확한 녹화 ID, 대략적인 Unicode 호환 제목/아티스트/길이 대체(추천 아티스트 크레딧의 차이, "- 2015 리마스터" 접미사, 비라틴어 스크립트, 비디오 전용 업로드 — 모두 처리됨).
 - 🎛️ **여러 개의 이름이 지정된 동기화** — 각각 고유한 서비스, 재생 목록, 일정 및 안전 제한이 있는 독립적인 동기화를 원하는 만큼 많이 설정하세요.
-- ↪️ **일회성 전송** — 실시간 진행률 표시줄을 사용하여 한 서비스에서 다른 서비스로 재생 목록을 복사합니다. 복사 도중 일시 중지, 재개 또는 중지하고 일치하지 않는 트랙을 수동으로 해결합니다.
+- ↪️ **일회성 전송** — 전체 YouTube 동영상 재생목록을 포함하여 서비스 간 또는 같은 서비스의 두 계정 간에 복사합니다. YouTube Music 재생목록이 먼저, 동영상 목록이 다음에 표시됩니다. 대상은 본인이 소유한 목록을 선택하세요. 일시 중지, 재개, 중지와 미일치 곡 검토를 지원합니다. 다시 방문하면 저장된 목록을 즉시 보여 주고 백그라운드에서 갱신합니다.
+- **전송 감사 기록** — 완료, 실패, 중지, 중단된 시도를 확인된 수량과 상태 변경 기록으로 검토합니다. 재생목록, 상태, 계정, 서비스 또는 날짜로 필터링하세요. 기록은 앱 데이터 볼륨에 저장되어 컨테이너를 교체해도 유지됩니다. [기록 및 복구](../transfer-history.md).
+- **모든 기능 페이지의 가이드** — 빠른 설명과 선택형 둘러보기가 각 조작 부분을 강조합니다. **설정 → 일반 → 기능 가이드 표시**에서 모두 숨길 수 있습니다. 테마, 언어, 가이드 표시, 목록 레이아웃과 정렬은 이 브라우저에 저장되며, 계정 설정과 전송 기록은 영구 앱 데이터 디렉터리에 보관됩니다.
 - 🕒 트랙을 추가하거나 트랙 순서를 유지합니다. 기본적으로 대상의 끝에 복사가 빠르고 추가됩니다. 최근 추가된 항목 유지 순서를 켜서 가장 오래된 새 트랙 이후에 트랙을 다시 작성하여 날짜 추가 순서가 소스와 일치하도록 합니다.
 - 🔗 **링크에서 전송** - 연결된 서비스의 공개 재생목록 URL을 붙여넣고 바로 복사하세요. 먼저 저장하거나 따라갈 필요가 없습니다.
 - 🌐 **팔로우한 재생목록** — 내가 만든 재생목록뿐만 아니라 팔로우하지만 소유하지 않은 재생목록도 동기화하고 전송할 수 있습니다.
@@ -127,6 +172,10 @@ SongMirror 수동으로 다시 추가하거나 하나씩 복사하거나 라이�
 
 <div align="center">
 
+<a href="../../.github/assets/songmirror-demo.mp4"><img src="../../.github/assets/songmirror-demo.gif" alt="SongMirror 데모 — 로고 공개, 대시보드, 단방향 및 양방향 동기화 설정, 라이브 재생 목록 전송 및 7개 음악 서비스 전반에 걸친 ISRC의 정확한 매칭" width="88%"></a>
+
+<sup>▶ <a href="../../.github/assets/songmirror-demo.mp4">1080p 버전 보기</a></sup>
+
 **모든 라이브러리에 대한 단일 대시보드 — 동기화 상태, 작업, 실시간 활동 및 서비스 상태**
 
 <img src="../../.github/assets/dashboard.png" alt="SongMirror 대시보드에는 Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music에 대한 동기화 상태, 구성된 작업, 실시간 활동 및 상태가 표시됩니다. YouTube Music 및 Jellyfin" width="82%">
@@ -143,52 +192,15 @@ SongMirror 수동으로 다시 추가하거나 하나씩 복사하거나 라이�
 
 <img src="../../.github/assets/playlists.png" alt="커버 아트 및 트랙 수를 사용하여 연결된 서비스 전반에서 재생 목록 탐색" width="82%">
 
+**동일 서비스를 포함하여 계정 간 재생목록 복사**
+
+<img src="../../.github/assets/transfers.png" alt="동일 서비스를 포함하여 계정 간 재생목록 복사" width="82%">
+
+**필터와 감사 기록으로 모든 전송 시도 확인**
+
+<img src="../../.github/assets/transfer-history.png" alt="필터와 감사 기록으로 모든 전송 시도 확인" width="82%">
+
 </div>
-
-<div align="right">
-
-[![][back-to-top]](#readme-top)
-
-</div>
-
-<a id="quick-start"></a>
-
-## 🚀 빠른 시작
-
-가장 빠른 실행 방법은 Docker입니다. Compose는 게시된 이미지를 가져오고 웹 UI를 제공하며 일정에 따라 동기화를 실행합니다.
-
-자동 재시작을 통한 영구 설치의 경우:
-
-```bash
-git clone https://github.com/ahnafnafee/songmirror.git
-cd songmirror
-docker compose up -d
-```
-
-또는 저장소를 복제하지 않고 직접 공개 GHCR 이미지를 사용해 보세요.
-
-```bash
-docker run --rm -d --name songmirror -p 127.0.0.1:8888:8080 ghcr.io/ahnafnafee/songmirror:latest
-```
-
-그런 다음 `http://localhost:8888`를 열고 브라우저에서 서비스를 연결하세요. Compose 설정을 시작하려면 `.env`가 필요하지 않습니다. 모든 것이 UI에서 구성되고 `./data` 아래에 저장됩니다.
-
-직접 `docker run` 옵션은 일회용입니다. `docker stop songmirror`는 컨테이너와 해당 구성을 제거합니다. 영구 자격 증명, 캐시 및 다운로드가 포함된 내구성 있는 설치를 위해 Compose를 사용하거나 태그 및 다이제스트 고정을 위해 [컨테이너 이미지 가이드](../docker-image.md)를 참조하세요.
-
-Docker 없이 실행하는 것을 선호하시나요?
-
-```bash
-uv sync
-uv run uvicorn songmirror.web:app --host 0.0.0.0 --port 8080   # then open http://127.0.0.1:8080
-```
-
-> [`uv`](https://docs.astral.sh/uv/)(Python 3.13+)가 필요합니다. 로컬 다운로드 미러의 경우 `uv tool install spotdl`도 있고 PATH에는 `ffmpeg`가 있습니다.
-
-<a id="app-language"></a>
-
-### 앱 언어
-
-SongMirror는 영어, 아랍어, 터키어, 스페인어, 중국어 간체, 프랑스어, 포르투갈어, 독일어, 일본어, 힌디어, 벵골어, 인도네시아어, 한국어, 이탈리아어, 베트남어를 지원합니다. 처음 실행할 때 지역별 변형을 포함한 브라우저 언어 기본 설정을 순서대로 확인하고, 처음으로 지원되는 언어를 사용합니다. 지원되는 언어가 없으면 영어를 사용합니다. **설정 → 일반 → 언어**에서 언어를 바꿀 수 있습니다. 선택은 이 브라우저에 저장되며 페이지를 새로고침해도 유지됩니다. **자동 (브라우저)**을 선택하면 다시 브라우저 기본 설정을 따릅니다. 아랍어 화면은 오른쪽에서 왼쪽으로 표시됩니다. 재생 목록, 아티스트와 서비스의 이름, 인증 정보 및 진단 로그는 원래 값을 유지합니다.
 
 <div align="right">
 
@@ -498,6 +510,8 @@ OAuth 갱신 토큰이 내구성이 있고 다시 시작해도 유지되는 공�
 3. 앱에서 클라이언트 ID + 비밀번호를 붙여넣고 화면에 표시되는 장치 코드를 완성하세요.
 
 > 할당량: Data API는 하루 10,000개 단위를 허용합니다(검색 비용은 100, 추가/제거 비용은 50). 정상 상태 유지 비용이 저렴합니다. 큰 규모의 최초 백로그가 한도에 도달하고 다음날 재개될 수 있습니다.
+
+Google 계정 간 비공개 목록을 옮기려면 두 계정을 연결하고, 공개 목록은 대상 계정만 연결한 뒤 링크를 붙여 넣으세요. 브라우저 모드는 일반 YouTube 동영상 재생목록을 포함하며 모든 페이지를 읽습니다. 긴 복사에는 **할당량 없음 모드**를 사용하세요. Data API 연결에는 여전히 일일 할당량이 있습니다. YouTube에서 채널을 요청하면 대상 계정으로 설정을 완료한 뒤 재시도하세요. [계정 전송 가이드](../youtube-account-transfers.md)를 참고하세요.
 
 <div align="right">
 
