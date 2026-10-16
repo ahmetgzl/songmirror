@@ -15,6 +15,10 @@ const PLAYLISTS = [
   { id: 'mix', name: 'Jellyfin mix', count: 7, image: '', owned: true, external_url: 'http://jellyfin.test/web/#/details?id=mix' },
   { id: 'chill', name: 'Quiet evenings', count: null, image: '', owned: true, external_url: 'http://jellyfin.test/web/#/details?id=chill' },
 ]
+const TRACKS = Array.from({ length: 7 }, (_, position) => ({
+  position, id: `track-${position}`, name: `Jellyfin track ${position + 1}`, artist: 'Local artist',
+  album: 'Local album', image: '', duration_ms: 120000, external_url: '', occurrence_id: '', isrc: '', added_at: '',
+}))
 
 async function main() {
   const dist = path.resolve(__dirname, '../dist')
@@ -33,6 +37,7 @@ async function main() {
   const page = await context.newPage()
   const errors = [], writes = []
   let fail = true, playlists = PLAYLISTS, reads = 0
+  const detailReads = []
   try {
     page.on('pageerror', error => errors.push(error.message))
     await page.route('**/api/**', async route => {
@@ -46,6 +51,14 @@ async function main() {
         return fail
           ? send({ detail: 'Jellyfin rejected access. Check the API key and user permissions in Accounts.' }, 502)
           : send(playlists)
+      }
+      if (url.pathname === `/api/playlists/${ACCOUNT.id}/mix`) {
+        assert.equal(url.searchParams.get('page_size'), '20', 'Jellyfin uses progressive inspection for every account identity')
+        const offset = Number(url.searchParams.get('offset') || 0)
+        detailReads.push({ account: ACCOUNT.id, offset, refresh: url.searchParams.get('refresh') })
+        return send({ ...PLAYLISTS[0], provider: ACCOUNT.id, editable: false, description: '',
+          tracks: offset === 0 ? TRACKS.slice(0, 3) : TRACKS.slice(3),
+          next_cursor: offset === 0 ? '3' : null, complete: offset !== 0 })
       }
       if (url.pathname === '/api/sync/status') return send({ running: false, jobs: [], last: null })
       if (['/api/syncs', '/api/links', '/api/transfers'].includes(url.pathname)) return send([])
@@ -72,6 +85,25 @@ async function main() {
     await page.setViewportSize({ width: 1280, height: 1000 })
     await page.screenshot({ path: path.join(__dirname, 'screenshots/jellyfin-browse.png'), fullPage: true })
     console.log('PASS: Jellyfin error is visible and Retry restores playlists with known and unknown counts')
+
+    for (const identity of ['profile_default_jellyfin', 'jellyfin']) {
+      ACCOUNT.id = identity
+      if (identity === 'jellyfin') await visit()
+      await page.getByRole('button', { name: 'Open Jellyfin mix inside SongMirror', exact: true }).click()
+      const dialog = page.getByRole('dialog')
+      await dialog.getByText('Jellyfin track 7', { exact: true }).waitFor()
+      await dialog.getByText('This playlist is read-only on Jellyfin. You can inspect it here or open it on the service.', { exact: true }).waitFor()
+      assert.equal(await dialog.getByText("Playlist couldn't be opened", { exact: true }).count(), 0)
+      assert.equal(await dialog.getByRole('button', { name: /Remove|Edit details|Export/ }).count(), 0)
+      assert.equal(await dialog.getByText('Portable snapshot', { exact: true }).count(), 0)
+      await dialog.getByRole('button', { name: 'Refresh', exact: true }).click()
+      await dialog.getByText('Jellyfin track 7', { exact: true }).waitFor()
+      assert.ok(detailReads.some(read => read.account === identity && read.offset === 3), 'Remaining tracks load after the first page')
+      await page.keyboard.press('Escape')
+      await dialog.waitFor({ state: 'detached' })
+    }
+    await page.screenshot({ path: path.join(__dirname, 'screenshots/jellyfin-inspection.png') })
+    console.log('PASS: profile and legacy Jellyfin accounts open and refresh ordered track pages with read-only controls')
 
     fail = true
     await visit()

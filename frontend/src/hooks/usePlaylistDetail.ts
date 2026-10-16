@@ -14,7 +14,7 @@ export function usePlaylistDetail(
   playlistId: string | null,
   expectedCount?: number | null,
 ) {
-  const paged = provider !== null && provider !== 'jellyfin'
+  const paged = provider !== null
   const key = provider && playlistId
     ? ['playlist-detail', provider, playlistId, expectedCount]
     : null

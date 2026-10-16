@@ -124,6 +124,73 @@ def _track_count(url, key, playlist_id, uid=None):
         return None
 
 
+def playlist_page(playlist_id, *, offset=0, limit=20):
+    """Read playlist metadata and ordered audio children without a sync target.
+
+    /Items supports API keys with or without a User ID across server versions.
+    Leave SortBy unset so Jellyfin retains its pre-sorted playlist order.
+    """
+    url, key = os.getenv("JELLYFIN_URL"), os.getenv("JELLYFIN_API_KEY")
+    if not (url and key):
+        raise JellyfinError("Jellyfin is not configured. Connect the account in Accounts and retry.")
+    url = server_url(url)
+    user = (os.getenv("JELLYFIN_USER_ID") or "").strip()
+    scope = {"UserId": user} if user else {}
+    playlist_id = str(playlist_id)
+    metadata = get_json(url, key, "/Items", params={
+        **scope, "Ids": playlist_id, "IncludeItemTypes": "Playlist", "Fields": "Overview",
+    })
+    playlists = metadata.get("Items")
+    if not isinstance(playlists, list) or any(not isinstance(item, dict) for item in playlists):
+        raise JellyfinError("Jellyfin returned invalid playlist metadata. Refresh and retry.")
+    playlist = next((item for item in playlists if str(item.get("Id")) == playlist_id), None)
+    if playlist is None:
+        return None
+    data = get_json(url, key, "/Items", params={
+        **scope, "ParentId": playlist_id, "Recursive": "true", "IncludeItemTypes": "Audio",
+        "StartIndex": offset, "Limit": limit, "EnableTotalRecordCount": "true",
+    })
+    items = data.get("Items")
+    if not isinstance(items, list) or any(not isinstance(item, dict) or not item.get("Id") for item in items):
+        raise JellyfinError("Jellyfin returned invalid playlist tracks. Refresh and retry.")
+    total = data.get("TotalRecordCount")
+    if not isinstance(total, int) or isinstance(total, bool) or total < 0:
+        total = None
+    end = offset + len(items)
+    if not items and total is not None and end < total:
+        raise JellyfinError("Jellyfin returned an incomplete playlist page. Refresh and retry.")
+    more = end < total if total is not None else len(items) == limit
+
+    def item_url(item_id, *, image=False):
+        encoded = quote(str(item_id), safe="")
+        return (f"{url}/Items/{encoded}/Images/Primary" if image
+                else f"{url}/web/#/details?id={encoded}")
+
+    tracks = []
+    for position, item in enumerate(items, start=offset):
+        image_id = item["Id"] if (item.get("ImageTags") or {}).get("Primary") else (
+            item.get("AlbumId") if item.get("AlbumPrimaryImageTag") else None
+        )
+        ticks = item.get("RunTimeTicks")
+        tracks.append({
+            "position": position, "id": str(item["Id"]), "occurrence_id": "", "isrc": "",
+            "name": str(item.get("Name") or "Unknown track"),
+            "artist": ", ".join(str(name) for name in item.get("Artists") or []),
+            "album": item.get("Album"),
+            "duration_ms": ticks // 10_000 if isinstance(ticks, int) and ticks >= 0 else None,
+            "image": item_url(image_id, image=True) if image_id else "",
+            "external_url": item_url(item["Id"]), "added_at": "",
+        })
+    return {
+        "id": playlist_id, "name": str(playlist.get("Name") or "Playlist"),
+        "description": str(playlist.get("Overview") or ""),
+        "image": item_url(playlist_id, image=True) if (playlist.get("ImageTags") or {}).get("Primary") else "",
+        "external_url": item_url(playlist_id), "owned": True, "editable": False,
+        "count": total if total is not None else end, "tracks": tracks,
+        "next_cursor": str(end) if more else None, "complete": not more,
+    }
+
+
 def push_covers(playlists):
     """Set each matching Jellyfin playlist's Primary image to its Spotify cover
     (matched by name). Never raises out."""
