@@ -1274,5 +1274,7 @@
   "Transfers view": "传输视图",
   "Unavailable": "不可用",
   "View details": "查看详情",
-  "View transfer": "查看传输"
+  "View transfer": "查看传输",
+  "Refresh {{label}}": "刷新{{label}}",
+  "Showing saved playlists while updating…": "正在更新，暂时显示已保存的播放列表…"
 }

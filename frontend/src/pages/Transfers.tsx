@@ -25,7 +25,7 @@ export default function Transfers() {
     () => connectedAccounts.filter((account) => capabilitiesOf(account).library_read).map((account) => account.id),
     [connectedAccounts],
   )
-  const { entries } = useProviderPlaylists(connectedIds)
+  const { entries, refreshProvider } = useProviderPlaylists(connectedIds)
 
   const [jobId, setJobId] = useState<string | null>(null)
   const [view, setView] = useState('new')
@@ -67,7 +67,7 @@ export default function Transfers() {
           <Skeleton className="h-72 w-full rounded-card" />
         </LoadingStatus>
       ) : (
-        <TransferSetupForm accounts={connectedAccounts} entries={entries} onStarted={handleStarted} />
+        <TransferSetupForm accounts={connectedAccounts} entries={entries} onRefreshPlaylists={refreshProvider} onStarted={handleStarted} />
       )}
 
       {jobId && (

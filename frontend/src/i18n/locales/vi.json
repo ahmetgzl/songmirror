@@ -1274,5 +1274,7 @@
   "Transfers view": "Chế độ xem lượt chuyển",
   "Unavailable": "Không khả dụng",
   "View details": "Xem chi tiết",
-  "View transfer": "Xem lượt chuyển"
+  "View transfer": "Xem lượt chuyển",
+  "Refresh {{label}}": "Làm mới {{label}}",
+  "Showing saved playlists while updating…": "Đang hiển thị danh sách phát đã lưu trong khi cập nhật…"
 }

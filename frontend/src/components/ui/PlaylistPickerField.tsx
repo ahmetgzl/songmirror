@@ -1,7 +1,7 @@
 import { t, useTranslation } from '@/i18n'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { LuCheck, LuChevronDown, LuSearch } from 'react-icons/lu'
+import { LuCheck, LuChevronDown, LuRefreshCw, LuSearch } from 'react-icons/lu'
 
 import { cn } from '@/lib/cn'
 import { formatTrackCount } from '@/lib/format'
@@ -9,6 +9,7 @@ import { playlistLibraryLabel } from '@/lib/playlistLibrary'
 import type { ProviderPlaylist } from '@/types'
 
 import { CoverArt } from './CoverArt'
+import { Button } from './Button'
 
 /** Below this many options the list never needs a search box — it's already
  * scannable at a glance. Matches PlaylistFilterField's own threshold. */
@@ -27,6 +28,9 @@ interface PlaylistPickerFieldProps {
   /** Still fetching — shows a "Loading…" placeholder instead of "Choose a
    * playlist…" while `playlists` is empty. */
   loading?: boolean
+  refreshing?: boolean
+  error?: string | null
+  onRefresh?: () => void
   /** Selected playlist id, or "" for none. */
   value: string
   onChange: (id: string) => void
@@ -50,6 +54,9 @@ export function PlaylistPickerField({
   help,
   playlists,
   loading,
+  refreshing,
+  error,
+  onRefresh,
   value,
   onChange,
   disabled,
@@ -201,7 +208,7 @@ export function PlaylistPickerField({
             )}
           </>
         ) : (
-          <span className="min-w-0 flex-1 truncate text-text-3">{loading ? t("Loading…") : placeholder}</span>
+          <span className="min-w-0 flex-1 truncate text-text-3">{loading && playlists.length === 0 ? t("Loading…") : placeholder}</span>
         )}
         <LuChevronDown
           className={cn('size-4 shrink-0 text-text-3 transition-transform duration-fast', open && 'rotate-180')}
@@ -209,6 +216,18 @@ export function PlaylistPickerField({
         />
       </button>
       {help && <p className="text-xs text-text-3">{help}</p>}
+      {onRefresh && (
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <span role="status" className="min-w-0 text-xs text-text-3">
+            {refreshing && !loading ? t('Showing saved playlists while updating…') : null}
+          </span>
+          <Button variant="ghost" size="sm" disabled={disabled || refreshing} onClick={onRefresh}
+            aria-label={t('Refresh {{label}}', { label })} icon={<LuRefreshCw className="size-3.5" aria-hidden="true" />}>
+            {t('Refresh')}
+          </Button>
+        </div>
+      )}
+      {error && <p role="alert" className="break-words text-xs text-danger">{error}</p>}
 
       {open &&
         panelPos &&
@@ -234,7 +253,7 @@ export function PlaylistPickerField({
             )}
             <div id={listboxId} role="listbox" aria-label={label} className="thin-scrollbar flex max-h-56 flex-col gap-0.5 overflow-y-auto">
               {filtered.length === 0 ? (
-                <p className="px-2 py-3 text-center text-xs text-text-3">{t("No playlists match \"{{search}}\".", { search: search })}</p>
+                <p className="px-2 py-3 text-center text-xs text-text-3">{loading && playlists.length === 0 ? t('Loading…') : search ? t("No playlists match \"{{search}}\".", { search }) : t('No playlists found')}</p>
               ) : (
                 libraryGroups.map((group) => (
                   <div key={group.kind ?? 'all'} role={group.kind ? 'group' : undefined}

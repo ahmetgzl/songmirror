@@ -1274,5 +1274,7 @@
   "Transfers view": "Aktarım görünümü",
   "Unavailable": "Kullanılamıyor",
   "View details": "Ayrıntıları görüntüle",
-  "View transfer": "Aktarımı görüntüle"
+  "View transfer": "Aktarımı görüntüle",
+  "Refresh {{label}}": "{{label}} yenile",
+  "Showing saved playlists while updating…": "Güncellenirken kayıtlı çalma listeleri gösteriliyor…"
 }

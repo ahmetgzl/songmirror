@@ -1274,5 +1274,7 @@
   "Transfers view": "ट्रांसफ़र दृश्य",
   "Unavailable": "अनुपलब्ध",
   "View details": "विवरण देखें",
-  "View transfer": "ट्रांसफ़र देखें"
+  "View transfer": "ट्रांसफ़र देखें",
+  "Refresh {{label}}": "{{label}} रीफ़्रेश करें",
+  "Showing saved playlists while updating…": "अपडेट के दौरान सहेजी गई प्लेलिस्ट दिखाई जा रही हैं…"
 }

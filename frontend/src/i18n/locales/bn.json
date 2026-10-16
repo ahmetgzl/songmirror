@@ -1274,5 +1274,7 @@
   "Transfers view": "স্থানান্তরের দৃশ্য",
   "Unavailable": "অনুপলব্ধ",
   "View details": "বিস্তারিত দেখুন",
-  "View transfer": "স্থানান্তর দেখুন"
+  "View transfer": "স্থানান্তর দেখুন",
+  "Refresh {{label}}": "{{label}} রিফ্রেশ করুন",
+  "Showing saved playlists while updating…": "আপডেট চলাকালে সংরক্ষিত প্লেলিস্ট দেখানো হচ্ছে…"
 }

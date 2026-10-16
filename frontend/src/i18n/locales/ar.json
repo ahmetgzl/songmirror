@@ -1402,5 +1402,7 @@
   "Transfers view": "عرض عمليات النقل",
   "Unavailable": "غير متاح",
   "View details": "عرض التفاصيل",
-  "View transfer": "عرض عملية النقل"
+  "View transfer": "عرض عملية النقل",
+  "Refresh {{label}}": "تحديث {{label}}",
+  "Showing saved playlists while updating…": "عرض قوائم التشغيل المحفوظة أثناء التحديث…"
 }

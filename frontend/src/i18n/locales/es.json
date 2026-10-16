@@ -1306,5 +1306,7 @@
   "Transfers view": "Vista de transferencias",
   "Unavailable": "No disponible",
   "View details": "Ver detalles",
-  "View transfer": "Ver transferencia"
+  "View transfer": "Ver transferencia",
+  "Refresh {{label}}": "Actualizar {{label}}",
+  "Showing saved playlists while updating…": "Mostrando las listas guardadas mientras se actualizan…"
 }

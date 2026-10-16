@@ -1274,5 +1274,7 @@
   "Transfers view": "転送の表示",
   "Unavailable": "利用不可",
   "View details": "詳細を表示",
-  "View transfer": "転送を表示"
+  "View transfer": "転送を表示",
+  "Refresh {{label}}": "{{label}}を更新",
+  "Showing saved playlists while updating…": "更新中は保存済みのプレイリストを表示しています…"
 }

@@ -1274,5 +1274,7 @@
   "Transfers view": "전송 보기 방식",
   "Unavailable": "이용 불가",
   "View details": "세부 정보 보기",
-  "View transfer": "전송 보기"
+  "View transfer": "전송 보기",
+  "Refresh {{label}}": "{{label}} 새로고침",
+  "Showing saved playlists while updating…": "업데이트하는 동안 저장된 재생목록을 표시합니다…"
 }

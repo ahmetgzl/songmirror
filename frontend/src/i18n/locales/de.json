@@ -1274,5 +1274,7 @@
   "Transfers view": "Übertragungsansicht",
   "Unavailable": "Nicht verfügbar",
   "View details": "Details anzeigen",
-  "View transfer": "Übertragung anzeigen"
+  "View transfer": "Übertragung anzeigen",
+  "Refresh {{label}}": "{{label}} aktualisieren",
+  "Showing saved playlists while updating…": "Gespeicherte Playlists werden während der Aktualisierung angezeigt…"
 }
