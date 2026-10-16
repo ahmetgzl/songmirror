@@ -319,7 +319,7 @@ export function PlaylistDetailModal({ account, playlist, onClose, onChanged }: P
           />
         ) : null}
 
-        {detail && provider && playlistId && account ? (
+        {detail && provider && playlistId && account && account.provider !== 'jellyfin' ? (
           <div className="flex flex-col gap-3 rounded-control border border-border bg-inset px-3.5 py-3 sm:flex-row sm:items-center">
             <div className="min-w-0 flex-1">
               <p className="font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-text-3">

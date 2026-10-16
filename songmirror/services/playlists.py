@@ -10,7 +10,6 @@ import os
 import sqlite3
 import uuid
 from dataclasses import asdict, dataclass, field
-from contextlib import nullcontext
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import quote
@@ -183,6 +182,10 @@ class PlaylistService:
         ) from exc
 
     def _target(self, provider_id):
+        if self._provider(provider_id) == "jellyfin":
+            raise PlaylistReadOnlyError(
+                "Jellyfin playlist tracks are managed in Jellyfin. Open the service to edit them."
+            )
         self._settings.apply_to_env()
         opts = parse_args([])
         opts.account_profiles = self._profiles
@@ -211,8 +214,7 @@ class PlaylistService:
 
     def _with_cache(self, callback):
         """Run a short operation against the configured persistent song DB."""
-        self._settings.apply_to_env()
-        cache_file = os.getenv("SONG_CACHE_FILE") or str(
+        cache_file = self._settings.get("SONG_CACHE_FILE") or os.getenv("SONG_CACHE_FILE") or str(
             self._settings.data_dir / "song_cache.db"
         )
         conn = archive.connect_playlist_cache(
@@ -278,6 +280,15 @@ class PlaylistService:
         except Exception as exc:
             self._cache_warning("pruning", exc)
 
+    def _jellyfin_config(self, provider_id):
+        if self._profiles is not None:
+            return self._profiles.environment_snapshot(provider_id)
+        values = {key: os.environ[key] for key in (
+            "JELLYFIN_URL", "JELLYFIN_API_KEY", "JELLYFIN_USER_ID",
+        ) if key in os.environ}
+        values.update(self._settings.load())
+        return values
+
     def browse(self, provider_id):
         """[{id, name, count, image, owned}] for one connected provider (empty if
         unconfigured). Provider-agnostic: every service is listed through its
@@ -287,11 +298,10 @@ class PlaylistService:
         Jellyfin is browse-only and lists via its own API."""
         if self._provider(provider_id) == "jellyfin":
             from ..engine import jellyfin
-            activation = self._profiles.activate(provider_id) if self._profiles else nullcontext()
-            with activation:
-                if self._profiles is None:
-                    self._settings.apply_to_env()
-                server = (os.getenv("JELLYFIN_URL") or "").rstrip("/")
+            try:
+                config = self._jellyfin_config(provider_id)
+                configured_url = config.get("JELLYFIN_URL")
+                server = jellyfin.server_url(configured_url) if configured_url else ""
                 rows = [{
                     **row,
                     "owned": True,
@@ -299,7 +309,9 @@ class PlaylistService:
                         f"{server}/web/#/details?id={quote(str(row['id']), safe='')}"
                         if server else ""
                     ),
-                } for row in jellyfin.list_playlists()]
+                } for row in jellyfin.list_playlists(config=config)]
+            except jellyfin.JellyfinError as exc:
+                raise PlaylistBrowseError(str(exc)) from exc
             return sorted(rows, key=lambda r: (r["name"] or "").casefold())
         target = self._target(provider_id)
         try:
@@ -420,6 +432,22 @@ class PlaylistService:
             self._cache_detail(detail)
         return detail
 
+    def _jellyfin_page(self, provider_id, playlist_id, *, offset=0, limit=20):
+        from ..engine import jellyfin
+
+        try:
+            page = jellyfin.playlist_page(
+                playlist_id, offset=offset, limit=limit, config=self._jellyfin_config(provider_id),
+            )
+        except jellyfin.JellyfinError as exc:
+            raise PlaylistBrowseError(str(exc)) from exc
+        if page is None:
+            self._invalidate_detail(provider_id, playlist_id)
+            raise PlaylistNotFoundError(
+                f"That {self._label(provider_id)} playlist no longer exists. Refresh Browse."
+            )
+        return {**page, "provider": provider_id, "description": _plain_text(page["description"])}
+
     def detail(self, provider_id, playlist_id, *, refresh=False, expected_count=None):
         cached = self._cached_detail(provider_id, playlist_id)
         if (
@@ -429,9 +457,16 @@ class PlaylistService:
         ):
             return cached
         if self._provider(provider_id) == "jellyfin":
-            raise PlaylistReadOnlyError(
-                "Jellyfin playlist tracks are managed in Jellyfin. Open the service to edit them."
-            )
+            detail = self._jellyfin_page(provider_id, playlist_id, limit=200)
+            while detail["next_cursor"] is not None:
+                page = self._jellyfin_page(
+                    provider_id, playlist_id, offset=int(detail["next_cursor"]), limit=200,
+                )
+                detail = {**detail, "tracks": detail["tracks"] + page["tracks"],
+                          "count": page["count"], "next_cursor": page["next_cursor"],
+                          "complete": page["complete"]}
+            self._cache_detail(detail)
+            return detail
         target = self._target(provider_id)
         try:
             playlist = target.find_playlist(str(playlist_id))
@@ -540,6 +575,11 @@ class PlaylistService:
                 return {**cached, "next_cursor": None, "complete": True}
             if refresh:
                 self._invalidate_detail(provider_id, playlist_id)
+
+        if self._provider(provider_id) == "jellyfin":
+            if cursor is not None and (not cursor.isdecimal() or int(cursor) != offset):
+                raise PlaylistChangedError("The playlist page is out of date. Refresh it and retry.")
+            return self._jellyfin_page(provider_id, playlist_id, offset=offset)
 
         target = self._target(provider_id)
         page_reader = getattr(target, "playlist_tracks_page", None)

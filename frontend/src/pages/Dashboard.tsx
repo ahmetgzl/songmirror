@@ -1,4 +1,5 @@
 import { t, useTranslation } from '@/i18n'
+import { FeatureGuide } from '@/components/onboarding/FeatureGuide'
 import { Hero } from '@/components/dashboard/Hero'
 import { LiveFeed } from '@/components/dashboard/LiveFeed'
 import { NeedsALook } from '@/components/dashboard/NeedsALook'
@@ -37,6 +38,8 @@ export default function Dashboard() {
       </div>
 
       <NeedsALook accounts={accounts} status={status} />
+
+      <FeatureGuide page="dashboard" />
 
       <SyncsPanel syncs={syncs} status={status} accounts={accounts} onChanged={refreshAll} />
 

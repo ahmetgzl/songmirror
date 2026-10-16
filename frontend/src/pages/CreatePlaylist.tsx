@@ -696,6 +696,7 @@ export default function CreatePlaylist() {
         <>
           <Card className="flex flex-col gap-4 p-4 sm:p-6">
             <h2 className="font-semibold text-text">{t('Source')}</h2>
+            <div data-tour="create-source">
             <Segmented
               ariaLabel={t('Source')}
               value={sourceMethod}
@@ -709,6 +710,7 @@ export default function CreatePlaylist() {
                 { value: 'url', label: t('URL') },
               ]}
             />
+            </div>
 
             {sourceMethod === 'text' && (
               <div className="flex flex-col gap-1.5">
@@ -827,13 +829,13 @@ export default function CreatePlaylist() {
           <Card className="flex flex-col gap-4 p-4 sm:p-6">
             <h2 className="font-semibold text-text">{t('Destination')}</h2>
             {writableAccounts.length === 0 ? (
-              <p className="rounded-control bg-warning-soft px-3 py-2 text-sm text-warning">
+              <p data-tour="create-destination" className="rounded-control bg-warning-soft px-3 py-2 text-sm text-warning">
                 {t('No writable accounts connected')}{' '}
                 {t('Connect a service that can create playlists on the Accounts page first.')}
               </p>
             ) : (
               <>
-                <SelectField
+                <div data-tour="create-destination"><SelectField
                   label={t('Account')}
                   value={destinationAccount}
                   onChange={(e) => setDestinationAccount(e.target.value)}
@@ -844,7 +846,7 @@ export default function CreatePlaylist() {
                       label: `${a.provider_name || a.provider} — ${a.label || a.name || a.id}`,
                     })),
                   ]}
-                />
+                /></div>
                 {destinationAccount && (
                   <>
                     <div className="flex flex-col gap-1.5">
@@ -901,7 +903,7 @@ export default function CreatePlaylist() {
           </Card>
 
           <div>
-            <Button onClick={() => void handleCreate()} disabled={!canCreateImport} loading={loading}>
+            <Button data-tour="create-match" onClick={() => void handleCreate()} disabled={!canCreateImport} loading={loading}>
               {t('Find matches')}
             </Button>
           </div>
@@ -910,7 +912,7 @@ export default function CreatePlaylist() {
 
       {step === 'review' && jobData && (
         <>
-          <Card className="flex flex-col gap-4 p-4 sm:p-6">
+          <Card data-tour="create-review" className="flex flex-col gap-4 p-4 sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="font-semibold text-text">{t('Review Matches')}</h2>
               <div className="flex flex-wrap gap-2">
@@ -1168,7 +1170,7 @@ export default function CreatePlaylist() {
       )}
 
       {step === 'progress' && job && (
-        <Card className="flex flex-col gap-4 p-4 sm:p-6">
+        <Card data-tour="create-progress" className="flex flex-col gap-4 p-4 sm:p-6">
           <div className="flex items-center gap-4">
             <Spinner />
             <div>
@@ -1232,7 +1234,7 @@ export default function CreatePlaylist() {
       )}
 
       {step === 'result' && job && (
-        <Card className="flex flex-col gap-3 p-4 sm:p-6">
+        <Card data-tour="create-result" className="flex flex-col gap-3 p-4 sm:p-6">
           {job.status === 'done' ? (
             <>
               <h2 className="font-semibold text-success">

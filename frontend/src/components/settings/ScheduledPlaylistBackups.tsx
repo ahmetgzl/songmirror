@@ -379,13 +379,13 @@ function BackupScheduleCard({
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <IntervalField
+        <div data-tour="backup-schedule"><IntervalField
           label={t("Backup frequency")}
           help={t("Choose how often to save a fresh backup.")}
           value={draft.interval}
           error={intervalOk ? undefined : t("Choose an interval from 1 minute to 365 days.")}
           onChange={(interval) => setDraft((current) => ({ ...current, interval }))}
-        />
+        /></div>
         <SelectField
           label={t("Backup format")}
           help={t("Playlist names and track details; audio is not included.")}
@@ -436,7 +436,7 @@ function BackupScheduleCard({
         {job.running && <p className="mt-2 text-xs text-text-3">{t("You can choose a folder now. Save the new location after this backup finishes.")}</p>}
       </div>
 
-      <div className="mt-4 rounded-control border border-border/80 bg-surface px-3 py-2.5 text-xs leading-relaxed text-text-2">
+      <div data-tour="backup-result" className="mt-4 rounded-control border border-border/80 bg-surface px-3 py-2.5 text-xs leading-relaxed text-text-2">
         <div aria-live="polite">
           {job.running ? (
             <BackupProgress progress={job.progress} />
@@ -608,7 +608,7 @@ export function ScheduledPlaylistBackups() {
       {backups !== null ? (
         <div className="rounded-control border border-dashed border-border-strong p-3.5 sm:p-4">
           {available.length > 0 ? (
-            <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <div data-tour="backup-add" className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
               <div className="min-w-0 flex-1">
                 <SelectField
                   label={t("Add a connected account")}
@@ -627,7 +627,7 @@ export function ScheduledPlaylistBackups() {
               <p className="text-xs text-text-3 sm:col-span-2">{t("Each account gets its own schedule and folder. New schedules start with daily backups.")}</p>
             </div>
           ) : (
-            <p className="text-xs leading-relaxed text-text-3">
+            <p data-tour={connectedAccountCount === 0 ? 'backup-empty' : undefined} className="text-xs leading-relaxed text-text-3">
               {accountsLoading
                 ? t("Loading connected services…")
                 : connectedAccountCount === 0

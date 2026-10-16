@@ -44,7 +44,7 @@ export function MappingRow({ provider, entry, onChanged }: MappingRowProps) {
   }
 
   return (
-    <li className={cn('flex flex-col gap-3 p-4 sm:px-6', !entry.target_id && 'bg-surface-2')}>
+    <li data-tour="mapping-row" className={cn('flex flex-col gap-3 p-4 sm:px-6', !entry.target_id && 'bg-surface-2')}>
       <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-center">
         {/* Phone rows have three deliberate rails: identity, mapping state,
             and touch actions. Wider rows collapse those rails back together. */}

@@ -10,12 +10,13 @@
     "preview": "vite preview",
     "i18n:extract": "node scripts/extract-i18n.mjs",
     "i18n:check": "node scripts/check-i18n.mjs && node scripts/check-readmes.mjs",
-    "test:e2e": "node e2e/verify.cjs && node e2e/backup-folder-edit.cjs && node e2e/i18n.cjs && node e2e/playlist-creation.cjs && node e2e/lastfm-sync.cjs && node e2e/backup-snapshots.cjs && node e2e/playlist-visibility.cjs && node e2e/playlist-details.cjs && node e2e/transfer-resolutions.cjs",
+    "test:e2e": "node e2e/verify.cjs && node e2e/backup-folder-edit.cjs && node e2e/i18n.cjs && node e2e/playlist-creation.cjs && node e2e/lastfm-sync.cjs && node e2e/backup-snapshots.cjs && node e2e/playlist-visibility.cjs && node e2e/playlist-details.cjs && node e2e/playlist-browser.cjs && node e2e/transfer-resolutions.cjs && node e2e/youtube-transfers.cjs && node e2e/jellyfin.cjs && node e2e/onboarding.cjs",
     "test:e2e:ci": "pnpm build && pnpm test:e2e"
   },
   "dependencies": {
     "@fontsource-variable/archivo": "^5.2.8",
     "@fontsource/space-mono": "^5.2.9",
+    "driver.js": "^1.9.0",
     "i18next": "^26.4.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

@@ -333,27 +333,28 @@ def test_transfer_same_provider_copies_by_id_without_resolving():
     assert resolved == []          # resolver never invoked
 
 
+@pytest.mark.parametrize("provider", ["spotify", "ytmusic"])
 def test_transfer_service_builds_both_selected_profiles_for_cross_account_copy(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, provider
 ):
     """Two accounts of one provider stay distinct all the way to construction.
 
     The copy path must still recognize the underlying provider as identical so
-    Spotify track ids can be written directly into the other account.
+    Catalog track ids can be written directly into the other account.
     """
     built, added, resolved = [], [], []
     settings = SettingsStore(dir=tmp_path)
     profiles = AccountProfileStore(settings)
-    source_profile = profiles.create("spotify", "Alice")
-    dest_profile = profiles.create("spotify", "Bob")
+    source_profile = profiles.create(provider, "Alice")
+    dest_profile = profiles.create(provider, "Bob")
 
     src = _Prov(
         str(tmp_path / "alice-cache.json"),
-        [{"id": "spotify-track", "name": "Song", "artists": ["Artist"],
+        [{"id": "catalog-track", "name": "Song", "artists": ["Artist"],
           "duration_ms": 1, "isrc": "I", "added_at": "1"}],
-        source="spotify",
+        source=provider,
     )
-    dst = _Prov(str(tmp_path / "bob-cache.json"), [], source="spotify")
+    dst = _Prov(str(tmp_path / "bob-cache.json"), [], source=provider)
     src.track_id = lambda raw: raw["id"]
     dst.resolve = lambda norm, cache: resolved.append(norm["name"])
     dst.add = lambda playlist, ids: added.extend(ids)
@@ -381,11 +382,11 @@ def test_transfer_service_builds_both_selected_profiles_for_cross_account_copy(
 
     assert built == [source_profile.id, dest_profile.id]
     assert job["source"]["account"] == source_profile.id
-    assert job["source"]["provider"] == "spotify"
+    assert job["source"]["provider"] == provider
     assert job["dest"]["account"] == dest_profile.id
-    assert job["dest"]["provider"] == "spotify"
+    assert job["dest"]["provider"] == provider
     assert job["status"] == "done"
-    assert added == ["spotify-track"]
+    assert added == ["catalog-track"]
     assert resolved == []
 
 
