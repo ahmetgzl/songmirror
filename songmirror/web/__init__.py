@@ -78,6 +78,7 @@ def create_app(settings=None, bus=None, sync_service=None, links=None, transfers
         os.environ["SONGMIRROR_ENV_FILE"] = settings.env_path
         settings.apply_to_env()
         account_profiles.capture_environment()
+        transfers.recover_history()
         await sync_service.start()
         await playlist_backups.start()
         # Recover orphaned import jobs and prune stale terminal history.

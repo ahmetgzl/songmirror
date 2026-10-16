@@ -244,7 +244,7 @@ def test_transfer_skips_unavailable_tidal_entries_without_aborting():
     assert result["unavailable"] == 1
     assert result["not_found"] == []
     assert added == ["apple-track"]
-    assert progress == [(1, 2, 0), (2, 2, 1)]
+    assert progress == [(1, 2, 0), (2, 2, 0), (2, 2, 1)]
 
 
 def test_transfer_ignores_unavailable_tidal_destination_entries_during_dedup():
@@ -729,7 +729,8 @@ def test_transfer_reports_progress():
              {"search": {}, "isrc": {}, "dirty": False}, execute=True, max_adds=100,
              on_progress=lambda p, t, a: calls.append((p, t, a)))
     assert calls[0] == (0, 3, 0)                            # total published before matching
-    assert [p for p, _, _ in calls] == [0, 1, 2, 3]        # monotonic scan over all 3 tracks
+    assert sorted(set(p for p, _, _ in calls)) == [0, 1, 2, 3]
+    assert [p for p, _, _ in calls] == sorted(p for p, _, _ in calls)
     assert calls[-1] == (3, 3, 1)                           # every track scanned, 1 added
 
 
@@ -806,6 +807,91 @@ def test_run_exclusive_queues_behind_sync(monkeypatch, tmp_path):
 
     asyncio.run(scenario())
     assert order == ["sync-start", "sync-end", "transfer"]  # the transfer waited for the sync
+
+
+@pytest.mark.parametrize("stop_queued", [False, True])
+def test_transfer_stays_queued_without_provider_work_until_engine_is_available(monkeypatch, tmp_path, stop_queued):
+    async def scenario():
+        _service(monkeypatch, tmp_path)
+        import threading
+        event_loop_thread = threading.get_ident()
+        bus = EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        settings = SettingsStore(dir=tmp_path)
+        sync = SyncService(settings, bus)
+        service = TransferService(settings, bus, sync)
+        setup_calls = []
+        original_build = service._build
+
+        def build(*args):
+            assert threading.get_ident() != event_loop_thread, "Blocking setup must run off the event loop"
+            setup_calls.append(args[0])
+            return original_build(*args)
+
+        monkeypatch.setattr(service, "_build", build)
+        await sync._lock.acquire()
+        try:
+            job = service.submit({"source_provider": "apple", "source_playlist_id": "p1",
+                                  "dest_provider": "ytmusic", "dest_playlist_id": "p1"})
+            await asyncio.sleep(0)
+            assert job["status"] == "queued", "Waiting for a sync is not a running source read"
+            assert job.get("started_at") is None
+            assert setup_calls == [], "Provider setup must wait behind the engine queue too"
+            assert service.history.get(job["id"])["status"] == "queued"
+            assert [j["id"] for j in service.list_active()] == [job["id"]]
+            if stop_queued:
+                assert service.stop(job["id"])
+                assert job["status"] == "stopped"
+                assert service.list_active() == []
+        finally:
+            sync._lock.release()
+        if stop_queued:
+            await asyncio.sleep(0)
+            assert setup_calls == [], "Stopping a queued job must not create or read a playlist"
+            assert job.get("started_at") is None
+        else:
+            await _await_job(service, job["id"])
+            assert job["status"] == "done", job["error"]
+            assert setup_calls == ["apple", "ytmusic"]
+            assert job["started_at"]
+
+    asyncio.run(scenario())
+
+
+def test_transfer_waits_for_another_transfer_before_starting(monkeypatch, tmp_path):
+    import threading
+
+    async def scenario():
+        source, _ = _service(monkeypatch, tmp_path)
+        started, release = threading.Event(), threading.Event()
+        settings, bus = SettingsStore(dir=tmp_path), EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        service = TransferService(settings, bus, SyncService(settings, bus))
+        original_read = source.playlist_tracks
+
+        def read(playlist):
+            started.set()
+            assert release.wait(2)
+            return original_read(playlist)
+
+        source.playlist_tracks = read
+        spec = {"source_provider": "apple", "source_playlist_id": "p1",
+                "dest_provider": "ytmusic", "dest_playlist_id": "p1"}
+        first = service.submit(spec)
+        assert await asyncio.to_thread(started.wait, 1)
+        try:
+            second = service.submit(spec)
+            await asyncio.sleep(0)
+            assert first["status"] == "running"
+            assert second["status"] == "queued"
+            assert second.get("started_at") is None
+        finally:
+            release.set()
+        await _await_job(service, first["id"])
+        await _await_job(service, second["id"])
+        assert first["status"] == second["status"] == "done"
+
+    asyncio.run(scenario())
 
 
 class _Prov:
@@ -954,6 +1040,60 @@ def test_created_destination_is_recorded_and_reused_after_a_pause(monkeypatch, t
     assert out["done"]["status"] == "done"
     assert list(created) == ["new-1"]  # resuming must not create a second playlist
     assert added == [("new-1", ["dest-track"])]
+
+
+def test_service_tracks_confirmed_writes_and_resumes_without_double_counting(monkeypatch, tmp_path):
+    async def scenario():
+        src, dst = _service(monkeypatch, tmp_path)
+        src._tracks = [{**src._tracks[0], "id": f"s{i}", "name": f"Song {i}"} for i in range(3)]
+        dst.transfer_batch_size = 1
+        dst.resolve = lambda track, _cache: ("dest-" + track["name"], "search")
+        written = []
+        bus = EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        settings = SettingsStore(dir=tmp_path)
+        service = TransferService(settings, bus, SyncService(settings, bus))
+
+        def add(_playlist, ids):
+            # Before the write, the job counts only previous acknowledgements.
+            assert job["added"] == len(written)
+            assert job["phase"] == "copying"
+            written.extend(ids)
+            dst._tracks.append({"id": ids[0], "videoId": ids[0], "name": ids[0].removeprefix("dest-"),
+                                "artists": ["A"]})
+            if len(written) == 1:
+                service.pause(job["id"])
+
+        dst.add = add
+        job = service.submit({"source_provider": "apple", "source_playlist_id": "p1",
+                              "dest_provider": "ytmusic", "dest_playlist_id": "p1"})
+        for _ in range(100):
+            if job["status"] == "paused":
+                break
+            await asyncio.sleep(0.01)
+        assert job["status"] == "paused"
+        assert job["added"] == job["written"] == 1
+        assert job["write_total"] == 3
+        paused = service.history.get(job["id"])
+        assert paused["status"] == "paused" and paused["added"] == 1
+        assert paused["finished_at"] is None
+        assert service.resume(job["id"])
+        await _await_job(service, job["id"])
+        assert job["status"] == "done", job["error"]
+        assert job["added"] == 3
+        assert job["written"] == job["write_total"] == 2
+        assert written == ["dest-Song 0", "dest-Song 1", "dest-Song 2"]
+        saved = service.history.get(job["id"])
+        assert saved["added"] == 3 and saved["status"] == "done"
+        assert saved["finished_at"]
+        assert saved["source"]["playlist_name"] == "X"
+        assert saved["dest"]["playlist_id"] == "p1"
+        assert any(event["kind"] == "resumed" for event in saved["events"])
+        resumed = next(i for i, event in enumerate(saved["events"]) if event["kind"] == "resumed")
+        assert saved["events"][resumed + 1]["phase"] == "reading"
+        assert saved["events"][-1]["status"] == "done"
+
+    asyncio.run(scenario())
 
 
 def test_transfer_service_resolve_writes_cache(monkeypatch, tmp_path):

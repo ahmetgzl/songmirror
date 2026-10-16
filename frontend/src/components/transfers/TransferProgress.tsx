@@ -7,6 +7,7 @@ import { errorMessage } from '@/api'
 import { serviceLogoId, tagDot, tagLabel, tagText, TRANSFER_STATUS_STYLES } from '@/lib/constants'
 import { cn } from '@/lib/cn'
 import { playlistExternalUrl } from '@/lib/playlistLinks'
+import { useTransferQueueStatus } from '@/hooks/useTransferQueueStatus'
 import type { TransferJob, TransferStatus } from '@/types'
 
 import { Button } from '../ui/Button'
@@ -23,14 +24,14 @@ function EndpointBadge({ provider, accountName, playlistName }: { provider: stri
   useTranslation()
   const logoId = serviceLogoId(provider)
   return (
-    <span className="inline-flex min-w-0 items-center gap-1.5">
+    <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
       {logoId ? (
         <ServiceLogo service={logoId} className={cn('size-3.5 shrink-0', tagText(provider))} />
       ) : (
         <span className={cn('size-2 shrink-0 rounded-full', tagDot(provider))} aria-hidden="true" />
       )}
       <span className="min-w-0 truncate font-semibold text-text">{playlistName}</span>
-      <span className="shrink-0 text-xs font-normal text-text-3">({accountName || tagLabel(provider)})</span>
+      <span className="min-w-0 max-w-full break-words text-xs font-normal text-text-3">({accountName || tagLabel(provider)})</span>
     </span>
   )
 }
@@ -161,6 +162,7 @@ export function TransferProgress({
   controls?: TransferControlHandlers
 }) {
   useTranslation()
+  const queueStatus = useTransferQueueStatus(job ? [job] : [])
   if (!job) {
     return (
       <Card className="p-4 sm:p-6">
@@ -178,10 +180,12 @@ export function TransferProgress({
     )
   }
 
-  const style = TRANSFER_STATUS_STYLES[job.status]
+  const status = queueStatus(job)
+  const style = TRANSFER_STATUS_STYLES[status]
   const unresolvedConflicts = job.conflicts.filter((c) => !c.resolved).length
-  const isRunning = job.status === 'running'
-  const isPaused = job.status === 'paused'
+  const isRunning = status === 'running'
+  const isPaused = status === 'paused'
+  const isWaiting = status === 'queued' || status === 'busy'
   // Paused reuses the exact same bar + readouts as running - the numbers
   // just stop moving because the backend stops advancing them, not because
   // of anything special here.
@@ -193,7 +197,14 @@ export function TransferProgress({
   // bar go determinate. `processed` counts source tracks examined, not tracks
   // added (misses and already-present tracks still advance the scan).
   const hasTotal = job.total > 0
-  const pct = hasTotal ? Math.min(100, Math.round((job.processed / job.total) * 100)) : 0
+  const isCopying = job.phase === 'copying'
+  // Older servers counted queued additions as if they had already been written.
+  // Show an indeterminate writing phase until confirmed counts are available.
+  const legacyCopying = !job.phase && hasTotal && job.processed >= job.total
+  const progressMax = isCopying ? (job.write_total ?? 0) : job.total
+  const progressNow = isCopying ? (job.written ?? 0) : job.processed
+  const determinate = progressMax > 0 && !legacyCopying
+  const pct = determinate ? Math.min(100, Math.round((progressNow / progressMax) * 100)) : 0
   // Edits SongMirror can't make (name, description, visibility, order) happen
   // in the destination service itself.
   const destUrl = job.dest.playlist_id ? playlistExternalUrl(job.dest.provider, 'playlist', job.dest.playlist_id) : ''
@@ -202,30 +213,30 @@ export function TransferProgress({
     <Card className="flex flex-col gap-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
-          <EndpointBadge provider={job.source.provider} accountName={job.source.name} playlistName={job.source.playlist_name} />
+          <EndpointBadge provider={job.source.provider} accountName={job.source.name} playlistName={job.source.playlist_name || job.source.playlist_id || t('Playlist')} />
           <LuArrowRight className="size-3.5 shrink-0 text-text-3 rtl:-scale-x-100" aria-hidden="true" />
           <EndpointBadge provider={job.dest.provider} accountName={job.dest.name} playlistName={job.dest.playlist_name} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Pill toneClasses={style.badge} label={style.label} pulsing={isRunning} />
           {destUrl ? (
-            <LinkButton variant="ghost" size="sm" href={destUrl} target="_blank" rel="noreferrer">
-              {t("Open in {{accountName}}", { accountName: job.dest.name || tagLabel(job.dest.provider) })}
-              <LuExternalLink className="size-3.5" aria-hidden="true" />
+            <LinkButton variant="ghost" size="sm" className="min-h-11 min-w-0 max-w-full py-2 md:min-h-8" style={{ height: 'auto' }} href={destUrl} target="_blank" rel="noreferrer">
+              <span className="min-w-0 break-words">{t("Open in {{accountName}}", { accountName: job.dest.name || tagLabel(job.dest.provider) })}</span>
+              <LuExternalLink className="size-3.5 shrink-0" aria-hidden="true" />
             </LinkButton>
           ) : null}
-          {controls && <TransferControls status={job.status} onPause={controls.onPause} onResume={controls.onResume} onStop={controls.onStop} />}
+          {controls && <TransferControls status={status} onPause={controls.onPause} onResume={controls.onResume} onStop={controls.onStop} />}
         </div>
       </div>
 
       {isActive &&
-        (hasTotal ? (
+        (determinate ? (
           <div
             role="progressbar"
             aria-label={t("Transfer progress")}
-            aria-valuenow={job.processed}
+            aria-valuenow={progressNow}
             aria-valuemin={0}
-            aria-valuemax={job.total}
+            aria-valuemax={progressMax}
             className="relative h-1.5 w-full overflow-hidden rounded-full bg-inset"
           >
             <div
@@ -240,7 +251,7 @@ export function TransferProgress({
           <div
             role="progressbar"
             aria-label={t("Transfer in progress")}
-            aria-valuetext={t("Reading the source playlist")}
+            aria-valuetext={legacyCopying ? t('Copying tracks…') : t("Reading the source playlist")}
             className="relative h-1.5 w-full overflow-hidden rounded-full bg-inset"
           >
             <div
@@ -254,20 +265,25 @@ export function TransferProgress({
 
       {job.error && <p className="rounded-control bg-danger-soft px-3 py-2 text-sm text-danger">{job.error}</p>}
 
-      {unavailable > 0 && (
+      {unavailable > 0 && job.source.provider === 'tidal' && (
         <p className="rounded-control bg-warning-soft px-3 py-2 text-sm text-text-2">
           {t("Skipped {{count, number}} unavailable TIDAL entry. You can remove the hidden entry from the source playlist in the playlist inspector.", { count: unavailable, defaultValue_one: "Skipped {{count, number}} unavailable TIDAL entry. You can remove the hidden entry from the source playlist in the playlist inspector.", defaultValue_other: "Skipped {{count, number}} unavailable TIDAL entries. You can remove the hidden entries from the source playlist in the playlist inspector." })}
         </p>
       )}
 
-      {isActive ? (
+      {isWaiting ? (
+        <div className="flex flex-col gap-2 text-sm text-text-2">
+          <p role="status">{t('Waiting for another sync or transfer to finish. This copy will start automatically.')}</p>
+          {job.added > 0 && <p>{t('· {{jobAdded, number}} added', { jobAdded: job.added })}</p>}
+        </div>
+      ) : isActive ? (
         <div className="flex flex-wrap items-end gap-4">
-          {job.added > 0 || isPaused ? (
+          {(job.added > 0 || isPaused) && !legacyCopying ? (
             <div className="flex items-baseline gap-2">
               <span className="font-mono text-[28px] font-bold leading-none text-success">+{formatNumber(job.added)}</span>
               <span className="font-mono text-[10px] tracking-[0.1em] text-text-3">{t("ADDED SO FAR")}</span>
             </div>
-          ) : (
+          ) : !isCopying ? (
             // Nothing's landed yet — a prominent "+0" reads as broken, so this
             // stays a subtle status line until the count has something to show,
             // then the live counter above takes over. The label distinguishes
@@ -276,7 +292,13 @@ export function TransferProgress({
             // always shows the plain (possibly "+0") count instead of a spinner.
             <div className="flex items-center gap-2 text-sm text-text-2">
               <Spinner className="size-3.5 shrink-0" aria-hidden="true" />
-              {hasTotal ? t("Matching tracks…") : t("Reading source playlist…")}
+              {legacyCopying ? t('Copying tracks…') : hasTotal ? t("Matching tracks…") : t("Reading source playlist…")}
+            </div>
+          ) : null}
+          {isCopying && (
+            <div className="flex items-center gap-2 text-sm text-text-2">
+              {isRunning && <Spinner className="size-3.5 shrink-0" aria-hidden="true" />}
+              <span>{t('Copying tracks…')} <span className="font-mono">{formatNumber(progressNow)} / {formatNumber(progressMax)}</span></span>
             </div>
           )}
           {hasTotal && (

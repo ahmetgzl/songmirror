@@ -5003,7 +5003,13 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err)
-  process.exitCode = 1
-})
+// Reuse the same public sample data for documentation captures without running
+// the full regression suite or connecting to a user's configured providers.
+module.exports = { ACCOUNTS, SHOWCASE_PLAYLISTS, installMocks, initialSyncs, syncStatusFixture }
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err)
+    process.exitCode = 1
+  })
+}

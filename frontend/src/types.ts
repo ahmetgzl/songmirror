@@ -405,9 +405,10 @@ export interface ProviderPlaylist {
   image: string
   /** First-party web-player URL for opening this exact playlist. */
   external_url: string
-  /** False for a followed (non-owned) playlist. Only Spotify distinguishes the
-   * two today; absent/true elsewhere. Drives the Created/Followed grouping. */
+  /** False for a followed (non-owned) playlist. Drives Created/Followed grouping. */
   owned?: boolean
+  /** Browser-connected YouTube libraries distinguish Music from video-only lists. */
+  library_kind?: 'music' | 'video'
 }
 
 export interface ProviderPlaylistTrack {
@@ -623,8 +624,37 @@ export interface TransferJob {
   total: number
   /** Source tracks examined so far (0..total) — drives the determinate bar. */
   processed: number
+  /** Writing progress is separate from reading and matching the source. */
+  phase?: 'waiting' | 'reading' | 'matching' | 'copying'
+  written?: number
+  write_total?: number
   conflicts: TransferConflict[]
   error: string | null
+  created_at?: string
+  started_at?: string | null
+  finished_at?: string | null
+  updated_at?: string
+  historical?: boolean
+}
+
+export interface TransferAuditEvent {
+  at: string
+  kind: string
+  status: TransferStatus
+  phase?: TransferJob['phase']
+  added: number
+  error: string | null
+}
+
+export interface TransferHistoryDetail extends TransferJob {
+  events: TransferAuditEvent[]
+}
+
+export interface TransferHistoryPage {
+  items: TransferJob[]
+  total: number
+  accounts: { id: string; name: string }[]
+  providers: string[]
 }
 
 /** POST /api/transfers body. `dest_playlist_id: null` creates a new playlist

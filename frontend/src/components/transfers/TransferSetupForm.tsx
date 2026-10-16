@@ -1,5 +1,5 @@
 import { t, useTranslation } from '@/i18n'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { api, errorMessage } from '@/api'
@@ -23,6 +23,7 @@ interface Props {
    * disconnected service. */
   accounts: Account[]
   entries: Record<string, ProviderPlaylistsEntry>
+  onRefreshPlaylists: (accountId: string) => Promise<void>
   onStarted: (jobId: string) => void
 }
 
@@ -43,7 +44,7 @@ function serviceIcon(account: Account | undefined) {
   return logoId ? <ServiceLogo service={logoId} className={`size-4 ${tagText(provider)}`} /> : undefined
 }
 
-export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
+export function TransferSetupForm({ accounts, entries, onRefreshPlaylists, onStarted }: Props) {
   useTranslation()
   const [sourceMode, setSourceMode] = useState<'library' | 'link'>('library')
   const [sourceProvider, setSourceProvider] = useState('')
@@ -65,6 +66,7 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
   const [confirming, setConfirming] = useState(false)
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const defaultsForSource = useRef<string | null>(null)
 
   // Only sync/transfer peers can be an endpoint — browse-only services like
   // Jellyfin (a local mirror the download step feeds) are filtered out.
@@ -93,12 +95,22 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
   // re-derive whenever the source playlist or the create-new choice changes,
   // but a manual edit in between sticks until one of those changes again.
   useEffect(() => {
-    if (destMode !== 'create') return
+    if (destMode !== 'create') {
+      defaultsForSource.current = null
+      return
+    }
     const source =
       sourceMode === 'link'
         ? preview
         : entries[sourceProvider]?.playlists.find((p) => p.id === sourcePlaylistId)
-    if (source?.name) setDestName(source.name)
+    const key = JSON.stringify([sourceMode, sourceProvider, sourceMode === 'link' ? preview?.playlist_id : sourcePlaylistId])
+    if (!source) {
+      defaultsForSource.current = null
+      return
+    }
+    if (defaultsForSource.current === key) return
+    defaultsForSource.current = key
+    setDestName(source.name)
     setDestDescription(source?.description ?? '')
     setDescriptionEdited(false)
   }, [destMode, sourceMode, preview, sourceProvider, sourcePlaylistId, entries])
@@ -143,7 +155,7 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
     Boolean(destPlaylistId) &&
     destPlaylistId === sourcePlaylistId
   const formValid =
-    Boolean(sourceProvider && sourcePlaylistId && destProvider && (destMode === 'create' ? destName.trim() : destPlaylistId)) &&
+    Boolean(sourceProvider && sourcePlaylist && destProvider && (destMode === 'create' ? destName.trim() : destPlaylist && destPlaylist.owned !== false)) &&
     !sameTarget
 
   async function handlePreview() {
@@ -263,6 +275,9 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
                       label={t("Playlist")}
                       playlists={entries[sourceProvider]?.playlists ?? []}
                       loading={entries[sourceProvider]?.loading}
+                      refreshing={entries[sourceProvider]?.refreshing}
+                      error={entries[sourceProvider]?.error}
+                      onRefresh={() => void onRefreshPlaylists(sourceProvider)}
                       value={sourcePlaylistId}
                       disabled={!sourceProvider}
                       onChange={setSourcePlaylistId}
@@ -384,6 +399,9 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
                     placeholder={destProvider ? t("Choose a playlist…") : t("Choose a destination service first")}
                     playlists={destPlaylists}
                     loading={entries[destProvider]?.loading}
+                    refreshing={entries[destProvider]?.refreshing}
+                    error={entries[destProvider]?.error}
+                    onRefresh={() => void onRefreshPlaylists(destProvider)}
                     value={destPlaylistId}
                     disabled={!destProvider}
                     onChange={setDestPlaylistId}

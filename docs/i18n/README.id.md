@@ -37,9 +37,52 @@ Alternatif gratis, sumber terbuka, dan dihosting sendiri untuk Soundiiz, TuneMyM
 
 <sup>Atur sekali — setiap playlist yang Anda buat akan tetap ditampilkan di setiap layanan, sesuai urutan tanggal yang ditambahkan.</sup>
 
-<a href="../../.github/assets/songmirror-demo.mp4"><img src="../../.github/assets/songmirror-demo.gif" alt="SongMirror demo — pengungkapan logo, dasbor, pengaturan sinkronisasi satu arah dan dua arah, transfer playlist langsung, dan pencocokan akurat dengan ISRC di tujuh layanan musik" width="88%"></a>
+</div>
 
-<sup>▶ <a href="../../.github/assets/songmirror-demo.mp4">Tonton versi 1080p</a></sup>
+<a id="quick-start"></a>
+
+## 🚀 Mulai Cepat
+
+Cara tercepat untuk menjalankannya adalah Docker — Compose mengambil gambar yang dipublikasikan, menyajikan UI web, dan menjalankan sinkronisasi Anda sesuai jadwal.
+
+Untuk instalasi persisten dengan restart otomatis:
+
+```bash
+git clone https://github.com/ahnafnafee/songmirror.git
+cd songmirror
+docker compose up -d
+```
+
+Buka **http://localhost:8888**. Di **Akun**, hubungkan layanan Anda. Pilih **Transfer** untuk satu kali penyalinan, atau **Sinkronisasi** untuk memperbarui daftar sesuai jadwal. Setiap halaman fitur memiliki **Mulai tur** yang menyorot kontrol langkah demi langkah.
+
+Atau coba image GHCR publik secara langsung tanpa mengkloning repositori:
+
+```bash
+docker run --rm -d --name songmirror -p 127.0.0.1:8888:8080 ghcr.io/ahnafnafee/songmirror:latest
+```
+
+Kemudian buka `http://localhost:8888` dan sambungkan layanan Anda di browser. Penyiapan Compose tidak memerlukan `.env` untuk memulai; semuanya dikonfigurasi di UI dan disimpan di bawah `./data`.
+
+Opsi langsung `docker run` dapat dibuang: `docker stop songmirror` menghapus wadah dan konfigurasinya. Gunakan Compose untuk instalasi yang tahan lama dengan kredensial, cache, dan unduhan yang persisten, atau lihat [panduan gambar kontainer](../docker-image.md) untuk penyematan tag dan intisari.
+
+Lebih suka menjalankannya tanpa Docker?
+
+```bash
+uv sync
+uv run uvicorn songmirror.web:app --host 0.0.0.0 --port 8080   # then open http://127.0.0.1:8080
+```
+
+> Memerlukan [`uv`](https://docs.astral.sh/uv/) (Python 3.13+). Untuk mirror unduhan lokal, juga `uv tool install spotdl` dan miliki `ffmpeg` di PATH.
+
+<a id="app-language"></a>
+
+### Bahasa aplikasi
+
+SongMirror mendukung bahasa Inggris, Arab, Turki, Spanyol, Cina Sederhana, Perancis, Portugis, Jerman, Jepang, Hindi, Bengali, Indonesia, Korea, Italia, dan Vietnam. Saat pertama kali dibuka, preferensi bahasa peramban diperiksa secara berurutan, termasuk varian regional, lalu bahasa pertama yang didukung digunakan. Jika tidak ada yang didukung, bahasa Inggris digunakan. Ubah bahasa melalui **Pengaturan → Umum → Bahasa**. Pilihan disimpan di peramban ini dan tetap berlaku setelah halaman dimuat ulang. Pilih **Otomatis (browser)** untuk kembali mengikuti preferensi peramban. Antarmuka bahasa Arab ditampilkan dari kanan ke kiri. Nama daftar putar, artis dan penyedia, kredensial, serta log diagnostik tetap mempertahankan nilai aslinya.
+
+<div align="right">
+
+[![][back-to-top]](#readme-top)
 
 </div>
 
@@ -51,10 +94,10 @@ Alternatif gratis, sumber terbuka, dan dihosting sendiri untuk Soundiiz, TuneMyM
 
 #### Daftar Isi
 
-- [✨ Fitur](#features)
-- [📸 Tangkapan layar](#screenshots)
 - [🚀 Mulai Cepat](#quick-start)
   - [Bahasa aplikasi](#app-language)
+- [✨ Fitur](#features)
+- [📸 Tangkapan layar](#screenshots)
 - [🐳 Selalu berjalan: Docker](#always-running-docker)
 - [⚙️ Cara kerjanya](#how-it-works)
   - [Cocok](#matching)
@@ -100,7 +143,9 @@ SongMirror menjaga daftar putar Anda tetap sama di mana saja tanpa menambahkan u
 - ♥ **Lagu yang disukai dan favorit** — sinkronkan koleksi favorit yang ada di setiap layanan di ketujuh penyedia musik, baik ke favorit tujuan atau daftar putar baru yang diberi nama.
 - 🎯 **pencocokan akurat sebesar ISRC** — identitas rekaman persis jika tersedia, dengan perkiraan penggantian judul/artis/durasi yang kompatibel dengan Unicode (perbedaan dalam kredit artis unggulan, akhiran "- Remaster 2015", skrip non-Latin, unggahan hanya video — semuanya ditangani).
 - 🎛️ **Beberapa sinkronisasi bernama** — siapkan sinkronisasi independen sebanyak yang Anda suka, masing-masing dengan layanan, daftar putar, jadwal, dan batas keamanannya sendiri.
-- ↪️ **transfer satu kali** — salin daftar putar apa pun dari satu layanan ke layanan lainnya dengan bilah kemajuan langsung; jeda, lanjutkan, atau hentikan saat penyalinan, dan selesaikan trek yang tidak cocok secara manual.
+- ↪️ **Transfer sekali jalan** — salin antar layanan atau dua akun pada layanan yang sama, termasuk seluruh daftar video YouTube. Daftar YouTube Music ditampilkan lebih dulu, lalu daftar video; pilih daftar milik Anda sebagai tujuan. Jeda, lanjutkan, atau hentikan penyalinan dan tinjau lagu tanpa kecocokan. Daftar tersimpan langsung muncul saat kembali sambil diperbarui di latar belakang.
+- **Riwayat audit transfer** — tinjau percobaan selesai, gagal, dihentikan, dan terputus beserta jumlah terkonfirmasi dan urutan status. Filter menurut daftar, status, akun, layanan, atau tanggal. Riwayat disimpan di volume data aplikasi dan bertahan saat kontainer diganti. [Riwayat dan pemulihan](../transfer-history.md).
+- **Panduan di setiap halaman fitur** — petunjuk singkat dan tur opsional menyorot kontrol. Sembunyikan semuanya di **Pengaturan → Umum → Tampilkan panduan fitur**. Tema, bahasa, panduan, tata letak daftar, dan pengurutan diingat dalam browser ini; pengaturan akun dan riwayat transfer disimpan di direktori data persisten.
 - 🕒 **Tambahkan trek atau pertahankan urutan trek** — salinan mendarat di akhir tujuan secara default, cepat dan aditif. Aktifkan Pertahankan yang Baru Ditambahkan untuk menulis ulang trek setelah trek baru terlama sehingga urutan penambahan tanggal cocok dengan sumbernya.
 - 🔗 **Transfer dari tautan** — tempelkan URL daftar putar publik dari layanan mana pun yang terhubung dan salin langsung. Tidak perlu menyimpan atau mengikutinya terlebih dahulu.
 - 🌐 **Daftar putar yang diikuti** — menyinkronkan dan mentransfer daftar putar yang Anda ikuti tetapi bukan milik Anda, bukan hanya daftar putar yang Anda buat.
@@ -127,6 +172,10 @@ SongMirror menjaga daftar putar Anda tetap sama di mana saja tanpa menambahkan u
 
 <div align="center">
 
+<a href="../../.github/assets/songmirror-demo.mp4"><img src="../../.github/assets/songmirror-demo.gif" alt="SongMirror demo — pengungkapan logo, dasbor, pengaturan sinkronisasi satu arah dan dua arah, transfer playlist langsung, dan pencocokan akurat dengan ISRC di tujuh layanan musik" width="88%"></a>
+
+<sup>▶ <a href="../../.github/assets/songmirror-demo.mp4">Tonton versi 1080p</a></sup>
+
 **Satu dasbor untuk setiap perpustakaan — sinkronisasi status, pekerjaan, aktivitas langsung, dan kesehatan layanan**
 
 <img src="../../.github/assets/dashboard.png" alt="SongMirror dasbor menampilkan status sinkronisasi, pekerjaan yang dikonfigurasi, aktivitas langsung, dan kesehatan untuk Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music, YouTube Music, dan Jellyfin" width="82%">
@@ -143,52 +192,15 @@ SongMirror menjaga daftar putar Anda tetap sama di mana saja tanpa menambahkan u
 
 <img src="../../.github/assets/playlists.png" alt="Menelusuri daftar putar di seluruh layanan yang terhubung dengan sampul dan jumlah lagu" width="82%">
 
+**Salin daftar antar akun, termasuk pada layanan yang sama**
+
+<img src="../../.github/assets/transfers.png" alt="Salin daftar antar akun, termasuk pada layanan yang sama" width="82%">
+
+**Tinjau setiap percobaan transfer dengan filter dan jejak audit**
+
+<img src="../../.github/assets/transfer-history.png" alt="Tinjau setiap percobaan transfer dengan filter dan jejak audit" width="82%">
+
 </div>
-
-<div align="right">
-
-[![][back-to-top]](#readme-top)
-
-</div>
-
-<a id="quick-start"></a>
-
-## 🚀 Mulai Cepat
-
-Cara tercepat untuk menjalankannya adalah Docker — Compose mengambil gambar yang dipublikasikan, menyajikan UI web, dan menjalankan sinkronisasi Anda sesuai jadwal.
-
-Untuk instalasi persisten dengan restart otomatis:
-
-```bash
-git clone https://github.com/ahnafnafee/songmirror.git
-cd songmirror
-docker compose up -d
-```
-
-Atau coba image GHCR publik secara langsung tanpa mengkloning repositori:
-
-```bash
-docker run --rm -d --name songmirror -p 127.0.0.1:8888:8080 ghcr.io/ahnafnafee/songmirror:latest
-```
-
-Kemudian buka `http://localhost:8888` dan sambungkan layanan Anda di browser. Penyiapan Compose tidak memerlukan `.env` untuk memulai; semuanya dikonfigurasi di UI dan disimpan di bawah `./data`.
-
-Opsi langsung `docker run` dapat dibuang: `docker stop songmirror` menghapus wadah dan konfigurasinya. Gunakan Compose untuk instalasi yang tahan lama dengan kredensial, cache, dan unduhan yang persisten, atau lihat [panduan gambar kontainer](../docker-image.md) untuk penyematan tag dan intisari.
-
-Lebih suka menjalankannya tanpa Docker?
-
-```bash
-uv sync
-uv run uvicorn songmirror.web:app --host 0.0.0.0 --port 8080   # then open http://127.0.0.1:8080
-```
-
-> Memerlukan [`uv`](https://docs.astral.sh/uv/) (Python 3.13+). Untuk mirror unduhan lokal, juga `uv tool install spotdl` dan miliki `ffmpeg` di PATH.
-
-<a id="app-language"></a>
-
-### Bahasa aplikasi
-
-SongMirror mendukung bahasa Inggris, Arab, Turki, Spanyol, Cina Sederhana, Perancis, Portugis, Jerman, Jepang, Hindi, Bengali, Indonesia, Korea, Italia, dan Vietnam. Saat pertama kali dibuka, preferensi bahasa peramban diperiksa secara berurutan, termasuk varian regional, lalu bahasa pertama yang didukung digunakan. Jika tidak ada yang didukung, bahasa Inggris digunakan. Ubah bahasa melalui **Pengaturan → Umum → Bahasa**. Pilihan disimpan di peramban ini dan tetap berlaku setelah halaman dimuat ulang. Pilih **Otomatis (browser)** untuk kembali mengikuti preferensi peramban. Antarmuka bahasa Arab ditampilkan dari kanan ke kiri. Nama daftar putar, artis dan penyedia, kredensial, serta log diagnostik tetap mempertahankan nilai aslinya.
 
 <div align="right">
 
@@ -498,6 +510,8 @@ Berbicara dengan [YouTube Data API v3](https://developers.google.com/youtube/v3)
 3. Di aplikasi, tempel ID klien + rahasia dan lengkapi kode perangkat di layar.
 
 > Kuota: Data API memungkinkan 10.000 unit/hari (biaya pencarian 100, tambah/hapus 50). Pemeliharaan dalam kondisi tunak itu murah; simpanan pertama yang besar dapat mencapai batasnya dan dilanjutkan keesokan harinya.
+
+Untuk memindahkan daftar pribadi antar akun Google, hubungkan keduanya; untuk daftar publik cukup hubungkan akun tujuan dan tempel tautannya. Mode browser menyertakan daftar video YouTube biasa dan membaca semua halaman. Gunakan **Mode tanpa kuota** untuk salinan panjang; koneksi Data API tetap memiliki kuota harian. Jika YouTube meminta saluran, selesaikan penyiapannya pada akun tujuan, lalu coba lagi. Ikuti [panduan transfer akun](../youtube-account-transfers.md).
 
 <div align="right">
 

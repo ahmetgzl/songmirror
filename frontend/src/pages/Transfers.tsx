@@ -7,6 +7,8 @@ import { ConflictList } from '@/components/transfers/ConflictList'
 import { TransferLiveFeed } from '@/components/transfers/TransferLiveFeed'
 import { TransferProgress } from '@/components/transfers/TransferProgress'
 import { TransferSetupForm } from '@/components/transfers/TransferSetupForm'
+import { TransferHistory } from '@/components/transfers/TransferHistory'
+import { Segmented } from '@/components/ui/Segmented'
 import { Card } from '@/components/ui/Card'
 import { LoadingStatus, Skeleton } from '@/components/ui/Skeleton'
 import { useAccounts } from '@/hooks/useAccounts'
@@ -23,9 +25,10 @@ export default function Transfers() {
     () => connectedAccounts.filter((account) => capabilitiesOf(account).library_read).map((account) => account.id),
     [connectedAccounts],
   )
-  const { entries } = useProviderPlaylists(connectedIds)
+  const { entries, refreshProvider } = useProviderPlaylists(connectedIds)
 
   const [jobId, setJobId] = useState<string | null>(null)
+  const [view, setView] = useState('new')
   const { job, error: jobError, refresh: refreshJob } = useTransfer(jobId)
 
   const { events, connected, clear } = useEventStream()
@@ -36,6 +39,7 @@ export default function Transfers() {
     // shouldn't linger in what's meant to read as "this job's progress".
     clear()
     setJobId(newJobId)
+    setView('new')
   }
 
   return (
@@ -47,7 +51,12 @@ export default function Transfers() {
         </p>
       </div>
 
-      <FeatureGuide page="transfers" />
+      {view === 'new' && <FeatureGuide page="transfers" />}
+
+      <div><Segmented ariaLabel={t('Transfers view')} value={view} onChange={setView}
+        options={[{ value: 'new', label: t('New transfer') }, { value: 'history', label: t('Transfer history') }]} /></div>
+
+      {view === 'history' ? <TransferHistory onOpen={id => { setJobId(id); setView('new') }} /> : <>
 
       {accountsError && (
         <p className="rounded-control bg-danger-soft px-3 py-2 text-sm text-danger">{t("Could not load accounts: {{accountsError}}", { accountsError: accountsError })}</p>
@@ -58,7 +67,7 @@ export default function Transfers() {
           <Skeleton className="h-72 w-full rounded-card" />
         </LoadingStatus>
       ) : (
-        <TransferSetupForm accounts={connectedAccounts} entries={entries} onStarted={handleStarted} />
+        <TransferSetupForm accounts={connectedAccounts} entries={entries} onRefreshPlaylists={refreshProvider} onStarted={handleStarted} />
       )}
 
       {jobId && (
@@ -67,7 +76,7 @@ export default function Transfers() {
             job={job}
             error={jobError}
             controls={
-              job
+              job && !job.historical
                 ? {
                     onPause: async () => {
                       await api.pauseTransfer(job.id)
@@ -86,11 +95,11 @@ export default function Transfers() {
             }
           />
 
-          <Card className="p-4 sm:p-6">
+          {!job?.historical && <Card className="p-4 sm:p-6">
             <TransferLiveFeed events={transferEvents} connected={connected} />
-          </Card>
+          </Card>}
 
-          {job && job.conflicts.length > 0 && (
+          {job && !job.historical && job.conflicts.length > 0 && (
             <ConflictList
               jobId={job.id}
               conflicts={job.conflicts}
@@ -104,6 +113,7 @@ export default function Transfers() {
           )}
         </>
       )}
+      </>}
     </div>
   )
 }

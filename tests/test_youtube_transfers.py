@@ -80,6 +80,7 @@ def test_long_youtube_copy_uses_exact_ids_and_reads_every_page(
             assert playlist_id == "new-playlist"
             writes.extend(video_ids)
             playlists[playlist_id].extend(video_ids)
+            return {"status": "STATUS_SUCCEEDED"}
 
     def target(profile):
         adapter = (YTMusicBrowserTarget if browser else YTMusicTarget).__new__(
