@@ -113,7 +113,7 @@ async function main() {
     await page.getByText('No playlists found', { exact: true }).waitFor()
     await page.keyboard.press('Escape')
     release()
-    await page.getByRole('button', { name: 'Refresh Playlist', exact: true }).waitFor()
+    await page.waitForFunction(() => document.querySelector('button[aria-label="Refresh Playlist"]')?.disabled === false)
 
     // Invalid snapshots are discarded, and a real first load still shows its
     // loading state instead of borrowing the other account's playlists.
