@@ -23,14 +23,14 @@ function EndpointBadge({ provider, accountName, playlistName }: { provider: stri
   useTranslation()
   const logoId = serviceLogoId(provider)
   return (
-    <span className="inline-flex min-w-0 items-center gap-1.5">
+    <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
       {logoId ? (
         <ServiceLogo service={logoId} className={cn('size-3.5 shrink-0', tagText(provider))} />
       ) : (
         <span className={cn('size-2 shrink-0 rounded-full', tagDot(provider))} aria-hidden="true" />
       )}
       <span className="min-w-0 truncate font-semibold text-text">{playlistName}</span>
-      <span className="shrink-0 text-xs font-normal text-text-3">({accountName || tagLabel(provider)})</span>
+      <span className="min-w-0 max-w-full break-words text-xs font-normal text-text-3">({accountName || tagLabel(provider)})</span>
     </span>
   )
 }
@@ -216,9 +216,9 @@ export function TransferProgress({
         <div className="flex flex-wrap items-center gap-2">
           <Pill toneClasses={style.badge} label={style.label} pulsing={isRunning} />
           {destUrl ? (
-            <LinkButton variant="ghost" size="sm" href={destUrl} target="_blank" rel="noreferrer">
-              {t("Open in {{accountName}}", { accountName: job.dest.name || tagLabel(job.dest.provider) })}
-              <LuExternalLink className="size-3.5" aria-hidden="true" />
+            <LinkButton variant="ghost" size="sm" className="min-h-11 min-w-0 max-w-full py-2 md:min-h-8" style={{ height: 'auto' }} href={destUrl} target="_blank" rel="noreferrer">
+              <span className="min-w-0 break-words">{t("Open in {{accountName}}", { accountName: job.dest.name || tagLabel(job.dest.provider) })}</span>
+              <LuExternalLink className="size-3.5 shrink-0" aria-hidden="true" />
             </LinkButton>
           ) : null}
           {controls && <TransferControls status={job.status} onPause={controls.onPause} onResume={controls.onResume} onStop={controls.onStop} />}

@@ -7,7 +7,7 @@ const { chromium } = require('playwright')
 const endpoint = (account, playlist_name) => ({ account, provider: 'ytmusic', name: account,
   playlist_id: 'PL_example', playlist_name })
 const failed = { id: 'failed-copy', status: 'error', source: endpoint('Old email', 'My videos'),
-  dest: endpoint('New email', 'Copied videos'), added: 12, processed: 795, total: 795, deferred: 0,
+  dest: endpoint('YouTube Music · destination-with-a-long-email-address@example.com', 'Copied videos'), added: 12, processed: 795, total: 795, deferred: 0,
   unavailable: 4, conflicts: [], error: 'Provider unavailable after 12 confirmed writes',
   created_at: '2026-10-16T10:00:00Z', started_at: '2026-10-16T10:00:01Z', finished_at: '2026-10-16T10:01:00Z' }
 
@@ -77,6 +77,10 @@ async function main() {
       await page.setViewportSize({ width, height: 850 })
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `History must fit ${width}px`)
       assert.equal(await dialog.evaluate(el => el.getBoundingClientRect().right <= innerWidth), true)
+      assert.equal(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth), true, `Detail contents must fit ${width}px`)
+      const accountBox = await dialog.getByText(`(${failed.dest.name})`, { exact: true }).boundingBox()
+      const dialogBox = await dialog.boundingBox()
+      assert.ok(accountBox.x >= dialogBox.x && accountBox.x + accountBox.width <= dialogBox.x + dialogBox.width, `Account label must fit ${width}px`)
     }
     await page.screenshot({ path: path.join(dist, 'transfer-history-mobile.png') })
     await dialog.getByRole('button', { name: 'View transfer', exact: true }).click()
