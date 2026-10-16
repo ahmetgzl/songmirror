@@ -405,9 +405,10 @@ export interface ProviderPlaylist {
   image: string
   /** First-party web-player URL for opening this exact playlist. */
   external_url: string
-  /** False for a followed (non-owned) playlist. Only Spotify distinguishes the
-   * two today; absent/true elsewhere. Drives the Created/Followed grouping. */
+  /** False for a followed (non-owned) playlist. Drives Created/Followed grouping. */
   owned?: boolean
+  /** Browser-connected YouTube libraries distinguish Music from video-only lists. */
+  library_kind?: 'music' | 'video'
 }
 
 export interface ProviderPlaylistTrack {

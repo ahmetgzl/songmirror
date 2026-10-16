@@ -36,6 +36,8 @@ def _text(value):
 
 
 def _count(text):
+    if text.strip() == "No videos":
+        return 0
     match = re.fullmatch(r"([\d,\s]+)(?: videos?| tracks?)?", text.strip())
     return int(re.sub(r"\D", "", match[1])) if match and re.search(r"\d", match[1]) else None
 
@@ -99,6 +101,8 @@ class YouTubeBrowser:
             if web_context.get("loggedOut") is True:
                 raise TargetAuthError("YouTube signed this account out. Reconnect it in Accounts.")
             contents = data.get("onResponseReceivedActions") or data.get("onResponseReceivedEndpoints") or data.get("contents")
+            if contents is None:
+                contents = data.get("contents")
             if not isinstance(contents, (dict, list)):
                 raise TargetTransientError("YouTube returned an incomplete playlist page. Retry the request.")
             if path.startswith("/playlist?") and not seen:

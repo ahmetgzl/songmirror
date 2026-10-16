@@ -1239,5 +1239,7 @@
   "Reads your listening history. Authorize it to read a private profile and love tracks.": "Đọc lịch sử nghe của bạn. Cấp quyền để đọc trang cá nhân riêng tư và yêu thích bài hát.",
   "Applied": "Đã áp dụng",
   "Apply resolved tracks": "Áp dụng các bài đã khớp",
-  "Saved matches are ready. Apply them to this destination playlist.": "Các kết quả khớp đã lưu đã sẵn sàng. Hãy áp dụng chúng vào danh sách phát đích này."
+  "Saved matches are ready. Apply them to this destination playlist.": "Các kết quả khớp đã lưu đã sẵn sàng. Hãy áp dụng chúng vào danh sách phát đích này.",
+  "YouTube Music playlists": "Danh sách phát YouTube Music",
+  "YouTube videos": "Video YouTube"
 }

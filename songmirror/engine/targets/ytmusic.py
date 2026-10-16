@@ -1174,8 +1174,8 @@ class YTMusicBrowserTarget(YTMusicTarget):
         result = []
         for playlist in music:
             video = videos.pop(playlist["playlistId"], {})
-            result.append({**playlist, **video})
-        return result + list(videos.values())
+            result.append({**playlist, **video, "_library_kind": "music"})
+        return result + [{**playlist, "_library_kind": "video"} for playlist in videos.values()]
 
     def playlist_tracks_for_transfer(self, playlist):
         if not hasattr(self, "_youtube"):

@@ -325,11 +325,13 @@ class PlaylistService:
                  "description": _plain_text(source_playlist_details(pl)[1]),
                  "count": target.playlist_count(pl),
                  "image": playlist_image(pl), "owned": bool(pl.get("_owned", True)),
+                 **({"library_kind": pl["_library_kind"]}
+                    if pl.get("_library_kind") in {"music", "video"} else {}),
                  "public": getattr(target, "playlist_public", lambda _pl: None)(pl),
                  "external_url": external_url(target_provider(target, self._provider(provider_id)), "playlist", _pl_id(pl))}
                 for pl in playlists]
         self._prune_details(provider_id, [row["id"] for row in rows])
-        return sorted(rows, key=lambda r: (r["name"] or "").casefold())
+        return sorted(rows, key=lambda r: (r.get("library_kind") == "video", (r["name"] or "").casefold()))
 
     @staticmethod
     def _normalize_tracks(

@@ -30,7 +30,7 @@ async function main() {
   const browser = await chromium.launch({ headless: true })
   const errors = []
   try {
-    async function setup(accounts, result = {}) {
+    async function setup(accounts, result = {}, playlists = [PLAYLIST]) {
       const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } })
       const page = await context.newPage()
       const submissions = [], previews = []
@@ -40,7 +40,7 @@ async function main() {
         const url = new URL(req.url())
         const send = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
         if (url.pathname === '/api/accounts') return send(accounts)
-        if (url.pathname === '/api/playlists') return send([PLAYLIST])
+        if (url.pathname === '/api/playlists') return send(playlists)
         if (url.pathname === '/api/transfers/preview') {
           previews.push(req.postDataJSON())
           return send({ provider: 'ytmusic', account: NEW_ACCOUNT.id, playlist_id: 'PL_public',
@@ -129,6 +129,44 @@ async function main() {
     assert.equal(await videos.page.getByText(/unavailable TIDAL/).count(), 0)
     await videos.context.close()
     console.log('PASS: video transfers distinguish copied and unavailable entries without TIDAL-specific advice')
+
+    const groupedRows = [
+      { ...PLAYLIST, id: 'video-owned', name: 'A video owned', library_kind: 'video' },
+      { ...PLAYLIST, id: 'music-followed', name: 'Z music followed', owned: false, library_kind: 'music' },
+      { ...PLAYLIST, id: 'music-owned', name: 'Z music owned', library_kind: 'music' },
+      { ...PLAYLIST, id: 'video-followed', name: 'A video followed', owned: false, library_kind: 'video' },
+      ...Array.from({ length: 8 }, (_, i) => ({ ...PLAYLIST, id: `other-${i}`, name: `Other video ${i}`, library_kind: 'video' })),
+    ]
+    const grouped = await setup([OLD_ACCOUNT, NEW_ACCOUNT], {}, groupedRows)
+    const groupedServices = grouped.page.getByLabel('Service', { exact: true })
+    await groupedServices.nth(0).selectOption(OLD_ACCOUNT.id)
+    await grouped.page.getByRole('button', { name: 'Playlist', exact: true }).click()
+    const listbox = grouped.page.getByRole('listbox')
+    assert.deepEqual(await listbox.getByRole('group').evaluateAll(groups => groups.map(g => g.getAttribute('aria-label'))),
+      ['YouTube Music playlists', 'YouTube videos'])
+    const optionNames = await listbox.getByRole('option').allTextContents()
+    assert.match(optionNames[0], /Z music owned/)
+    assert.match(optionNames[1], /Z music followed/)
+    assert.match(optionNames[2], /A video owned/)
+    await grouped.page.getByRole('textbox', { name: 'Search playlists', exact: true }).fill('music followed')
+    assert.equal(await listbox.getByRole('group').count(), 1)
+    await listbox.getByRole('option', { name: /Z music followed/ }).click()
+    await groupedServices.nth(1).selectOption(NEW_ACCOUNT.id)
+    await grouped.page.getByRole('button', { name: 'Existing playlist', exact: true }).click()
+    assert.equal(await grouped.page.getByRole('listbox').getByRole('option', { name: /followed/ }).count(), 0)
+    assert.match((await grouped.page.getByRole('listbox').getByRole('option').allTextContents())[0], /Z music owned/)
+    await grouped.page.keyboard.press('Escape')
+    await grouped.page.goto(grouped.page.url().replace('/transfers', '/playlists'), { waitUntil: 'networkidle' })
+    const library = grouped.page.getByRole('region', { name: OLD_ACCOUNT.name, exact: true })
+    await library.getByText('YouTube Music playlists', { exact: true }).waitFor()
+    assert.match((await library.getByRole('button', { name: /inside SongMirror/ }).allTextContents())[0], /Z music/)
+    await grouped.page.getByLabel('Sort playlists', { exact: true }).selectOption('name-desc')
+    const sortedNames = await library.getByRole('button', { name: /inside SongMirror/ }).allTextContents()
+    assert.match(sortedNames[0], /Z music/)
+    assert.match(sortedNames[1], /Z music/)
+    assert.equal(grouped.submissions.length, 0)
+    await grouped.context.close()
+    console.log('PASS: Music playlists stay first in labeled picker and browser groups; search and destination ownership remain correct')
 
     const self = await setup([NEW_ACCOUNT])
     const selfServices = self.page.getByLabel('Service', { exact: true })

@@ -203,7 +203,12 @@ def test_incomplete_reads_never_look_like_completed_transfers(problem):
 
 
 def test_empty_playlist_is_a_successful_zero_count_read():
-    client = web.YouTubeBrowser(_api(lambda *_args, **_kwargs: _Response(_page([], 0), html=True)))
+    page = _page([], 0)
+    page["sidebar"]["playlistSidebarPrimaryInfoRenderer"]["stats"][0] = {"simpleText": "No videos"}
+    page["contents"]["sectionListRenderer"]["contents"][0]["itemSectionRenderer"]["contents"] = [
+        {"messageRenderer": {"text": {"simpleText": "No videos in this playlist yet"}}},
+    ]
+    client = web.YouTubeBrowser(_api(lambda *_args, **_kwargs: _Response(page, html=True)))
     assert client.tracks("empty") == []
 
 
@@ -221,6 +226,24 @@ def test_browser_picker_includes_video_only_playlists_without_changing_sync_libr
     ]
     assert list(target.list_playlists()) == ["mix"]
     assert target.list_playlists()["mix"]["count"] == 3
+
+
+def test_playlist_api_preserves_music_priority_and_category(monkeypatch, tmp_path):
+    from songmirror.services.playlists import PlaylistService
+
+    target = ytmusic.YTMusicBrowserTarget.__new__(ytmusic.YTMusicBrowserTarget)
+    target._api = SimpleNamespace(get_library_playlists=lambda limit: [
+        {"playlistId": "music", "title": "Zulu music", "count": 3},
+    ])
+    target._youtube = SimpleNamespace(playlists=lambda: [
+        {"playlistId": "music", "title": "Zulu music", "count": 3, "_owned": False},
+        {"playlistId": "videos", "title": "Alpha videos", "count": 100, "_owned": True},
+    ])
+    monkeypatch.setattr(PlaylistService, "_target", lambda *_: target)
+    rows = PlaylistService(SettingsStore(dir=tmp_path)).browse("ytmusic")
+    assert [(r["id"], r["library_kind"], r["owned"]) for r in rows] == [
+        ("music", "music", False), ("videos", "video", True),
+    ]
 
 
 @pytest.mark.parametrize("status", [302, 401, 403, 429, 500])

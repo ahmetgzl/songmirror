@@ -4,6 +4,8 @@ Use **Transfers** to copy a playlist from an old Google account into a new one. 
 
 Browser-connected accounts include regular YouTube video playlists in **Your library**, even when YouTube Music does not show them. Transfers read both the source and destination through regular YouTube so non-music videos retain their IDs and a retry skips videos already copied. Music sync keeps its existing music-only reads.
 
+Playlists in your Music library appear first under **YouTube Music playlists**. The remaining lists are grouped under **YouTube videos** in playlist pickers and Browse. Sorting applies within each group; source pickers still distinguish playlists you created from those you follow, and destination pickers include only playlists you own.
+
 ## Public or unlisted source playlist
 
 1. Connect your new Google account under **Accounts → YouTube Music**.

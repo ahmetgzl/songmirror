@@ -5,6 +5,7 @@ import { LuCheck, LuChevronDown, LuSearch } from 'react-icons/lu'
 
 import { cn } from '@/lib/cn'
 import { formatTrackCount } from '@/lib/format'
+import { playlistLibraryLabel } from '@/lib/playlistLibrary'
 import type { ProviderPlaylist } from '@/types'
 
 import { CoverArt } from './CoverArt'
@@ -120,11 +121,12 @@ export function PlaylistPickerField({
     }
   }, [open])
 
-  // Only Spotify sets `owned` today; when a list mixes owned and followed we split
-  // it under Created/Followed headers, owned first. All-one-kind lists stay flat.
-  const ownedPlaylists = useMemo(() => filtered.filter((p) => p.owned !== false), [filtered])
-  const followedPlaylists = useMemo(() => filtered.filter((p) => p.owned === false), [filtered])
-  const grouped = ownedPlaylists.length > 0 && followedPlaylists.length > 0
+  const libraryGroups = useMemo(() => {
+    if (!filtered.some((p) => p.library_kind)) return [{ kind: undefined, playlists: filtered }]
+    return (['music', 'video'] as const).map((kind) => ({ kind,
+      playlists: filtered.filter((p) => kind === 'video' ? p.library_kind === 'video' : p.library_kind !== 'video'),
+    })).filter((group) => group.playlists.length > 0)
+  }, [filtered])
 
   const renderOption = (p: ProviderPlaylist) => {
     const reason = optionDisabledReason?.(p)
@@ -155,6 +157,18 @@ export function PlaylistPickerField({
         {p.id === value && <LuCheck className="size-3.5 shrink-0 text-accent" aria-hidden="true" />}
       </button>
     )
+  }
+
+  function renderOwnershipGroups(rows: ProviderPlaylist[]) {
+    const owned = rows.filter((p) => p.owned !== false)
+    const followed = rows.filter((p) => p.owned === false)
+    if (!owned.length || !followed.length) return rows.map(renderOption)
+    return <>
+      <div className="px-2 pb-0.5 pt-1 font-mono text-[9.5px] font-bold uppercase tracking-[0.12em] text-text-3">{t('Created')}</div>
+      {owned.map(renderOption)}
+      <div className="mt-1 border-t border-border px-2 pb-0.5 pt-2 font-mono text-[9.5px] font-bold uppercase tracking-[0.12em] text-text-3">{t('Followed')}</div>
+      {followed.map(renderOption)}
+    </>
   }
 
   return (
@@ -221,19 +235,14 @@ export function PlaylistPickerField({
             <div id={listboxId} role="listbox" aria-label={label} className="thin-scrollbar flex max-h-56 flex-col gap-0.5 overflow-y-auto">
               {filtered.length === 0 ? (
                 <p className="px-2 py-3 text-center text-xs text-text-3">{t("No playlists match \"{{search}}\".", { search: search })}</p>
-              ) : grouped ? (
-                <>
-                  <div className="px-2 pb-0.5 pt-1 font-mono text-[9.5px] font-bold uppercase tracking-[0.12em] text-text-3">
-                    {t("Created")}
-                  </div>
-                  {ownedPlaylists.map(renderOption)}
-                  <div className="mt-1 border-t border-border px-2 pb-0.5 pt-2 font-mono text-[9.5px] font-bold uppercase tracking-[0.12em] text-text-3">
-                    {t("Followed")}
-                  </div>
-                  {followedPlaylists.map(renderOption)}
-                </>
               ) : (
-                filtered.map(renderOption)
+                libraryGroups.map((group) => (
+                  <div key={group.kind ?? 'all'} role={group.kind ? 'group' : undefined}
+                    aria-label={playlistLibraryLabel(group.kind)} className="flex flex-col gap-0.5">
+                    {group.kind && <div className="border-b border-border px-2 py-1.5 text-xs font-semibold text-text-2">{playlistLibraryLabel(group.kind)}</div>}
+                    {renderOwnershipGroups(group.playlists)}
+                  </div>
+                ))
               )}
             </div>
           </div>,

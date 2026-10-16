@@ -1,5 +1,5 @@
 import { t, useTranslation } from '@/i18n'
-import { useMemo } from 'react'
+import { Fragment, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { LuExternalLink, LuListMusic } from 'react-icons/lu'
 
@@ -8,6 +8,7 @@ import { capabilitiesOf } from '@/lib/accountCapabilities'
 import { cn } from '@/lib/cn'
 import { serviceHomeUrl, serviceLogoId, tagText } from '@/lib/constants'
 import { formatTrackCount } from '@/lib/format'
+import { playlistLibraryLabel, playlistLibraryRank } from '@/lib/playlistLibrary'
 import type { Account, ProviderPlaylist } from '@/types'
 
 import { PlaylistExportActions } from './PlaylistExportActions'
@@ -46,9 +47,9 @@ export function ProviderPlaylistsCard({
   const homeUrl = serviceHomeUrl(account.provider)
   const playlists = useMemo(() => {
     const source = entry?.playlists ?? []
-    if (sort === 'service') return source
     const collator = new Intl.Collator(i18n.resolvedLanguage, { numeric: true, sensitivity: 'base' })
-    return [...source].sort((left, right) => (sort === 'name-desc' ? -1 : 1) * collator.compare(left.name, right.name))
+    return [...source].sort((left, right) => playlistLibraryRank(left) - playlistLibraryRank(right) ||
+      (sort === 'service' ? 0 : (sort === 'name-desc' ? -1 : 1) * collator.compare(left.name, right.name)))
   }, [entry?.playlists, sort, i18n.resolvedLanguage])
 
   return (
@@ -115,38 +116,43 @@ export function ProviderPlaylistsCard({
       ) : entry.playlists.length > 0 ? (
         <ul className="thin-scrollbar flex max-h-80 flex-col divide-y divide-border overflow-y-auto">
           {playlists.map((p, i) => (
-            <li key={p.id} className="flex items-center gap-3 py-2">
-              <button
-                type="button"
-                onClick={() => onOpenPlaylist(p)}
-                className="group flex min-w-0 flex-1 items-center gap-3 rounded-control text-start hover:text-accent"
-                aria-label={t("Open {{pName}} inside SongMirror", { pName: p.name })}
-              >
-                <span className="shrink-0 font-mono text-[10px] text-text-3" aria-hidden="true">
-                  {String(i + 1).padStart(2, '0')}
-                </span>
-                <CoverArt image={p.image} />
-                <span className="min-w-0 flex-1">
-                  <span title={p.name} className={cn('block text-[13.5px] font-medium text-text group-hover:text-accent', layout === 'grid' ? 'truncate' : 'break-words')}>{p.name}</span>
-                  {formatTrackCount(p.count) ? (
-                    <span className="block font-mono text-[11.5px] text-text-3">{formatTrackCount(p.count)}</span>
-                  ) : null}
-                </span>
-                <LuListMusic className="size-3.5 shrink-0 text-text-3 group-hover:text-accent" aria-hidden="true" />
-              </button>
-              {p.external_url ? (
-                <a
-                  href={p.external_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={t("Open {{pName}} in {{accountName}}", { pName: p.name, accountName: account.name })}
-                  title={t("Open in {{accountName}}", { accountName: account.name })}
-                  className="inline-flex size-11 shrink-0 items-center justify-center rounded-control text-text-3 hover:bg-surface-2 hover:text-text md:size-8"
+            <Fragment key={p.id}>
+              {p.library_kind && p.library_kind !== playlists[i - 1]?.library_kind && (
+                <li className="py-2 text-xs font-semibold text-text-2">{playlistLibraryLabel(p.library_kind)}</li>
+              )}
+              <li className="flex items-center gap-3 py-2">
+                <button
+                  type="button"
+                  onClick={() => onOpenPlaylist(p)}
+                  className="group flex min-w-0 flex-1 items-center gap-3 rounded-control text-start hover:text-accent"
+                  aria-label={t("Open {{pName}} inside SongMirror", { pName: p.name })}
                 >
-                  <LuExternalLink className="size-3.5" aria-hidden="true" />
-                </a>
-              ) : null}
-            </li>
+                  <span className="shrink-0 font-mono text-[10px] text-text-3" aria-hidden="true">
+                    {String(i + 1).padStart(2, '0')}
+                  </span>
+                  <CoverArt image={p.image} />
+                  <span className="min-w-0 flex-1">
+                    <span title={p.name} className={cn('block text-[13.5px] font-medium text-text group-hover:text-accent', layout === 'grid' ? 'truncate' : 'break-words')}>{p.name}</span>
+                    {formatTrackCount(p.count) ? (
+                      <span className="block font-mono text-[11.5px] text-text-3">{formatTrackCount(p.count)}</span>
+                    ) : null}
+                  </span>
+                  <LuListMusic className="size-3.5 shrink-0 text-text-3 group-hover:text-accent" aria-hidden="true" />
+                </button>
+                {p.external_url ? (
+                  <a
+                    href={p.external_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={t("Open {{pName}} in {{accountName}}", { pName: p.name, accountName: account.name })}
+                    title={t("Open in {{accountName}}", { accountName: account.name })}
+                    className="inline-flex size-11 shrink-0 items-center justify-center rounded-control text-text-3 hover:bg-surface-2 hover:text-text md:size-8"
+                  >
+                    <LuExternalLink className="size-3.5" aria-hidden="true" />
+                  </a>
+                ) : null}
+              </li>
+            </Fragment>
           ))}
         </ul>
       ) : (

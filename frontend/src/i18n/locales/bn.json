@@ -1239,5 +1239,7 @@
   "Reads your listening history. Authorize it to read a private profile and love tracks.": "আপনার শোনার ইতিহাস পড়ে। ব্যক্তিগত প্রোফাইল পড়তে এবং ট্র্যাক পছন্দ করতে অনুমোদন দিন।",
   "Applied": "প্রয়োগ করা হয়েছে",
   "Apply resolved tracks": "মেলানো গানগুলো যোগ করুন",
-  "Saved matches are ready. Apply them to this destination playlist.": "সংরক্ষিত মিলগুলো প্রস্তুত। এই গন্তব্য প্লেলিস্টে সেগুলো যোগ করুন।"
+  "Saved matches are ready. Apply them to this destination playlist.": "সংরক্ষিত মিলগুলো প্রস্তুত। এই গন্তব্য প্লেলিস্টে সেগুলো যোগ করুন।",
+  "YouTube Music playlists": "YouTube Music প্লেলিস্ট",
+  "YouTube videos": "YouTube ভিডিও"
 }

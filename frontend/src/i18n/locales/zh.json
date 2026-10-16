@@ -1239,5 +1239,7 @@
   "Reads your listening history. Authorize it to read a private profile and love tracks.": "读取你的收听记录。授权后可读取私密资料并收藏歌曲。",
   "Applied": "已应用",
   "Apply resolved tracks": "应用已匹配曲目",
-  "Saved matches are ready. Apply them to this destination playlist.": "已保存的匹配已准备就绪。请将它们应用到此目标播放列表。"
+  "Saved matches are ready. Apply them to this destination playlist.": "已保存的匹配已准备就绪。请将它们应用到此目标播放列表。",
+  "YouTube Music playlists": "YouTube Music 播放列表",
+  "YouTube videos": "YouTube 视频"
 }

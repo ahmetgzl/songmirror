@@ -1271,5 +1271,7 @@
   "Reads your listening history. Authorize it to read a private profile and love tracks.": "Lit votre historique d'écoute. Autorisez-le pour lire un profil privé et ajouter des titres aux favoris.",
   "Applied": "Appliqué",
   "Apply resolved tracks": "Appliquer les titres résolus",
-  "Saved matches are ready. Apply them to this destination playlist.": "Les correspondances enregistrées sont prêtes. Appliquez-les à cette playlist de destination."
+  "Saved matches are ready. Apply them to this destination playlist.": "Les correspondances enregistrées sont prêtes. Appliquez-les à cette playlist de destination.",
+  "YouTube Music playlists": "Playlists YouTube Music",
+  "YouTube videos": "Vidéos YouTube"
 }

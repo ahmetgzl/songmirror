@@ -1239,5 +1239,7 @@
   "Reads your listening history. Authorize it to read a private profile and love tracks.": "再生履歴を読み込みます。認証すると非公開プロフィールの読み込みとトラックのお気に入り登録ができます。",
   "Applied": "反映済み",
   "Apply resolved tracks": "解決済みの曲を反映",
-  "Saved matches are ready. Apply them to this destination playlist.": "保存した対応付けの準備ができました。このコピー先プレイリストに反映してください。"
+  "Saved matches are ready. Apply them to this destination playlist.": "保存した対応付けの準備ができました。このコピー先プレイリストに反映してください。",
+  "YouTube Music playlists": "YouTube Music のプレイリスト",
+  "YouTube videos": "YouTube の動画"
 }
