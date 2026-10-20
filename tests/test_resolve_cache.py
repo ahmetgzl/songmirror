@@ -349,6 +349,36 @@ def test_set_rejects_an_id_the_provider_cannot_parse(tmp_path, monkeypatch):
         store.set("deezer", "lost track|cinder", "definitely not a deezer track")
 
 
+@pytest.mark.parametrize("reference", [
+    "6pHtgTMzsmP6ccN2ocv7XN",
+    "spotify:track:6pHtgTMzsmP6ccN2ocv7XN",
+    "https://open.spotify.com/track/6pHtgTMzsmP6ccN2ocv7XN?si=shared",
+    "https://open.spotify.com/intl-de/track/6pHtgTMzsmP6ccN2ocv7XN",
+    "https://open.spotify.com/embed/track/6pHtgTMzsmP6ccN2ocv7XN",
+])
+def test_spotify_manual_mapping_stores_a_catalog_id(tmp_path, monkeypatch, reference):
+    store, path = _store(tmp_path, monkeypatch, {"lost|artist": None}, provider="spotify")
+    row = store.set("spotify", "lost|artist", reference)
+    assert row["target_id"] == "6pHtgTMzsmP6ccN2ocv7XN"
+    assert row["url"] == "https://open.spotify.com/track/6pHtgTMzsmP6ccN2ocv7XN"
+    assert load_cache(path)["search"] == {"lost|artist": "6pHtgTMzsmP6ccN2ocv7XN"}
+    assert load_cache(path)["manual"] == {"lost|artist"}
+
+
+@pytest.mark.parametrize("reference", [
+    "https://open.spotify.com/playlist/6pHtgTMzsmP6ccN2ocv7XN",
+    "spotify:album:6pHtgTMzsmP6ccN2ocv7XN",
+    "https://example.com/track/6pHtgTMzsmP6ccN2ocv7XN",
+    "https://open.spotify.com/track/",
+    "not a track",
+])
+def test_spotify_manual_mapping_rejects_invalid_references(tmp_path, monkeypatch, reference):
+    store, path = _store(tmp_path, monkeypatch, {"lost|artist": None}, provider="spotify")
+    with pytest.raises(ResolveCacheError, match="Spotify track"):
+        store.set("spotify", "lost|artist", reference)
+    assert load_cache(path)["search"] == {"lost|artist": None}
+
+
 def test_set_refuses_a_key_that_is_no_longer_cached(tmp_path, monkeypatch):
     store, _path = _store(tmp_path, monkeypatch, {"midnight|aurora": "111"})
     with pytest.raises(ResolveCacheError):
