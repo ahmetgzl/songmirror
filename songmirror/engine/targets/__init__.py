@@ -22,12 +22,15 @@ from .base import (
 )
 from .deezer import DeezerTarget
 from .lastfm import LastfmTarget
+from .listenbrainz import ListenBrainzTarget
+from .subsonic import SubsonicTarget
 from .qobuz import QobuzTarget
 from .spotify_target import SpotifyTarget
 from .tidal import TidalTarget
 from . import ytmusic
 
 __all__ = ["AppleMusicTarget", "AmazonMusicTarget", "DeezerTarget", "LastfmTarget",
+           "ListenBrainzTarget", "SubsonicTarget",
            "QobuzTarget",
            "SpotifyTarget", "TidalTarget", "MirrorTarget", "TargetAuthError",
            "TargetCapabilityError",
@@ -92,12 +95,16 @@ _REGISTRY = {
     "ytmusic": lambda opts, sp, sync_peer=False, songs=None: ytmusic.build(),
     "lastfm": lambda opts, sp, sync_peer=False, songs=None: _rest_provider(
         LastfmTarget, "Last.fm"),
+    "listenbrainz": lambda opts, sp, sync_peer=False, songs=None: _rest_provider(
+        ListenBrainzTarget, "ListenBrainz"),
+    "subsonic": lambda opts, sp, sync_peer=False, songs=None: _rest_provider(
+        SubsonicTarget, "Navidrome / Subsonic"),
 }
 # ISRC-rich providers first: they seed cross-provider identity for the rest.
-# Last.fm is last because its reads carry no ISRC at all, so it can only ever
-# unify through the fuzzy key and must not pre-empt a provider that can.
+# History sources come last because their reads may carry no ISRC, so their
+# metadata matching must not pre-empt a provider with catalog identity.
 _SOURCE_ORDER = ["spotify", "tidal", "qobuz", "deezer", "amazon", "apple", "ytmusic",
-                 "lastfm"]
+                 "subsonic", "lastfm", "listenbrainz"]
 
 # The same providers as _REGISTRY, by class rather than by builder, for the
 # class-level facts a caller needs WITHOUT credentials (where the resolution
@@ -113,6 +120,8 @@ _CLASSES = {
     "apple": AppleMusicTarget,
     "ytmusic": ytmusic.YTMusicTarget,
     "lastfm": LastfmTarget,
+    "listenbrainz": ListenBrainzTarget,
+    "subsonic": SubsonicTarget,
 }
 
 
@@ -160,7 +169,12 @@ def _writable(identity, opts):
     """
     if playlists_for(identity, opts):
         return True
-    return bool(getattr(opts, "liked_tracks", False))
+    profiles = _profiles(opts)
+    provider = profiles.provider_of(identity) if profiles is not None else identity
+    cls = _CLASSES.get(provider)
+    return bool(getattr(opts, "liked_tracks", False)) and bool(
+        getattr(cls, "supports_favorite_writes", True)
+    )
 
 
 def _announce_playlistless(identity, opts, loved_tracks):

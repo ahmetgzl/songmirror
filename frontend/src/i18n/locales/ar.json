@@ -1405,5 +1405,13 @@
   "View transfer": "عرض عملية النقل",
   "Refresh {{label}}": "تحديث {{label}}",
   "Showing saved playlists while updating…": "عرض قوائم التشغيل المحفوظة أثناء التحديث…",
-  "Waiting for another sync or transfer to finish. This copy will start automatically.": "في انتظار انتهاء مزامنة أو نقل آخر. ستبدأ هذه النسخة تلقائيًا."
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "في انتظار انتهاء مزامنة أو نقل آخر. ستبدأ هذه النسخة تلقائيًا.",
+  "Choose ListenBrainz as the source and enable liked tracks. No token is needed.": "اختر ListenBrainz كمصدر وفعّل المقاطع المعجب بها. لا يلزم رمز وصول.",
+  "Enter the server URL and your Subsonic username and password. In Docker, use a server address the container can reach.": "أدخل عنوان الخادم واسم مستخدم Subsonic وكلمة المرور. في Docker، استخدم عنوان خادم يمكن للحاوية الوصول إليه.",
+  "Loved Recordings": "التسجيلات المحبوبة",
+  "Password": "كلمة المرور",
+  "Read-only": "للقراءة فقط",
+  "Reads public loved recordings by username.": "يقرأ التسجيلات المحبوبة العامة باستخدام اسم المستخدم.",
+  "Starred Songs": "الأغاني المميزة بنجمة",
+  "Syncs playlists and starred songs already stored on your music server.": "يزامن قوائم التشغيل والأغاني المميزة بنجمة المخزنة بالفعل على خادم الموسيقى."
 }

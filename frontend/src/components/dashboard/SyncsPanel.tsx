@@ -5,7 +5,7 @@ import { LuArrowRight } from 'react-icons/lu'
 import { SyncControls } from '@/components/sync/SyncControls'
 import { SyncRunButtons } from '@/components/sync/SyncRunButtons'
 import { formatClockTime } from '@/lib/format'
-import { buildSyncSummaryRows, syncPeersOf } from '@/lib/syncSummary'
+import { buildSyncSummaryRows } from '@/lib/syncSummary'
 import type { Account, SyncJob, SyncStatus } from '@/types'
 
 import { Card } from '../ui/Card'
@@ -37,7 +37,7 @@ export function SyncsPanel({
   onChanged: () => void
 }) {
   useTranslation()
-  const peers = syncPeersOf(accounts ?? [])
+  const peers = accounts ?? []
 
   return (
     <Card className="flex flex-col overflow-hidden">

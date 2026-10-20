@@ -1277,5 +1277,13 @@
   "View transfer": "স্থানান্তর দেখুন",
   "Refresh {{label}}": "{{label}} রিফ্রেশ করুন",
   "Showing saved playlists while updating…": "আপডেট চলাকালে সংরক্ষিত প্লেলিস্ট দেখানো হচ্ছে…",
-  "Waiting for another sync or transfer to finish. This copy will start automatically.": "অন্য সিঙ্ক বা স্থানান্তর শেষ হওয়ার অপেক্ষায়। এই কপি স্বয়ংক্রিয়ভাবে শুরু হবে।"
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "অন্য সিঙ্ক বা স্থানান্তর শেষ হওয়ার অপেক্ষায়। এই কপি স্বয়ংক্রিয়ভাবে শুরু হবে।",
+  "Choose ListenBrainz as the source and enable liked tracks. No token is needed.": "ListenBrainz-কে উৎস হিসেবে বেছে নিয়ে পছন্দের ট্র্যাক সক্রিয় করুন। কোনো টোকেন লাগবে না।",
+  "Enter the server URL and your Subsonic username and password. In Docker, use a server address the container can reach.": "সার্ভারের URL এবং আপনার Subsonic ব্যবহারকারীর নাম ও পাসওয়ার্ড দিন। Docker-এ এমন সার্ভারের ঠিকানা ব্যবহার করুন যেখানে কন্টেইনার পৌঁছাতে পারে।",
+  "Loved Recordings": "ভালোবাসার রেকর্ডিং",
+  "Password": "পাসওয়ার্ড",
+  "Read-only": "শুধু পড়া যায়",
+  "Reads public loved recordings by username.": "ব্যবহারকারীর নাম দিয়ে সর্বজনীন ভালোবাসার রেকর্ডিং পড়ে।",
+  "Starred Songs": "তারকাচিহ্নিত গান",
+  "Syncs playlists and starred songs already stored on your music server.": "আপনার মিউজিক সার্ভারে আগে থেকে থাকা প্লেলিস্ট ও তারকাচিহ্নিত গান সিঙ্ক করে।"
 }

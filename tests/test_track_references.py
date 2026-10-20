@@ -19,7 +19,23 @@ REFERENCES = [
 
 
 def test_every_registered_target_has_reference_coverage():
-    assert set(provider_ids()) == {provider for provider, _, _ in REFERENCES}
+    catalogs = {
+        provider for provider in provider_ids()
+        if getattr(target_class(provider), "catalog_ids_global", True)
+        and getattr(target_class(provider), "supports_favorite_writes", True)
+    }
+    assert catalogs == {provider for provider, _, _ in REFERENCES}
+
+
+def test_local_and_read_only_providers_keep_their_reference_contracts():
+    from songmirror.engine.targets.base import TargetCapabilityError
+
+    assert target_class("subsonic").normalize_manual_track_id("local-song-id") == "local-song-id"
+    with pytest.raises(ValueError):
+        target_class("subsonic").normalize_manual_track_id("https://server.example/track/123")
+    target = target_class("listenbrainz").__new__(target_class("listenbrainz"))
+    with pytest.raises(TargetCapabilityError):
+        target.resolve({"name": "Song", "artists": ["Artist"]}, {"search": {}, "isrc": {}})
 
 
 @pytest.mark.parametrize("provider,reference,expected", REFERENCES)

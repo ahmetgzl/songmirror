@@ -67,6 +67,9 @@ class MirrorTarget:
     provider = ""          # catalog type when source is an account profile id
     archive_source = None  # account identity for target-internal archive reads
     cache_file = None     # this target's own resolution cache path (ids differ per service)
+    # Hosted catalogs share track ids across accounts. Self-hosted libraries
+    # can assign the same id to different recordings on different servers.
+    catalog_ids_global = True
     # True only when the provider gives every physical playlist entry its own
     # durable id. The manual editor can then delete that exact occurrence
     # without rereading a thousand-track playlist to revalidate its position.
@@ -945,7 +948,17 @@ def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, e
     removals, uncertain_matches = match_unresolved_removals(to_remove, not_found)
     held = [existing for existing, _unresolved in uncertain_matches]
     removals_skipped, held_back = 0, []
-    if not sp_tracks and tgt_tracks and not allow_empty_source:
+    incomplete_metadata = any(
+        track.get("_metadata_incomplete") or (track.get("_raw") or {}).get("_metadata_incomplete")
+        for track in sp_tracks
+    )
+    if incomplete_metadata and removals:
+        log_warn(
+            "source recordings have incomplete metadata; holding destination removals this pass",
+            tag=tag,
+        )
+        removals_skipped, removals, guard = len(removals), [], True
+    elif not sp_tracks and tgt_tracks and not allow_empty_source:
         log_warn(f"{source_name} returned 0 tracks but {target.name} has {len(tgt_tracks)}; skipping all removals this pass", tag=tag)
         removals, guard = [], True
     elif len(removals) > max_removals:

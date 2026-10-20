@@ -117,7 +117,11 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
     # Same-provider copy (e.g. a followed Spotify list into a new owned one): the
     # track's own id is already valid on the destination, so use it directly instead
     # of re-searching for it (which resolve() does for the cross-provider case).
-    same_provider = target_provider(source) == target_provider(dest)
+    same_provider = (
+        target_provider(source) == target_provider(dest)
+        and getattr(source, "catalog_ids_global", True)
+        and getattr(dest, "catalog_ids_global", True)
+    )
     additions, not_found = [], []
     resolved_existing = {}
     applied_keys = set()

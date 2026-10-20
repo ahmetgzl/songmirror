@@ -257,6 +257,8 @@ _CACHE_ENV = {
     "apple": "APPLE_CACHE_FILE",
     "ytmusic": "YTMUSIC_CACHE_FILE",
     "lastfm": "LASTFM_CACHE_FILE",
+    "listenbrainz": "LISTENBRAINZ_CACHE_FILE",
+    "subsonic": "SUBSONIC_CACHE_FILE",
 }
 
 

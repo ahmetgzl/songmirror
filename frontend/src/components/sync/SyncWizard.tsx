@@ -1,5 +1,5 @@
 import { t, Trans, useTranslation } from '@/i18n'
-import { Fragment, useLayoutEffect, useState } from 'react'
+import { Fragment, useLayoutEffect, useRef, useState } from 'react'
 import { LuArrowLeft, LuArrowRight, LuCheck, LuInfo } from 'react-icons/lu'
 
 import { api, errorMessage } from '@/api'
@@ -153,9 +153,8 @@ const STEPS = [
   { get label() { return t("Limits & downloads") }, get intro() { return t("Guardrails so one pass can't make a huge change, plus an optional offline copy of what's synced.") } },
 ] as const
 
-/** Everything the wizard may offer. Wider than `syncPeersOf`, which is the
- * playlist-peer set: a history service with no playlists of its own is still a
- * valid one-way source and can still receive loves, so it belongs here while
+/** Everything the wizard may offer. A history service with no playlists of
+ * its own can still supply tracks or receive loves, so it belongs here while
  * staying out of the transfer and playlist-link pickers. */
 function syncCandidates(accounts: Account[]): Account[] {
   return accounts.filter((account) => account.transferable || canParticipateInSync(account))
@@ -179,6 +178,7 @@ function ProviderChip({
 }) {
   useTranslation()
   const connected = canParticipateInSync(account)
+  const sourceOnly = connected && !canSyncAccount(account) && !canReceiveLikedTracks(account)
   // Connected, but playlist writes are unsupported. Last.fm can still be a
   // source and receive loves, so it stays togglable —
   // the annotation is what stops the chip reading as a playlist destination.
@@ -189,8 +189,8 @@ function ProviderChip({
   return (
     <button
       type="button"
-      onClick={connected && !locked ? onToggle : undefined}
-      disabled={!connected || locked}
+      onClick={connected && !locked && !sourceOnly ? onToggle : undefined}
+      disabled={!connected || locked || sourceOnly}
       aria-pressed={connected ? checked : undefined}
       title={
         !connected
@@ -225,7 +225,7 @@ function ProviderChip({
           {{ source: t('source'), order: t('order'), authority: t('authority'), mirror: t('mirror') }[role]}
         </span>
       )}
-      {playlistless && <span className="font-normal text-text-3">{t("no playlists")}</span>}
+      {playlistless && <span className="font-normal text-text-3">{sourceOnly ? t("Read-only") : t("no playlists")}</span>}
       {!connected && <span className="font-normal text-text-3">{unavailableLabel}</span>}
     </button>
   )
@@ -350,20 +350,41 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
   const [visited, setVisited] = useState<Set<number>>(() => new Set([0]))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const session = useRef<{ jobId: string | null; accountsLoaded: boolean } | null>(null)
 
   // Fresh state every time the wizard (re)opens, so a previous attempt (or a
   // different job) never leaks into a new session. Layout effect: it must
   // apply BEFORE paint, or editing an N-way job flashes one frame of the
   // one-way defaults (Source-of-truth picker included).
   useLayoutEffect(() => {
-    if (!open) return
+    if (!open) {
+      session.current = null
+      return
+    }
+    const jobId = job?.id ?? null
+    const connected = syncCandidates(accounts).filter(canSyncAccount)
+    const providerIds = connected.map((account) => account.id).join(',')
+    const defaultSource = connected.find((account) => account.provider === 'spotify')?.id ?? connected[0]?.id
+    if (session.current?.jobId === jobId) {
+      // An initially uncached account list may arrive after typing begins.
+      // Seed its defaults once without replacing the draft or current step.
+      if (!job && !session.current.accountsLoaded && accounts.length > 0) {
+        session.current.accountsLoaded = true
+        setForm((previous) => ({
+          ...previous,
+          providers: providerIds,
+          source: defaultSource ?? previous.source,
+        }))
+      }
+      return
+    }
+    session.current = { jobId, accountsLoaded: accounts.length > 0 }
     const initial = formFromJob(job)
     if (!job) {
       // Snapshot the connected peers now. Persisting an empty sentinel would
       // make this job silently gain every provider connected in the future.
-      const connected = syncCandidates(accounts).filter(canSyncAccount)
-      initial.providers = connected.map((account) => account.id).join(',')
-      initial.source = connected.find((account) => account.provider === 'spotify')?.id ?? connected[0]?.id ?? initial.source
+      initial.providers = providerIds
+      initial.source = defaultSource ?? initial.source
     }
     setForm(initial)
     setStep(0)
@@ -454,15 +475,20 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
 
   function selectOrderAuthority(id: string) {
     setForm((prev) => {
-      const providers = new Set(parseCsv(prev.providers))
+      const providers = new Set(parseCsv(prev.providers).filter((providerId) =>
+        providerId === id || accounts.some((account) => account.id === providerId &&
+          (canSyncAccount(account) || canReceiveLikedTracks(account)))))
       providers.add(id)
       if (prev.mode !== 'group') {
         const providerCsv = csvInPeerOrder(providers)
+        const lovedOnly = accounts.find((account) => account.id === id)?.provider === 'listenbrainz'
+        const likedTracks = lovedOnly || prev.liked_tracks
         return {
           ...prev,
           source: id,
           providers: providerCsv,
-          liked_routes: prev.liked_tracks
+          ...(lovedOnly ? { sync_playlists: false, playlists: '', liked_tracks: true } : {}),
+          liked_routes: likedTracks
             ? normalizedLikedRoutes(prev.liked_routes, parseCsv(providerCsv), id, receivesLikes)
             : prev.liked_routes,
         }
@@ -531,7 +557,7 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
   function setLikedTracks(selected: boolean) {
     setForm((prev) => {
       if (!selected) {
-        return { ...prev, sync_playlists: true, liked_tracks: false, liked_routes: {} }
+        return { ...prev, sync_playlists: sourceAccount?.provider !== 'listenbrainz', liked_tracks: false, liked_routes: {} }
       }
       const source = playlistPickerProviderId || prev.source
       const providers = new Set(parseCsv(prev.providers))
@@ -804,7 +830,7 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
                       </p>
                     </div>
                     <div role="radiogroup" aria-label={t("Order authority")} className="flex flex-wrap gap-2">
-                      {syncPeers.map((account) => (
+                      {syncPeers.filter(canSyncAccount).map((account) => (
                         <SourceChip
                           key={account.id}
                           account={account}
@@ -912,6 +938,7 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
                 onChange={setPlaylistFilter}
                 preferredProviderId={playlistPickerProviderId}
                 includeLikedTracks
+                onlyLikedTracks={sourceAccount?.provider === 'listenbrainz'}
                 likedTracksSelected={form.liked_tracks}
                 syncAllRegularPlaylists={form.sync_playlists}
                 onLikedTracksChange={setLikedTracks}
@@ -919,7 +946,7 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
 
               {form.liked_tracks && (
                 <section className="flex flex-col gap-3.5 border-t border-border pt-3.5">
-                  {form.playlists.trim().length === 0 && (
+                  {form.playlists.trim().length === 0 && sourceAccount?.provider !== 'listenbrainz' && (
                     <Toggle
                       checked={form.sync_playlists}
                       onChange={(selected) => setField('sync_playlists', selected)}

@@ -158,6 +158,29 @@ def test_url_only_source_descriptor_uses_transfer_playlist_parser():
     )]
 
 
+def test_merge_keeps_subsonic_ids_scoped_to_each_account(monkeypatch, tmp_path):
+    home = _Provider("profile_home", tmp_path)
+    remote = _Provider("profile_remote", tmp_path)
+    destination = _Provider("spotify", tmp_path)
+    for source in (home, remote):
+        source.provider = "subsonic"
+        source.catalog_ids_global = False
+    home.add_playlist("home-list", [_track("First recording", provider_id="same-id")])
+    remote.add_playlist("remote-list", [_track("Other recording", provider_id="same-id")])
+    destination.add_playlist("dest", [])
+    _install_providers(monkeypatch, {source.source: source for source in (home, remote, destination)})
+    result, aggregate, ok, error = _run_merge(_opts(
+        tmp_path,
+        [{"provider": home.source, "playlist_id": "home-list"},
+         {"provider": remote.source, "playlist_id": "remote-list"}],
+        {"provider": "spotify", "playlist_id": "dest", "name": "Both libraries"},
+    ), None)
+    assert ok and error is None
+    assert aggregate["union_tracks"] == 2 and aggregate["duplicates"] == 0
+    assert result[0]["added"] == 2
+    assert [track["name"] for track in destination.rows["dest"]] == ["First recording", "Other recording"]
+
+
 def test_merge_descriptors_preserve_selected_profiles_and_migrate_legacy_ids(tmp_path):
     profiles = AccountProfileStore(SettingsStore(dir=tmp_path))
     alex = profiles.create("spotify", "Alex")
