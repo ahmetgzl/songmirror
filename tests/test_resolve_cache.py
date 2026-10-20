@@ -349,10 +349,62 @@ def test_set_rejects_an_id_the_provider_cannot_parse(tmp_path, monkeypatch):
         store.set("deezer", "lost track|cinder", "definitely not a deezer track")
 
 
+@pytest.mark.parametrize("reference", [
+    "6pHtgTMzsmP6ccN2ocv7XN",
+    "spotify:track:6pHtgTMzsmP6ccN2ocv7XN",
+    "https://open.spotify.com/track/6pHtgTMzsmP6ccN2ocv7XN?si=shared",
+    "https://open.spotify.com/intl-de/track/6pHtgTMzsmP6ccN2ocv7XN",
+    "https://open.spotify.com/embed/track/6pHtgTMzsmP6ccN2ocv7XN",
+])
+def test_spotify_manual_mapping_stores_a_catalog_id(tmp_path, monkeypatch, reference):
+    store, path = _store(tmp_path, monkeypatch, {"lost|artist": None}, provider="spotify")
+    row = store.set("spotify", "lost|artist", reference)
+    assert row["target_id"] == "6pHtgTMzsmP6ccN2ocv7XN"
+    assert row["url"] == "https://open.spotify.com/track/6pHtgTMzsmP6ccN2ocv7XN"
+    assert load_cache(path)["search"] == {"lost|artist": "6pHtgTMzsmP6ccN2ocv7XN"}
+    assert load_cache(path)["manual"] == {"lost|artist"}
+
+
+@pytest.mark.parametrize("reference", [
+    "https://open.spotify.com/playlist/6pHtgTMzsmP6ccN2ocv7XN",
+    "spotify:album:6pHtgTMzsmP6ccN2ocv7XN",
+    "https://example.com/track/6pHtgTMzsmP6ccN2ocv7XN",
+    "https://open.spotify.com/track/",
+    "not a track",
+])
+def test_spotify_manual_mapping_rejects_invalid_references(tmp_path, monkeypatch, reference):
+    store, path = _store(tmp_path, monkeypatch, {"lost|artist": None}, provider="spotify")
+    with pytest.raises(ResolveCacheError, match="Spotify track"):
+        store.set("spotify", "lost|artist", reference)
+    assert load_cache(path)["search"] == {"lost|artist": None}
+
+
 def test_set_refuses_a_key_that_is_no_longer_cached(tmp_path, monkeypatch):
     store, _path = _store(tmp_path, monkeypatch, {"midnight|aurora": "111"})
     with pytest.raises(ResolveCacheError):
         store.set("deezer", "gone|missing", "98765")
+
+
+@pytest.mark.parametrize("provider", list(_CACHE_ENV))
+def test_invalid_manual_input_returns_422_and_preserves_previous_choice(tmp_path, monkeypatch, provider):
+    previous = {"spotify": "6pHtgTMzsmP6ccN2ocv7XN", "ytmusic": "c8i1Qpcnsa8",
+                "amazon": "B08G9TMYCZ", "lastfm": "Black\u241fAmar Prithibi"}.get(provider, "123456")
+    store, path = _store(tmp_path, monkeypatch, {"song|artist": previous}, manual=["song|artist"], provider=provider)
+    before = open(path, "rb").read()
+    app = create_app(settings=SettingsStore(dir=tmp_path), resolve_cache=store)
+    with TestClient(app) as client:
+        response = client.put(f"/api/resolve-cache/{provider}", json={"key": "song|artist", "target_id": "not a track"})
+    assert response.status_code == 422
+    assert "Paste" in response.json()["detail"]
+    assert open(path, "rb").read() == before
+
+
+def test_legacy_invalid_manual_reference_is_visible_with_no_broken_link(tmp_path, monkeypatch):
+    store, _path = _store(tmp_path, monkeypatch, {"song|artist": "https://music.youtube.com/playlist?list=PLtest"},
+                          provider="ytmusic", manual=["song|artist"])
+    row = store.entries("ytmusic")["entries"][0]
+    assert "YouTube Music track" in row["validation_error"]
+    assert row["url"] == ""
 
 
 def test_delete_forgets_the_mapping_and_its_provenance(tmp_path, monkeypatch):

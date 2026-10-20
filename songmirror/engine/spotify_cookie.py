@@ -30,6 +30,7 @@ import requests
 
 from .config import REQUEST_TIMEOUT, polite_sleep
 from .logs import log, log_note, log_warn
+from .spotify_ids import track_id as spotify_track_id
 from .targets.base import TargetAuthError
 
 _PATHFINDER = "https://api-partner.spotify.com/pathfinder/v2/query"
@@ -267,7 +268,7 @@ def _puri(playlist):
 
 
 def _turi(track_id):
-    return track_id if str(track_id).startswith("spotify:") else f"spotify:track:{track_id}"
+    return f"spotify:track:{spotify_track_id(track_id)}"
 
 
 def add(playlist, track_ids):

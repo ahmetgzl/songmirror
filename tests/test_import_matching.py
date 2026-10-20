@@ -263,7 +263,7 @@ def test_manual_cache_mapping_stays_exact_without_fetch():
     cache_key = track_key("Runaway", "AURORA")
     cache = {
         "isrc": {},
-        "search": {cache_key: "manual-1"},
+        "search": {cache_key: "6pHtgTMzsmP6ccN2ocv7XN"},
         "manual": {cache_key},
     }
     target = NoFetchFakeTarget(
@@ -278,7 +278,7 @@ def test_manual_cache_mapping_stays_exact_without_fetch():
     result = matcher.match_track(_track())
     assert result.status == "exact"
     assert result.best is not None
-    assert result.best.target_id == "manual-1"
+    assert result.best.target_id == "6pHtgTMzsmP6ccN2ocv7XN"
     assert result.best.reason == "manual_mapping"
     assert result.best.acceptable is True
     assert target.search_queries == []
