@@ -10,13 +10,13 @@ async function main() {
     const asset = path.resolve(dist, '.' + new URL(req.url, 'http://localhost').pathname)
     const file = asset.startsWith(dist + path.sep) && fs.existsSync(asset) && fs.statSync(asset).isFile()
       ? asset : path.join(dist, 'index.html')
-    res.setHeader('Content-Type', { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.json': 'application/json' }[path.extname(file)] || 'application/octet-stream')
+    res.setHeader('Content-Type', { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png' }[path.extname(file)] || 'application/octet-stream')
     fs.createReadStream(file).pipe(res)
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   const base = `http://127.0.0.1:${server.address().port}`
   const browser = await chromium.launch({ headless: true })
-  const errors = [], connections = [], saved = []
+  const errors = [], connections = [], saved = [], profiles = []
   const accounts = [
     { id: 'loves', provider: 'listenbrainz', name: 'ListenBrainz', provider_name: 'ListenBrainz',
       transferable: false, source_capable: true, supports_playlists: false,
@@ -37,7 +37,14 @@ async function main() {
   await page.route('**/api/**', route => {
     const request = route.request(), url = new URL(request.url())
     const send = body => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
-    if (url.pathname === '/api/accounts') return send(accounts)
+    if (url.pathname === '/api/accounts') {
+      if (request.method() === 'POST') {
+        const profile = request.postDataJSON()
+        profiles.push(profile)
+        return send({ id: 'new-profile', ...profile })
+      }
+      return send(accounts)
+    }
     if (/\/api\/accounts\/[^/]+\/connect$/.test(url.pathname)) {
       const account = accounts.find(account => url.pathname.includes(`/${account.id}/`))
       const values = request.postDataJSON()
@@ -59,9 +66,59 @@ async function main() {
     return send({})
   })
   await page.route('**/events*', route => route.fulfill({ contentType: 'text/event-stream', body: '' }))
+  await page.route('https://m.media-amazon.com/**', route => route.fulfill({
+    contentType: 'image/png', body: fs.readFileSync(path.join(__dirname, 'fixtures/amazon-music.png')),
+  }))
 
   try {
     await page.goto(base + '/accounts')
+    const picker = page.getByRole('button', { name: 'Provider', exact: true })
+    await picker.click()
+    let menu = page.getByRole('listbox', { name: 'Provider', exact: true })
+    await menu.waitFor()
+    assert.equal(await menu.getByRole('option').count(), 11)
+    for (const option of await menu.getByRole('option').all()) {
+      assert.ok(await option.locator('svg, img').count() >= 1, `${await option.innerText()} needs its provider mark`)
+    }
+    await menu.press('End')
+    await menu.press('Enter')
+    assert.ok((await picker.innerText()).includes('Jellyfin'))
+    assert.equal(await picker.evaluate(el => el === document.activeElement), true)
+    await picker.press('ArrowDown')
+    menu = page.getByRole('listbox', { name: 'Provider', exact: true })
+    for (const key of 'lis') await menu.press(key)
+    await menu.press('Enter')
+    assert.ok((await picker.innerText()).includes('ListenBrainz'))
+    assert.equal(await picker.locator('svg').count(), 2, 'Selected provider mark and dropdown chevron stay visible')
+    await picker.click()
+    await page.getByRole('listbox', { name: 'Provider', exact: true }).press('Escape')
+    assert.equal(await picker.getAttribute('aria-expanded'), 'false')
+    const screenshotDir = process.env.SONGMIRROR_E2E_SCREENSHOTS
+    if (screenshotDir) fs.mkdirSync(screenshotDir, { recursive: true })
+    for (const width of [1280, 375, 320]) {
+      await page.setViewportSize({ width, height: 812 })
+      await picker.click()
+      menu = page.getByRole('listbox', { name: 'Provider', exact: true })
+      await menu.waitFor()
+      await menu.getByRole('option', { name: 'Navidrome / Subsonic', exact: true }).scrollIntoViewIfNeeded()
+      const box = await menu.boundingBox()
+      assert.ok(box.x >= 0 && box.x + box.width <= width, 'Provider menu fits the viewport')
+      assert.ok(box.y >= 0 && box.y + box.height <= 812, 'Provider menu fits vertically')
+      assert.equal(await menu.locator('img').evaluateAll(images => images.every(img => img.complete && img.naturalWidth > 0)), true)
+      if (width < 768) {
+        assert.ok((await menu.getByRole('option').first().boundingBox()).height >= 44)
+      }
+      if (screenshotDir) await page.screenshot({ path: path.join(screenshotDir, `provider-icons-${width}.png`), fullPage: true })
+      await page.getByLabel('New profile label', { exact: true }).click()
+      await menu.waitFor({ state: 'hidden' })
+    }
+    await page.setViewportSize({ width: 1280, height: 1000 })
+    await page.getByLabel('New profile label', { exact: true }).fill('Test listener')
+    const addedProfile = page.waitForResponse(response => response.url().endsWith('/api/accounts') && response.request().method() === 'POST')
+    await page.getByRole('button', { name: 'Add profile', exact: true }).click()
+    await addedProfile
+    assert.deepEqual(profiles, [{ provider: 'listenbrainz', label: 'Test listener' }])
+    console.log('PASS: provider marks, keyboard selection, typeahead, dismissal, mobile bounds, and selected profile submission')
     const lovesCard = page.locator('[data-tour="account-card"]').filter({ has: page.getByRole('heading', { name: 'ListenBrainz', exact: true }) })
     const localCard = page.locator('[data-tour="account-card"]').filter({ has: page.getByRole('heading', { name: 'Navidrome / Subsonic', exact: true }) })
     await lovesCard.getByRole('button', { name: 'Connect', exact: true }).click()
@@ -102,7 +159,6 @@ async function main() {
       await page.setViewportSize({ width, height: 1000 })
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
     }
-    const screenshotDir = process.env.SONGMIRROR_E2E_SCREENSHOTS
     if (screenshotDir) {
       fs.mkdirSync(screenshotDir, { recursive: true })
       await page.screenshot({ path: path.join(screenshotDir, 'listenbrainz-sync-mobile.png'), fullPage: true })
