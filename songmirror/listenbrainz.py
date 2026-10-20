@@ -12,6 +12,7 @@ import requests
 from .engine.config import REQUEST_TIMEOUT, required_env
 
 API = "https://api.listenbrainz.org"
+WEBSITE = "https://listenbrainz.org"
 PAGE_SIZE = 100
 USER_AGENT = "SongMirror/0.1.0 (https://github.com/ahnafnafee/songmirror/issues)"
 
@@ -41,7 +42,7 @@ class _RequestGate:
         self._lock = threading.Lock()
         self._next = self._retry_at = 0
 
-    def get(self, session, url, **kwargs):
+    def request(self, send, url, **kwargs):
         from .engine.targets.base import TargetTransientError
 
         with self._lock:
@@ -54,7 +55,7 @@ class _RequestGate:
             if self._next > now:
                 self._sleep(self._next - now)
             self._next = self._clock() + 1
-            response = session.get(url, **kwargs)
+            response = send(url, **kwargs)
             headers = getattr(response, "headers", {})
             if response.status_code == 429 or str(headers.get("X-RateLimit-Remaining")) == "0":
                 delay = _retry_delay(headers)
@@ -79,8 +80,8 @@ class ListenBrainz:
         from .engine.targets.base import TargetTransientError
 
         try:
-            response = _REQUESTS.get(
-                self._session,
+            response = _REQUESTS.request(
+                self._session.get,
                 f"{API}/1/feedback/user/{quote(self.user, safe='')}/get-feedback",
                 params={"score": 1, "metadata": "true", "offset": offset, "count": count},
                 headers={"User-Agent": USER_AGENT, "Accept": "application/json"}, timeout=REQUEST_TIMEOUT,
@@ -95,9 +96,7 @@ class ListenBrainz:
             raise RuntimeError(f"ListenBrainz returned HTTP {response.status_code}.")
         content_type = getattr(response, "headers", {}).get("Content-Type", "")
         if "text/html" in content_type.lower():
-            raise TargetTransientError(
-                "ListenBrainz returned a web page instead of recording data. Try again later."
-            )
+            return self._website_feedback(offset, count)
         try:
             body = response.json()
             if not isinstance(body, dict) or not isinstance(body.get("feedback"), list):
@@ -110,6 +109,49 @@ class ListenBrainz:
         except (ValueError, KeyError, TypeError) as exc:
             raise RuntimeError("ListenBrainz returned incomplete feedback; sync was stopped.") from exc
         return body["feedback"], total
+
+    def _website_feedback(self, offset, count):
+        """Read the public Taste page's JSON, only when it contains all loves.
+
+        This website route always returns its first 25 entries, regardless of
+        pagination arguments. Its count must prove completeness before any
+        slice can stand in for an API page.
+        """
+        from .engine.targets.base import TargetTransientError
+
+        try:
+            response = _REQUESTS.request(
+                self._session.post,
+                f"{WEBSITE}/user/{quote(self.user, safe='')}/taste/",
+                params={"score": 1},
+                headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+                timeout=REQUEST_TIMEOUT, allow_redirects=False,
+            )
+        except requests.RequestException as exc:
+            raise TargetTransientError("Could not reach the ListenBrainz website; retry later.") from exc
+        if response.status_code == 404:
+            raise RuntimeError("ListenBrainz profile was not found. Check the username.")
+        content_type = getattr(response, "headers", {}).get("Content-Type", "")
+        if not response.ok or 300 <= response.status_code < 400 or "text/html" in content_type.lower():
+            raise TargetTransientError(
+                "ListenBrainz returned a web page or error instead of recording data. Try again later."
+            )
+        try:
+            body = response.json()
+            rows, total = body["feedback"], int(body["feedback_count"])
+            user = body["user"]["name"]
+            if (not isinstance(rows, list) or total < 0 or not isinstance(user, str)
+                    or user.casefold() != self.user.casefold()
+                    or not all(isinstance(row, dict) and row.get("score") == 1 for row in rows)):
+                raise ValueError
+        except (ValueError, KeyError, TypeError) as exc:
+            raise TargetTransientError("ListenBrainz returned incomplete website data; sync was stopped.") from exc
+        if len(rows) != total:
+            raise TargetTransientError(
+                f"ListenBrainz's website returned {len(rows)} of {total} loved recordings. "
+                "The API is unavailable, so sync was stopped to avoid using a partial collection. Try again later."
+            )
+        return rows[offset:offset + count], total
 
     def loved_tracks(self):
         offset, tracks, seen, expected_total = 0, [], set(), None

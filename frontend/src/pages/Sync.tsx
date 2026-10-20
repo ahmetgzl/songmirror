@@ -1,6 +1,6 @@
 import { t, useTranslation } from '@/i18n'
 import { FeatureGuide } from '@/components/onboarding/FeatureGuide'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { LuPlus } from 'react-icons/lu'
 
 import { LiveFeed } from '@/components/dashboard/LiveFeed'
@@ -13,7 +13,6 @@ import { LoadingStatus, Skeleton } from '@/components/ui/Skeleton'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useSyncs } from '@/hooks/useSyncs'
 import { useSyncStatus } from '@/hooks/useSyncStatus'
-import { syncPeersOf } from '@/lib/syncSummary'
 import type { SyncJob } from '@/types'
 
 /** A list of independent, named sync jobs (Soundiiz-style) — each is a
@@ -28,7 +27,7 @@ export default function Sync() {
   const [wizardOpen, setWizardOpen] = useState(false)
   const [editingJob, setEditingJob] = useState<SyncJob | null>(null)
 
-  const peers = useMemo(() => syncPeersOf(accounts ?? []), [accounts])
+  const peers = accounts ?? []
 
   function openNew() {
     setEditingJob(null)

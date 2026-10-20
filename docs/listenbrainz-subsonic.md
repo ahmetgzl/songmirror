@@ -10,7 +10,7 @@ The reader requests every page of positive feedback with metadata. A MusicBrainz
 
 For environment-managed connections, set `LISTENBRAINZ_USER`. Additional accounts created in the UI keep their usernames and cache paths in separate profiles.
 
-Requests identify SongMirror with its version and project contact URL. Connection checks and pagination share a one-request-per-second budget across profiles and honor the API's rate-limit reset headers. A rate limit or a browser-verification page stops the read with a retryable error instead of treating it as an empty collection.
+Requests identify SongMirror with its version and project contact URL. Connection checks and pagination share a one-request-per-second budget across profiles and honor the API's rate-limit reset headers. If the API returns an HTML verification page, SongMirror tries the website's public Taste-page JSON route. That route returns at most 25 feedback entries, so its reported count must prove the entire collection was returned before SongMirror uses it. Larger collections still require the API; a truncated website response or failure on both routes stops the read with a retryable error. Rate limits do not trigger the website fallback.
 
 ## Navidrome and Subsonic-compatible servers
 
@@ -28,6 +28,7 @@ Environment-managed connections use `SUBSONIC_URL`, `SUBSONIC_USER`, and `SUBSON
 
 - [ListenBrainz feedback API](https://listenbrainz.readthedocs.io/en/latest/users/api/recordings.html)
 - [ListenBrainz feedback identifiers and pagination](https://listenbrainz.readthedocs.io/en/latest/users/feedback-json.html)
+- [ListenBrainz website Taste-page JSON handler](https://github.com/metabrainz/listenbrainz-server/blob/122b4f4d09e946e6518fbcb36b46bf5afbbda4fa/listenbrainz/webserver/views/user.py#L273)
 - [OpenSubsonic song fields, including ISRC](https://opensubsonic.netlify.app/docs/responses/child/)
 - [OpenSubsonic playlist updates](https://opensubsonic.netlify.app/docs/endpoints/updateplaylist/)
 - [Navidrome's OpenSubsonic implementation tracker](https://github.com/navidrome/navidrome/issues/2695)

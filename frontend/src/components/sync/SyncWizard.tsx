@@ -153,9 +153,8 @@ const STEPS = [
   { get label() { return t("Limits & downloads") }, get intro() { return t("Guardrails so one pass can't make a huge change, plus an optional offline copy of what's synced.") } },
 ] as const
 
-/** Everything the wizard may offer. Wider than `syncPeersOf`, which is the
- * playlist-peer set: a history service with no playlists of its own is still a
- * valid one-way source and can still receive loves, so it belongs here while
+/** Everything the wizard may offer. A history service with no playlists of
+ * its own can still supply tracks or receive loves, so it belongs here while
  * staying out of the transfer and playlist-link pickers. */
 function syncCandidates(accounts: Account[]): Account[] {
   return accounts.filter((account) => account.transferable || canParticipateInSync(account))

@@ -62,7 +62,7 @@ async function main() {
     }
     if (url.pathname === '/api/sync/status') return send({ jobs: [], running: false })
     if (url.pathname.startsWith('/api/playlists')) return send([])
-    if (['/api/links', '/api/playlist-backups'].includes(url.pathname)) return send([])
+    if (['/api/links', '/api/playlist-backups', '/api/transfers'].includes(url.pathname)) return send([])
     return send({})
   })
   await page.route('**/events*', route => route.fulfill({ contentType: 'text/event-stream', body: '' }))
@@ -173,8 +173,11 @@ async function main() {
     assert.equal(saved[0].sync_playlists, false)
     assert.equal(saved[0].liked_tracks, true)
     assert.deepEqual(saved[0].liked_routes, { local: { kind: 'native' } })
+    await page.getByText(/One-way · ListenBrainz → Navidrome \/ Subsonic/).first().waitFor()
+    await page.goto(base + '/')
+    await page.getByText(/One-way · ListenBrainz → Navidrome \/ Subsonic/).first().waitFor()
     assert.deepEqual(errors, [])
-    console.log('PASS: ListenBrainz source selects loves automatically and saves a native Subsonic route on mobile')
+    console.log('PASS: ListenBrainz loves route saves correctly and both sync summaries retain the source name')
 
     for (const cached of [true, false]) {
       const context = await browser.newContext()

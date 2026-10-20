@@ -14,15 +14,6 @@ export function joinCsv(values: string[]): string {
   return values.join(',')
 }
 
-/** The sync/transfer peers among `accounts`, in their original order. Keyed off
- * the backend's `transferable` flag (its targets registry is the single source
- * of truth), so browse-only services like Jellyfin — a connected account that
- * only receives pushed cover art — never appear as a Services/Providers toggle,
- * a Source-of-truth choice, or a transfer endpoint. */
-export function syncPeersOf(accounts: Account[]): Account[] {
-  return accounts.filter((a) => a.transferable)
-}
-
 /** Whichever peer is locked as the source in one-way mode. Group jobs lock
  * every authority separately; N-way has no locked provider. */
 export function lockedSourceOf(job: Pick<SyncJob, 'mode' | 'source'>): string | null {
