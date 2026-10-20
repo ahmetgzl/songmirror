@@ -13,6 +13,7 @@ import time
 from collections import Counter
 
 from .. import archive
+from ..track_references import normalize_track_reference
 from ..logs import (
     fmt_counts, fmt_secs, log_add, log_hold, log_miss, log_note, log_protected,
     log_remove, log_repair, log_section, log_summary, log_warn, paint,
@@ -66,6 +67,9 @@ class MirrorTarget:
     provider = ""          # catalog type when source is an account profile id
     archive_source = None  # account identity for target-internal archive reads
     cache_file = None     # this target's own resolution cache path (ids differ per service)
+    # Hosted catalogs share track ids across accounts. Self-hosted libraries
+    # can assign the same id to different recordings on different servers.
+    catalog_ids_global = True
     # True only when the provider gives every physical playlist entry its own
     # durable id. The manual editor can then delete that exact occurrence
     # without rereading a thousand-track playlist to revalidate its position.
@@ -199,7 +203,30 @@ class MirrorTarget:
     @classmethod
     def normalize_manual_track_id(cls, value):
         """Provider catalog id represented by a manually pasted id or link."""
-        return "" if value is None else str(value).strip()
+        return normalize_track_reference(cls.provider or cls.source, value)
+
+    def _cached_id(self, key, cache):
+        value = cache["search"][key]
+        if value is None:
+            return None
+        # Validate every explicit choice. Older automatic caches may also contain
+        # pasted URLs, but ordinary machine-returned catalog ids need no parsing.
+        if key in cache.get("manual", ()) or ":" in str(value) or "/" in str(value):
+            normalized = self.normalize_manual_track_id(value)
+            if not normalized:
+                raise ValueError("The saved manual track reference is empty. Edit or delete the mapping.")
+            if normalized != value:
+                cache["search"][key] = normalized
+                cache["dirty"] = True
+            return normalized
+        return value
+
+    def manual_resolution(self, track, cache):
+        artists = track.get("artists") or ([track["artist"]] if track.get("artist") else [])
+        key = self.search_cache_key(track.get("name", ""), artists)
+        if key in cache.get("manual", ()) and cache.get("search", {}).get(key):
+            return self._cached_id(key, cache), "search"
+        return None
 
     @staticmethod
     def search_cache_key(name, artists):
@@ -810,7 +837,11 @@ def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, e
             tid = links.get(track.get("id"))
             method = "link" if tid else None
         try:
-            if tid:
+            manual_resolver = getattr(target, "manual_resolution", None)
+            manual = manual_resolver(track, cache) if manual_resolver else None
+            if manual:
+                tid, method = manual
+            elif tid:
                 validator = getattr(target, "validate_link", None)
                 if validator:
                     tid, method = validator(track, tid, cache)
@@ -917,7 +948,17 @@ def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, e
     removals, uncertain_matches = match_unresolved_removals(to_remove, not_found)
     held = [existing for existing, _unresolved in uncertain_matches]
     removals_skipped, held_back = 0, []
-    if not sp_tracks and tgt_tracks and not allow_empty_source:
+    incomplete_metadata = any(
+        track.get("_metadata_incomplete") or (track.get("_raw") or {}).get("_metadata_incomplete")
+        for track in sp_tracks
+    )
+    if incomplete_metadata and removals:
+        log_warn(
+            "source recordings have incomplete metadata; holding destination removals this pass",
+            tag=tag,
+        )
+        removals_skipped, removals, guard = len(removals), [], True
+    elif not sp_tracks and tgt_tracks and not allow_empty_source:
         log_warn(f"{source_name} returned 0 tracks but {target.name} has {len(tgt_tracks)}; skipping all removals this pass", tag=tag)
         removals, guard = [], True
     elif len(removals) > max_removals:

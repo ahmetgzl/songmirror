@@ -210,9 +210,9 @@ async function main() {
         const sidebar = await page.locator('aside').boundingBox()
         const main = await page.locator('main').boundingBox()
         assert.ok(sidebar.x > main.x, 'Arabic desktop navigation must be on the right')
-        await page.getByRole('switch').click()
+        await page.getByRole('switch', { name: message(code, 'Dark theme'), exact: true }).click()
         await checkSwitches(page, 'Arabic Settings, switch off')
-        await page.getByRole('switch').click()
+        await page.getByRole('switch', { name: message(code, 'Dark theme'), exact: true }).click()
         await checkSwitches(page, 'Arabic Settings, switch on')
         await screenshot(page, 'arabic-settings-desktop')
       }

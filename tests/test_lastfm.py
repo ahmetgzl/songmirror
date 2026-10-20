@@ -531,7 +531,7 @@ def test_lastfm_is_registered_but_holds_no_playlists():
     assert targets.is_peer("lastfm") is False
     assert targets.is_peer("tidal") is True
     # ISRC-rich providers seed identity first; Last.fm carries none, so it sorts last.
-    assert targets.provider_ids()[-1] == "lastfm"
+    assert targets.provider_ids().index("lastfm") > targets.provider_ids().index("subsonic")
 
 
 def test_lastfm_is_only_a_target_for_a_liked_tracks_job():

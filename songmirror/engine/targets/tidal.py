@@ -583,12 +583,14 @@ class TidalTarget(MirrorTarget):
         return out
 
     def resolve(self, track, cache):
+        if manual := self.manual_resolution(track, cache):
+            return manual
         candidates = compatible_isrc_candidates(track, cache)
         if candidates:
             return best_candidate(track, candidates) or str(candidates[0]["id"]), "isrc"
         key = track_key(track.get("name", ""), " ".join(track.get("artists") or []))
         if key in cache["search"]:
-            return cache["search"][key], "search"
+            return self._cached_id(key, cache), "search"
         primary = (track.get("artists") or [""])[0]
         terms = [f"{track.get('name', '')} {primary}".strip()]
         roman = f"{romanized(track.get('name'))} {romanized(primary)}".strip()

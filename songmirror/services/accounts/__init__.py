@@ -10,6 +10,8 @@ from .base import ConnStatus, Connector, DeviceCode, Field
 from .deezer import DeezerConnector
 from .jellyfin import JellyfinConnector
 from .lastfm import LastfmConnector
+from .listenbrainz import ListenBrainzConnector
+from .subsonic import SubsonicConnector
 from .qobuz import QobuzConnector
 from .spotify import SpotifyConnector
 from .tidal import TidalConnector
@@ -27,5 +29,7 @@ CONNECTORS = {
     "ytmusic": YTMusicConnector,
     # Read-only source: supplies listening history, accepts no writes.
     "lastfm": LastfmConnector,
+    "listenbrainz": ListenBrainzConnector,
+    "subsonic": SubsonicConnector,
     "jellyfin": JellyfinConnector,
 }

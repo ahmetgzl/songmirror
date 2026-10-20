@@ -219,6 +219,14 @@ function connectGuides(): Record<string, ConnectGuideContent> { return {
     ],
     link: { href: 'https://www.last.fm/api/account/create', label: t("Create a Last.fm API account") },
   },
+  listenbrainz: {
+    intro: t("Reads public loved recordings by username."),
+    steps: [<>{t("Choose ListenBrainz as the source and enable liked tracks. No token is needed.")}</>],
+  },
+  subsonic: {
+    intro: t("Syncs playlists and starred songs already stored on your music server."),
+    steps: [<>{t("Enter the server URL and your Subsonic username and password. In Docker, use a server address the container can reach.")}</>],
+  },
   jellyfin: {
     intro: t("Optional: connect Jellyfin to push real playlist cover art. You need the server URL and an API key."),
     steps: [

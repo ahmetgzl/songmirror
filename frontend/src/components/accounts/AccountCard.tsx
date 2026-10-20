@@ -24,6 +24,8 @@ const SERVICE_BLURBS: Record<string, string> = {
   get apple() { return t("Paste a couple of tokens from the Apple Music web player. No developer account needed.") },
   get ytmusic() { return t("Sign in with a Google account using a short code. Approve it from your phone or another tab.") },
   get lastfm() { return t("Reads your listening history. Authorize it to read a private profile and love tracks.") },
+  get listenbrainz() { return t("Reads public loved recordings by username.") },
+  get subsonic() { return t("Syncs playlists and starred songs already stored on your music server.") },
   get jellyfin() { return t("Optional. Pushes real playlist cover art to your Jellyfin server.") },
 }
 
@@ -108,7 +110,7 @@ export function AccountCard({ account, onChanged }: {
   }
 
   return (
-    <Card className={cn('flex flex-col gap-3.5 p-4 sm:p-5', borderClass(account.state))}>
+    <Card data-tour="account-card" className={cn('flex flex-col gap-3.5 p-4 sm:p-5', borderClass(account.state))}>
       <div className="flex flex-wrap items-center gap-2.5">
         {logoId ? (
           <span
@@ -121,7 +123,10 @@ export function AccountCard({ account, onChanged }: {
           <span className={cn('size-2.5 shrink-0 rounded-full', tagDot(account.provider))} aria-hidden="true" />
         )}
         <h3 className="text-base font-bold text-text">{account.name}</h3>
-        <span className="font-mono text-[10px] tracking-wide text-text-3">{AUTH_KIND_LABELS[account.auth_kind]}</span>
+        <span className="font-mono text-[10px] tracking-wide text-text-3">{
+          account.provider === 'listenbrainz' ? t("Username")
+            : account.provider === 'subsonic' ? t("Password") : AUTH_KIND_LABELS[account.auth_kind]
+        }</span>
         <StatusPill state={account.state} className="ms-auto" />
       </div>
 

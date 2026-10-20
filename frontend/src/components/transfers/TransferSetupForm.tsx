@@ -1,10 +1,10 @@
 import { t, useTranslation } from '@/i18n'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import { api, errorMessage } from '@/api'
 import type { ProviderPlaylistsEntry } from '@/hooks/useProviderPlaylists'
 import { capabilitiesOf } from '@/lib/accountCapabilities'
-import { cn } from '@/lib/cn'
 import { serviceLogoId, tagText } from '@/lib/constants'
 import type { Account, StartTransferRequest, TransferSourcePreview } from '@/types'
 
@@ -23,6 +23,7 @@ interface Props {
    * disconnected service. */
   accounts: Account[]
   entries: Record<string, ProviderPlaylistsEntry>
+  onRefreshPlaylists: (accountId: string) => Promise<void>
   onStarted: (jobId: string) => void
 }
 
@@ -43,7 +44,7 @@ function serviceIcon(account: Account | undefined) {
   return logoId ? <ServiceLogo service={logoId} className={`size-4 ${tagText(provider)}`} /> : undefined
 }
 
-export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
+export function TransferSetupForm({ accounts, entries, onRefreshPlaylists, onStarted }: Props) {
   useTranslation()
   const [sourceMode, setSourceMode] = useState<'library' | 'link'>('library')
   const [sourceProvider, setSourceProvider] = useState('')
@@ -65,6 +66,7 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
   const [confirming, setConfirming] = useState(false)
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const defaultsForSource = useRef<string | null>(null)
 
   // Only sync/transfer peers can be an endpoint — browse-only services like
   // Jellyfin (a local mirror the download step feeds) are filtered out.
@@ -86,7 +88,6 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
   const sourceAccount = transferable.find((account) => account.id === sourceProvider)
   const destAccount = transferable.find((account) => account.id === destProvider)
   const canConfigureTransfer =
-    transferable.length >= 2 &&
     destProviderOptions.length > 0 &&
     (librarySources.length > 0 || publicSources.length > 0)
 
@@ -94,12 +95,22 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
   // re-derive whenever the source playlist or the create-new choice changes,
   // but a manual edit in between sticks until one of those changes again.
   useEffect(() => {
-    if (destMode !== 'create') return
+    if (destMode !== 'create') {
+      defaultsForSource.current = null
+      return
+    }
     const source =
       sourceMode === 'link'
         ? preview
         : entries[sourceProvider]?.playlists.find((p) => p.id === sourcePlaylistId)
-    if (source?.name) setDestName(source.name)
+    const key = JSON.stringify([sourceMode, sourceProvider, sourceMode === 'link' ? preview?.playlist_id : sourcePlaylistId])
+    if (!source) {
+      defaultsForSource.current = null
+      return
+    }
+    if (defaultsForSource.current === key) return
+    defaultsForSource.current = key
+    setDestName(source.name)
     setDestDescription(source?.description ?? '')
     setDescriptionEdited(false)
   }, [destMode, sourceMode, preview, sourceProvider, sourcePlaylistId, entries])
@@ -144,7 +155,7 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
     Boolean(destPlaylistId) &&
     destPlaylistId === sourcePlaylistId
   const formValid =
-    Boolean(sourceProvider && sourcePlaylistId && destProvider && (destMode === 'create' ? destName.trim() : destPlaylistId)) &&
+    Boolean(sourceProvider && sourcePlaylist && destProvider && (destMode === 'create' ? destName.trim() : destPlaylist && destPlaylist.owned !== false)) &&
     !sameTarget
 
   async function handlePreview() {
@@ -217,30 +228,29 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
         <p className="mt-1 text-xs text-text-3">
           {t("A one-off copy. Existing tracks on the destination are kept, this only adds.")}
         </p>
+        <p className="mt-1 text-xs text-text-3">
+          {t("Copy between accounts on the same service, or paste a public playlist link from an old account.")}
+        </p>
       </div>
 
       {!canConfigureTransfer ? (
-        <p className="text-sm text-text-3">
-          {t("Connect a readable source and a writable destination on the Accounts page to copy a playlist between them. Catalog-only accounts can supply a public link, but cannot be destinations.")}
-        </p>
+        <div className="flex flex-col items-start gap-3">
+          <p className="text-sm text-text-3">
+            {t("Connect a readable source and a writable destination on the Accounts page to copy a playlist between them. Catalog-only accounts can supply a public link, but cannot be destinations.")}
+          </p>
+          <Link data-tour="transfer-connect" to="/accounts" className="inline-flex min-h-11 items-center rounded-control px-3 text-sm font-semibold text-accent underline underline-offset-4">
+            {t('Accounts')}
+          </Link>
+        </div>
       ) : (
         <>
           <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-stretch">
-            {/* "Deck A" — twin tape decks patched by a dashed cable is the
-                mental model: this one ends in a counter readout once a
-                playlist is picked. */}
-            <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-card border border-border-strong bg-inset shadow-sm">
-              <div
-                className="border-b border-border px-4 py-2"
-                style={{ backgroundImage: 'radial-gradient(var(--color-border) 1px, transparent 1px)', backgroundSize: '9px 9px' }}
-              >
-                <span className="rounded bg-inset px-2 py-0.5 font-mono text-[10px] font-bold tracking-[0.14em] text-text-2">
-                  {t("DECK A · SOURCE")}
-                </span>
+            <div data-tour="transfer-source" className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-card border border-border-strong bg-inset shadow-sm">
+              <div className="border-b border-border px-4 py-3">
+                <h3 className="text-sm font-semibold text-text">{t('Source')}</h3>
               </div>
               <div className="flex flex-1 flex-col gap-3.5 p-4">
                 <div className="flex flex-col gap-1.5">
-                  <span className="text-[12.5px] font-semibold text-text-2">{t("Source")}</span>
                   <Segmented
                     ariaLabel={t("Source playlist")}
                     options={SOURCE_MODE_OPTIONS}
@@ -265,6 +275,9 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
                       label={t("Playlist")}
                       playlists={entries[sourceProvider]?.playlists ?? []}
                       loading={entries[sourceProvider]?.loading}
+                      refreshing={entries[sourceProvider]?.refreshing}
+                      error={entries[sourceProvider]?.error}
+                      onRefresh={() => void onRefreshPlaylists(sourceProvider)}
                       value={sourcePlaylistId}
                       disabled={!sourceProvider}
                       onChange={setSourcePlaylistId}
@@ -341,17 +354,12 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
               <span className="hidden h-0 w-6 border-t-2 border-dashed border-border-strong sm:block" aria-hidden="true" />
             </div>
 
-            {/* "Deck B" — ends in a write-mode lamp instead of a counter. */}
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-card border border-border-strong bg-inset shadow-sm">
-              <div
-                className="border-b border-border px-4 py-2"
-                style={{ backgroundImage: 'radial-gradient(var(--color-border) 1px, transparent 1px)', backgroundSize: '9px 9px' }}
-              >
-                <span className="rounded bg-inset px-2 py-0.5 font-mono text-[10px] font-bold tracking-[0.14em] text-text-2">
-                  {t("DECK B · DESTINATION")}
-                </span>
+              <div className="border-b border-border px-4 py-3">
+                <h3 className="text-sm font-semibold text-text">{t('Destination')}</h3>
               </div>
               <div className="flex flex-1 flex-col gap-3.5 p-4">
+                <div data-tour="transfer-destination">
                 <SelectField
                   label={t("Service")}
                   help={
@@ -373,6 +381,7 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
                     setDestPlaylistId('')
                   }}
                 />
+                </div>
 
                 <div className="flex flex-col gap-1.5">
                   <span className="text-[12.5px] font-semibold text-text-2">{t("Playlist")}</span>
@@ -390,6 +399,9 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
                     placeholder={destProvider ? t("Choose a playlist…") : t("Choose a destination service first")}
                     playlists={destPlaylists}
                     loading={entries[destProvider]?.loading}
+                    refreshing={entries[destProvider]?.refreshing}
+                    error={entries[destProvider]?.error}
+                    onRefresh={() => void onRefreshPlaylists(destProvider)}
                     value={destPlaylistId}
                     disabled={!destProvider}
                     onChange={setDestPlaylistId}
@@ -433,19 +445,6 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
                   className="border-t border-border pt-3"
                 />
               </div>
-              <div className="flex items-center gap-2 border-t border-border px-4 py-2.5">
-                <span
-                  className={cn('size-[7px] shrink-0 rounded-full', destMode === 'create' ? 'bg-warning' : 'bg-success')}
-                  aria-hidden="true"
-                />
-                <span className="font-mono text-[9px] tracking-[0.1em] text-text-3">
-                  {destMode === 'create'
-                    ? t("WRITE MODE · CREATE NEW · NAME FROM DECK A")
-                    : canPreserveOrder && preserveOrder
-                      ? t("WRITE MODE · ADD TO EXISTING · REPLAY ORDER")
-                      : t("WRITE MODE · ADD TO EXISTING · APPEND")}
-                </span>
-              </div>
             </div>
           </div>
 
@@ -457,7 +456,7 @@ export function TransferSetupForm({ accounts, entries, onStarted }: Props) {
           )}
 
           <div>
-            <Button onClick={() => setConfirming(true)} disabled={!formValid}>
+            <Button data-tour="transfer-copy" onClick={() => setConfirming(true)} disabled={!formValid}>
               {t("Copy playlist")}
             </Button>
           </div>

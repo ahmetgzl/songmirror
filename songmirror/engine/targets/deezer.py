@@ -2,9 +2,8 @@
 
 import os
 import random
-import re
 import time
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 
@@ -18,21 +17,20 @@ from ...oauth import read_token, token_path
 from ..config import REQUEST_TIMEOUT, polite_sleep
 from ..logs import log_warn
 from ..matching import normalize_text, romanized, track_key
+from ..track_references import normalize_track_reference, reference_text, reference_url
 from .base import MirrorTarget, TargetAuthError, TargetTransientError
 from .provider_utils import best_candidate, compatible_isrc_candidates, source_playlist_details, title_with_version
 
 API = "https://api.deezer.com"
 DEFAULT_TOKEN_FILE = "data/deezer_oauth.json"
-_TRACK_PATH_RE = re.compile(r"(?:^|/)track/(\d+)(?=$|[/?#])", re.IGNORECASE)
 SHARE_LINK_HOSTS = {"link.deezer.com"}
 
 
 def _track_id_from_reference(value):
-    decoded = unquote(str(value).strip())
-    if re.fullmatch(r"\d+", decoded):
-        return decoded
-    match = _TRACK_PATH_RE.search(decoded)
-    return match.group(1) if match else None
+    try:
+        return normalize_track_reference("deezer", value) or None
+    except ValueError:
+        return None
 
 
 def _normalized_track(track):
@@ -400,15 +398,14 @@ class DeezerTarget(MirrorTarget):
     @classmethod
     def normalize_manual_track_id(cls, value):
         """Extract Deezer's numeric catalog id from a pasted id or track URL."""
-        raw = super().normalize_manual_track_id(value)
+        raw = reference_text(value)
+        if not raw:
+            raise ValueError("Paste a numeric Deezer track ID or a Deezer track URL.")
         track_id = _track_id_from_reference(raw)
         if track_id:
             return track_id
 
-        try:
-            parts = urlsplit(raw)
-        except ValueError:
-            parts = None
+        parts = reference_url(raw)
         is_share_link = (
             parts
             and parts.scheme == "https"
@@ -432,6 +429,14 @@ class DeezerTarget(MirrorTarget):
             raise ValueError("That Deezer share link does not point to a track.")
 
         raise ValueError("Paste a numeric Deezer track ID or a Deezer track URL.")
+
+    def validate_link(self, track, target_id, cache):
+        """Validate Deezer track ID or URL before queueing to avoid breaking sync."""
+        try:
+            normalized = self.normalize_manual_track_id(target_id)
+            return normalized, "link"
+        except (ValueError, TypeError):
+            return None, None
 
     def playlist_count(self, playlist):
         return playlist.get("nb_tracks", playlist.get("estimatedTracksCount"))
@@ -479,19 +484,14 @@ class DeezerTarget(MirrorTarget):
         return out
 
     def resolve(self, track, cache):
+        if manual := self.manual_resolution(track, cache):
+            return manual
         candidates = compatible_isrc_candidates(track, cache)
         if candidates:
             return best_candidate(track, candidates) or str(candidates[0]["id"]), "isrc"
         key = track_key(track.get("name", ""), " ".join(track.get("artists") or []))
         if key in cache["search"]:
-            cached = cache["search"][key]
-            if cached is None:
-                return None, "search"
-            normalized = self.normalize_manual_track_id(cached)
-            if normalized != cached:
-                cache["search"][key] = normalized
-                cache["dirty"] = True
-            return normalized, "search"
+            return self._cached_id(key, cache), "search"
         primary = (track.get("artists") or [""])[0]
         queries = [f"{track.get('name', '')} {primary}".strip()]
         roman = f"{romanized(track.get('name'))} {romanized(primary)}".strip()
@@ -553,24 +553,38 @@ class DeezerTarget(MirrorTarget):
         return [candidate]
 
     def add(self, playlist, target_ids):
+        written = []
         if self._web is not None:
             try:
                 for target_id in target_ids:
+                    try:
+                        normalized = self.normalize_manual_track_id(target_id)
+                    except (ValueError, TypeError):
+                        log_warn(f"skipping invalid Deezer track ID: {target_id!r}", tag=self.tag)
+                        continue
                     self._web.add(
                         str(playlist["id"]),
-                        [self.normalize_manual_track_id(target_id)],
+                        [normalized],
                     )
+                    written.append(target_id)
                     polite_sleep(0.25)
-                return
+                return None if len(written) == len(target_ids) else written
             except DeezerWebAuthError as exc:
                 raise TargetAuthError(str(exc)) from exc
         for target_id in target_ids:
+            try:
+                normalized = self.normalize_manual_track_id(target_id)
+            except (ValueError, TypeError):
+                log_warn(f"skipping invalid Deezer track ID: {target_id!r}", tag=self.tag)
+                continue
             self._request(
                 "POST",
                 f"playlist/{playlist['id']}/tracks",
-                params={"songs": self.normalize_manual_track_id(target_id)},
+                params={"songs": normalized},
             )
+            written.append(target_id)
             polite_sleep(0.25)
+        return None if len(written) == len(target_ids) else written
 
     def remove(self, playlist, track):
         target_id = self.track_id(track)

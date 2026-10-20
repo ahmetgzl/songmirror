@@ -37,9 +37,52 @@ Một giải pháp thay thế miễn phí, mã nguồn mở, tự lưu trữ cho
 
 <sup>Thiết lập một lần — mọi danh sách phát mà bạn tuyển chọn vẫn được phản ánh trên mọi dịch vụ, theo thứ tự ngày thêm.</sup>
 
-<a href="../../.github/assets/songmirror-demo.mp4"><img src="../../.github/assets/songmirror-demo.gif" alt="SongMirror bản demo — hiển thị logo, trang tổng quan, thiết lập đồng bộ hóa một chiều và hai chiều, chuyển danh sách phát trực tiếp và kết hợp chính xác theo ISRC trên bảy dịch vụ âm nhạc" width="88%"></a>
+</div>
 
-<sup>± <a href="../../.github/assets/songmirror-demo.mp4">Xem phiên bản 1080p</a></sup>
+<a id="quick-start"></a>
+
+## 🚀 Bắt đầu nhanh
+
+Cách nhanh nhất để chạy nó là Docker — Compose kéo hình ảnh đã xuất bản, phục vụ giao diện người dùng web và chạy đồng bộ hóa của bạn theo lịch trình.
+
+Để cài đặt liên tục với khởi động lại tự động:
+
+```bash
+git clone https://github.com/ahnafnafee/songmirror.git
+cd songmirror
+docker compose up -d
+```
+
+Mở **http://localhost:8888**. Trong **Tài khoản**, kết nối các dịch vụ bạn dùng. Chọn **Chuyển danh sách** để sao chép một lần, hoặc **Đồng bộ** để cập nhật theo lịch. Mỗi trang tính năng có nút **Bắt đầu hướng dẫn** để làm nổi bật từng điều khiển theo từng bước.
+
+Hoặc thử trực tiếp hình ảnh GHCR công khai mà không cần sao chép kho lưu trữ:
+
+```bash
+docker run --rm -d --name songmirror -p 127.0.0.1:8888:8080 ghcr.io/ahnafnafee/songmirror:latest
+```
+
+Sau đó mở `http://localhost:8888` và kết nối các dịch vụ của bạn trong trình duyệt. Quá trình thiết lập Compose không cần `.env` để bắt đầu; mọi thứ đều được định cấu hình trong giao diện người dùng và được lưu trong `./data`.
+
+Tùy chọn `docker run` trực tiếp chỉ dùng một lần: `docker stop songmirror` xóa vùng chứa và cấu hình của nó. Sử dụng Compose để cài đặt lâu bền với thông tin xác thực, bộ nhớ đệm và nội dung tải xuống liên tục hoặc xem [hướng dẫn hình ảnh container](../docker-image.md) để biết thẻ và ghim thông báo.
+
+Thích chạy nó mà không có Docker?
+
+```bash
+uv sync
+uv run uvicorn songmirror.web:app --host 0.0.0.0 --port 8080   # then open http://127.0.0.1:8080
+```
+
+> Yêu cầu [`uv`](https://docs.astral.sh/uv/) (Python 3.13+). Đối với máy nhân bản tải xuống cục bộ, cũng có `uv tool install spotdl` và có `ffmpeg` trên PATH.
+
+<a id="app-language"></a>
+
+### Ngôn ngữ ứng dụng
+
+SongMirror hỗ trợ tiếng Anh, tiếng Ả Rập, tiếng Thổ Nhĩ Kỳ, tiếng Tây Ban Nha, tiếng Trung giản thể, tiếng Pháp, tiếng Bồ Đào Nha, tiếng Đức, tiếng Nhật, tiếng Hindi, tiếng Bengali, tiếng Indonesia, tiếng Hàn, tiếng Ý và tiếng Việt. Khi mở lần đầu, ứng dụng kiểm tra các tùy chọn ngôn ngữ của trình duyệt theo thứ tự, kể cả biến thể theo khu vực, rồi dùng ngôn ngữ đầu tiên được hỗ trợ. Nếu không có ngôn ngữ phù hợp, ứng dụng dùng tiếng Anh. Đổi ngôn ngữ tại **Cài đặt → Chung → Ngôn ngữ**. Lựa chọn được lưu trong trình duyệt này và vẫn giữ nguyên sau khi tải lại trang. Chọn **Tự động (trình duyệt)** để tiếp tục theo tùy chọn của trình duyệt. Giao diện tiếng Ả Rập hiển thị từ phải sang trái. Tên danh sách phát, nghệ sĩ và dịch vụ, thông tin xác thực cùng nhật ký chẩn đoán giữ nguyên giá trị gốc.
+
+<div align="right">
+
+[![][back-to-top]](#readme-top)
 
 </div>
 
@@ -51,10 +94,10 @@ Một giải pháp thay thế miễn phí, mã nguồn mở, tự lưu trữ cho
 
 #### TOC
 
-- [✨ Tính năng](#features)
-- [📸 Ảnh chụp màn hình](#screenshots)
 - [🚀 Bắt đầu nhanh](#quick-start)
   - [Ngôn ngữ ứng dụng](#app-language)
+- [✨ Tính năng](#features)
+- [📸 Ảnh chụp màn hình](#screenshots)
 - [🐳 Luôn chạy: Docker](#always-running-docker)
 - [⚙️ Cách thức hoạt động](#how-it-works)
   - [Kết hợp](#matching)
@@ -100,12 +143,14 @@ SongMirror giữ cho danh sách phát của bạn giống hệt nhau ở mọi n
 - ♥ **Các bản nhạc được yêu thích và yêu thích** - đồng bộ hóa bộ sưu tập yêu thích tích hợp của mỗi dịch vụ trên tất cả bảy nhà cung cấp âm nhạc, vào danh sách yêu thích của riêng điểm đến hoặc danh sách phát được đặt tên mới.
 - 🎯 **đối sánh chính xác theo ISRC** — danh tính bản ghi chính xác nếu có, với dự phòng tiêu đề/nghệ sĩ/thời lượng tương thích gần đúng Unicode (sự khác biệt về phần ghi công của nghệ sĩ nổi bật, hậu tố "- 2015 Remaster", tập lệnh không phải tiếng Latinh, nội dung tải lên chỉ dành cho video — tất cả đều được xử lý).
 - 🎛️ **Nhiều lần đồng bộ hóa được đặt tên** - thiết lập bao nhiêu lần đồng bộ hóa độc lập tùy thích, mỗi lần đồng bộ hóa có các dịch vụ, danh sách phát, lịch biểu và giới hạn an toàn riêng.
-- ↪️ **chuyển một lần** — sao chép bất kỳ danh sách phát nào từ dịch vụ này sang dịch vụ khác bằng thanh tiến trình trực tiếp; tạm dừng, tiếp tục hoặc dừng sao chép giữa chừng và giải quyết các bản nhạc chưa khớp theo cách thủ công.
+- ↪️ **Chuyển một lần** — sao chép giữa các dịch vụ hoặc hai tài khoản cùng dịch vụ, bao gồm toàn bộ danh sách video YouTube. Danh sách YouTube Music xuất hiện trước, tiếp theo là danh sách video; chọn danh sách bạn sở hữu làm đích. Tạm dừng, tiếp tục hoặc dừng sao chép và xem lại bài chưa khớp. Khi quay lại, danh sách đã lưu hiện ngay trong khi được cập nhật nền.
+- **Lịch sử kiểm tra chuyển danh sách** — xem các lần hoàn thành, thất bại, đã dừng và bị gián đoạn với số lượng đã xác nhận và diễn biến trạng thái. Lọc theo danh sách, trạng thái, tài khoản, dịch vụ hoặc ngày. Lịch sử lưu trong ổ dữ liệu ứng dụng và vẫn còn khi thay bộ chứa. [Lịch sử và khôi phục](../transfer-history.md).
+- **Hướng dẫn trên mỗi trang tính năng** — chỉ dẫn nhanh và hướng dẫn tùy chọn làm nổi bật các điều khiển. Ẩn tất cả tại **Cài đặt → Chung → Hiển thị hướng dẫn tính năng**. Giao diện, ngôn ngữ, hướng dẫn, bố cục và thứ tự danh sách được nhớ trong trình duyệt này; cài đặt tài khoản và lịch sử nằm trong thư mục dữ liệu bền vững.
 - 🕒 **Nối các bản nhạc hoặc giữ nguyên thứ tự bản nhạc** — theo mặc định, các bản sao sẽ ở cuối đích đến, nhanh chóng và bổ sung. Bật Bảo tồn Thứ tự đã thêm gần đây để viết lại các bản nhạc sau bản nhạc mới cũ nhất để thứ tự ngày thêm khớp với nguồn.
 - 🔗 **Chuyển từ một liên kết** — dán URL danh sách phát công khai từ bất kỳ dịch vụ được kết nối nào và sao chép trực tiếp. Không cần phải lưu hoặc theo dõi nó trước.
 - 🌐 **Danh sách phát đã theo dõi** — đồng bộ hóa và chuyển danh sách phát bạn theo dõi nhưng không sở hữu, không chỉ những danh sách bạn đã tạo.
 - 📦 **Sao lưu siêu dữ liệu theo lịch trình** — lưu trữ toàn bộ thư viện danh sách phát của tài khoản theo lịch riêng theo dữ liệu ứng dụng liên tục, với JSON/XML, giới hạn lưu giữ và lịch sử thành công/thất bại rõ ràng. tải xuống một lần và sẵn sàng nhập Soundiiz JSON vẫn có sẵn.
-- 📻 **Last.fm**: đưa Loved Tracks, Top Tracks (sáu khoảng thời gian) và Recent Scrobbles của bạn tới bất kỳ dịch vụ đã kết nối, và sau khi cấp quyền cho tài khoản, mang các bài hát yêu thích từ dịch vụ khác trở lại **vào** Last.fm. Việc đồng bộ danh sách phát tới dịch vụ này không được hỗ trợ nên không bao giờ là đích đến của danh sách phát.
+- 📻 **Last.fm**: đưa Loved Tracks, Top Tracks (sáu khoảng thời gian) và Recent Scrobbles của bạn tới bất kỳ dịch vụ đã kết nối, và sau khi cấp quyền cho tài khoản, mang các bài hát yêu thích từ dịch vụ khác trở lại **vào** Last.fm. Việc đồng bộ danh sách phát tới dịch vụ này không được hỗ trợ nên không bao giờ là đích đến của danh sách phát. Cũng hỗ trợ bản thu yêu thích trên ListenBrainz cùng danh sách phát và mục yêu thích trên Navidrome/Subsonic; xem [thiết lập](../listenbrainz-subsonic.md).
 - 💿 **Bản sao tải xuống cục bộ** - giữ âm thanh ngoại tuyến, một thư mục cho mỗi danh sách phát theo bố cục `AlbumArtist/Album` của Jellyfin, có bìa và `.m3u8` được cập nhật tự động. Trỏ nó tới một thư viện nhạc có sẵn thì các bài khớp sẽ được sao chép **ở chất lượng gốc** (FLAC vẫn là FLAC), còn phần tải về chỉ bù cho những chỗ còn thiếu.
 - 🛡️ **Các biện pháp bảo vệ an toàn** — mô phỏng theo mặc định, giới hạn thêm/xóa mỗi lần vượt qua, bảo vệ chống mất mạng, bảo vệ ảnh chụp nhanh trống, hủy bỏ mà không ghi khi mã thông báo hết hạn.
 - 🗃️ **Kho lưu trữ bài hát ngày càng phát triển** - mọi bản nhạc từng xem đều được ghi lại trong cơ sở dữ liệu SQLite cục bộ (tên, nghệ sĩ, album, ISRC, siêu dữ liệu thô, nhìn thấy lần đầu/lần cuối).
@@ -127,6 +172,10 @@ SongMirror giữ cho danh sách phát của bạn giống hệt nhau ở mọi n
 
 <div align="center">
 
+<a href="../../.github/assets/songmirror-demo.mp4"><img src="../../.github/assets/songmirror-demo.gif" alt="SongMirror bản demo — hiển thị logo, trang tổng quan, thiết lập đồng bộ hóa một chiều và hai chiều, chuyển danh sách phát trực tiếp và kết hợp chính xác theo ISRC trên bảy dịch vụ âm nhạc" width="88%"></a>
+
+<sup>± <a href="../../.github/assets/songmirror-demo.mp4">Xem phiên bản 1080p</a></sup>
+
 **Một bảng thông tin cho mọi thư viện — trạng thái đồng bộ hóa, công việc, hoạt động trực tiếp và tình trạng dịch vụ**
 
 <img src="../../.github/assets/dashboard.png" alt="Trang tổng quan SongMirror hiển thị trạng thái đồng bộ hóa, công việc đã định cấu hình, hoạt động trực tiếp và tình trạng cho Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music, YouTube Music và Jellyfin" width="82%">
@@ -143,52 +192,15 @@ SongMirror giữ cho danh sách phát của bạn giống hệt nhau ở mọi n
 
 <img src="../../.github/assets/playlists.png" alt="Duyệt danh sách phát trên các dịch vụ được kết nối với ảnh bìa và số lượng bản nhạc" width="82%">
 
+**Sao chép danh sách giữa các tài khoản, kể cả cùng dịch vụ**
+
+<img src="../../.github/assets/transfers.png" alt="Sao chép danh sách giữa các tài khoản, kể cả cùng dịch vụ" width="82%">
+
+**Xem mọi lần chuyển với bộ lọc và nhật ký kiểm tra**
+
+<img src="../../.github/assets/transfer-history.png" alt="Xem mọi lần chuyển với bộ lọc và nhật ký kiểm tra" width="82%">
+
 </div>
-
-<div align="right">
-
-[![][back-to-top]](#readme-top)
-
-</div>
-
-<a id="quick-start"></a>
-
-## 🚀 Bắt đầu nhanh
-
-Cách nhanh nhất để chạy nó là Docker — Compose kéo hình ảnh đã xuất bản, phục vụ giao diện người dùng web và chạy đồng bộ hóa của bạn theo lịch trình.
-
-Để cài đặt liên tục với khởi động lại tự động:
-
-```bash
-git clone https://github.com/ahnafnafee/songmirror.git
-cd songmirror
-docker compose up -d
-```
-
-Hoặc thử trực tiếp hình ảnh GHCR công khai mà không cần sao chép kho lưu trữ:
-
-```bash
-docker run --rm -d --name songmirror -p 127.0.0.1:8888:8080 ghcr.io/ahnafnafee/songmirror:latest
-```
-
-Sau đó mở `http://localhost:8888` và kết nối các dịch vụ của bạn trong trình duyệt. Quá trình thiết lập Compose không cần `.env` để bắt đầu; mọi thứ đều được định cấu hình trong giao diện người dùng và được lưu trong `./data`.
-
-Tùy chọn `docker run` trực tiếp chỉ dùng một lần: `docker stop songmirror` xóa vùng chứa và cấu hình của nó. Sử dụng Compose để cài đặt lâu bền với thông tin xác thực, bộ nhớ đệm và nội dung tải xuống liên tục hoặc xem [hướng dẫn hình ảnh container](../docker-image.md) để biết thẻ và ghim thông báo.
-
-Thích chạy nó mà không có Docker?
-
-```bash
-uv sync
-uv run uvicorn songmirror.web:app --host 0.0.0.0 --port 8080   # then open http://127.0.0.1:8080
-```
-
-> Yêu cầu [`uv`](https://docs.astral.sh/uv/) (Python 3.13+). Đối với máy nhân bản tải xuống cục bộ, cũng có `uv tool install spotdl` và có `ffmpeg` trên PATH.
-
-<a id="app-language"></a>
-
-### Ngôn ngữ ứng dụng
-
-SongMirror hỗ trợ tiếng Anh, tiếng Ả Rập, tiếng Thổ Nhĩ Kỳ, tiếng Tây Ban Nha, tiếng Trung giản thể, tiếng Pháp, tiếng Bồ Đào Nha, tiếng Đức, tiếng Nhật, tiếng Hindi, tiếng Bengali, tiếng Indonesia, tiếng Hàn, tiếng Ý và tiếng Việt. Khi mở lần đầu, ứng dụng kiểm tra các tùy chọn ngôn ngữ của trình duyệt theo thứ tự, kể cả biến thể theo khu vực, rồi dùng ngôn ngữ đầu tiên được hỗ trợ. Nếu không có ngôn ngữ phù hợp, ứng dụng dùng tiếng Anh. Đổi ngôn ngữ tại **Cài đặt → Chung → Ngôn ngữ**. Lựa chọn được lưu trong trình duyệt này và vẫn giữ nguyên sau khi tải lại trang. Chọn **Tự động (trình duyệt)** để tiếp tục theo tùy chọn của trình duyệt. Giao diện tiếng Ả Rập hiển thị từ phải sang trái. Tên danh sách phát, nghệ sĩ và dịch vụ, thông tin xác thực cùng nhật ký chẩn đoán giữ nguyên giá trị gốc.
 
 <div align="right">
 
@@ -498,6 +510,8 @@ Nói chuyện với [YouTube Data API v3](https://developers.google.com/youtube/
 3. Trong ứng dụng, dán ID khách hàng + bí mật và hoàn thành mã thiết bị trên màn hình.
 
 > Hạn ngạch: Data API cho phép 10.000 đơn vị/ngày (một lần tìm kiếm tốn 100, thêm/xóa 50). Bảo trì trạng thái ổn định là rẻ; lượng tồn đọng lớn lần đầu có thể đạt đến giới hạn và tiếp tục vào ngày hôm sau.
+
+Để chuyển danh sách riêng tư giữa các tài khoản Google, hãy kết nối cả hai; với danh sách công khai, chỉ cần kết nối tài khoản đích và dán liên kết. Chế độ trình duyệt bao gồm danh sách video YouTube thông thường và đọc mọi trang. Dùng **Chế độ không hạn ngạch** cho bản sao dài; kết nối Data API vẫn có hạn mức hằng ngày. Nếu YouTube yêu cầu kênh, hoàn tất thiết lập bằng tài khoản đích rồi thử lại. Xem [hướng dẫn chuyển tài khoản](../youtube-account-transfers.md).
 
 <div align="right">
 

@@ -1,0 +1,130 @@
+.driver-popover.songmirror-tour {
+  --driver-popover-font-family: var(--font-sans);
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-card);
+  box-shadow: 0 8px 30px rgb(0 0 0 / 0.25);
+  min-width: 0;
+  width: min(340px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  padding: 18px;
+  text-align: start;
+  flex-direction: column;
+  gap: 0;
+}
+
+.songmirror-tour .driver-popover-title {
+  flex-shrink: 0;
+  padding-inline-end: 84px;
+  min-height: 32px;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.songmirror-tour .driver-popover-description {
+  min-height: 0;
+  overflow-y: auto;
+  color: var(--color-text-2);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.songmirror-tour .driver-popover-close-btn {
+  right: auto;
+  inset-inline-end: 12px;
+  top: 8px;
+  width: auto;
+  height: auto;
+  min-height: 44px;
+  padding-inline: 6px;
+  font-size: 12px;
+  color: var(--color-text-2);
+}
+
+.songmirror-tour .driver-popover-footer {
+  flex-shrink: 0;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+  text-align: start;
+}
+
+.songmirror-tour .driver-popover-progress-text {
+  color: var(--color-text-3);
+  font-size: 12px;
+}
+
+.songmirror-tour .driver-popover-navigation-btns {
+  gap: 8px;
+}
+
+.songmirror-tour .driver-popover-navigation-btns button + button {
+  margin-left: 0;
+}
+
+.songmirror-tour .driver-popover-footer-btn {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  background: var(--color-surface-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.songmirror-tour .driver-popover-next-btn {
+  color: var(--color-on-accent);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.songmirror-tour .driver-popover-footer-btn:hover,
+.songmirror-tour .driver-popover-close-btn:hover {
+  color: var(--color-text);
+  background: var(--color-surface-2);
+}
+
+.songmirror-tour .driver-popover-next-btn:hover {
+  color: var(--color-on-accent);
+  background: var(--color-accent-hover);
+}
+
+.songmirror-tour button:focus-visible,
+.songmirror-tour a:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+.songmirror-tour-link {
+  display: block;
+  width: fit-content;
+  margin-top: 12px;
+  color: var(--color-accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.driver-active-element {
+  outline: none;
+}
+
+.songmirror-tour-highlight {
+  position: fixed;
+  z-index: 10001;
+  box-sizing: border-box;
+  border: 2px solid var(--color-accent);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.songmirror-tour .driver-popover-arrow {
+  display: none;
+}

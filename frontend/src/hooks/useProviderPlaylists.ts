@@ -7,7 +7,9 @@ import type { ProviderPlaylist } from '../types'
 
 export interface ProviderPlaylistsEntry {
   playlists: ProviderPlaylist[]
+  /** No successful snapshot yet; a background refresh keeps this false. */
   loading: boolean
+  refreshing: boolean
   error: string | null
 }
 
@@ -78,7 +80,8 @@ function entriesFromCache(providerIds: string[]): Record<string, ProviderPlaylis
         providerId,
         {
           playlists: cached ?? [],
-          loading: true,
+          loading: cached === undefined,
+          refreshing: true,
           error: null,
         },
       ]
@@ -86,10 +89,10 @@ function entriesFromCache(providerIds: string[]): Record<string, ProviderPlaylis
   )
 }
 
-/** Fetches GET /api/playlists?provider=<id> for each given provider id in
- * parallel. A versioned per-provider snapshot paints immediately; every
- * provider then refreshes independently so one slow service cannot blank or
- * delay the others. */
+/** Fetches each account independently, sharing requests and painting its last
+ * successful browser snapshot immediately. Empty snapshots are valid, refresh
+ * failures preserve saved rows, and targeted refreshes leave other accounts
+ * alone. Callers must separate initial loading from background refreshing. */
 export function useProviderPlaylists(providerIds: string[]) {
   const idsKey = providerIds.slice().sort().join(',')
   const [entries, setEntries] = useState<Record<string, ProviderPlaylistsEntry>>(() =>
@@ -97,27 +100,29 @@ export function useProviderPlaylists(providerIds: string[]) {
   )
   const generation = useRef(0)
 
-  const refresh = useCallback(async () => {
+  const refreshIds = useCallback(async (requested: string[]) => {
     const ids = idsKey ? idsKey.split(',') : []
-    const thisGeneration = ++generation.current
+    const thisGeneration = generation.current
 
     setEntries((previous) =>
       Object.fromEntries(
         ids.map((providerId) => {
-          const cached = cachedPlaylists(providerId) ?? previous[providerId]?.playlists ?? []
-          return [providerId, { playlists: cached, loading: true, error: null }]
+          if (!requested.includes(providerId) && previous[providerId]) return [providerId, previous[providerId]]
+          const cached = cachedPlaylists(providerId)
+          return [providerId, { playlists: cached ?? previous[providerId]?.playlists ?? [],
+            loading: cached === undefined, refreshing: true, error: null }]
         }),
       ),
     )
 
     await Promise.all(
-      ids.map(async (providerId) => {
+      requested.map(async (providerId) => {
         try {
           const playlists = await fetchProviderPlaylists(providerId)
           if (generation.current !== thisGeneration) return
           setEntries((previous) => ({
             ...previous,
-            [providerId]: { playlists, loading: false, error: null },
+            [providerId]: { playlists, loading: false, refreshing: false, error: null },
           }))
         } catch (err) {
           if (generation.current !== thisGeneration) return
@@ -126,6 +131,7 @@ export function useProviderPlaylists(providerIds: string[]) {
             [providerId]: {
               playlists: previous[providerId]?.playlists ?? cachedPlaylists(providerId) ?? [],
               loading: false,
+              refreshing: false,
               error: errorMessage(err),
             },
           }))
@@ -134,12 +140,19 @@ export function useProviderPlaylists(providerIds: string[]) {
     )
   }, [idsKey])
 
+  const refresh = useCallback(() => refreshIds(idsKey ? idsKey.split(',') : []), [refreshIds, idsKey])
+  const refreshProvider = useCallback((providerId: string) => {
+    const ids = idsKey ? idsKey.split(',') : []
+    return refreshIds(ids.includes(providerId) ? [providerId] : [])
+  }, [refreshIds, idsKey])
+
   useEffect(() => {
+    generation.current += 1
     void refresh()
     return () => {
       generation.current += 1
     }
   }, [refresh])
 
-  return { entries, refresh }
+  return { entries, refresh, refreshProvider }
 }

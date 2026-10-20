@@ -41,6 +41,8 @@ import type {
   TrackDecision,
   TransferControlResponse,
   TransferJob,
+  TransferHistoryDetail,
+  TransferHistoryPage,
   TransferSourcePreview,
 } from './types'
 
@@ -273,6 +275,8 @@ export const api = {
   /** Active jobs only (queued/running/paused) — the dashboard's "Ongoing
    * transfers" list. */
   listTransfers: () => request<TransferJob[]>('/api/transfers'),
+  transferHistory: (query: string) => request<TransferHistoryPage>(`/api/transfers/history?${query}`),
+  transferHistoryDetail: (id: string) => request<TransferHistoryDetail>(`/api/transfers/history/${encodeURIComponent(id)}`),
   pauseTransfer: (id: string) => request<TransferControlResponse>(`/api/transfers/${encodeURIComponent(id)}/pause`, { method: 'POST' }),
   resumeTransfer: (id: string) => request<TransferControlResponse>(`/api/transfers/${encodeURIComponent(id)}/resume`, { method: 'POST' }),
   applyResolvedTracks: (id: string) => request<TransferControlResponse>(`/api/transfers/${encodeURIComponent(id)}/apply-resolved`, { method: 'POST' }),

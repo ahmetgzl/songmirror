@@ -1,5 +1,6 @@
 import { t, useTranslation } from '@/i18n'
-import { useMemo, useState } from 'react'
+import { FeatureGuide } from '@/components/onboarding/FeatureGuide'
+import { useState } from 'react'
 import { LuPlus } from 'react-icons/lu'
 
 import { LiveFeed } from '@/components/dashboard/LiveFeed'
@@ -12,7 +13,6 @@ import { LoadingStatus, Skeleton } from '@/components/ui/Skeleton'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useSyncs } from '@/hooks/useSyncs'
 import { useSyncStatus } from '@/hooks/useSyncStatus'
-import { syncPeersOf } from '@/lib/syncSummary'
 import type { SyncJob } from '@/types'
 
 /** A list of independent, named sync jobs (Soundiiz-style) — each is a
@@ -27,7 +27,7 @@ export default function Sync() {
   const [wizardOpen, setWizardOpen] = useState(false)
   const [editingJob, setEditingJob] = useState<SyncJob | null>(null)
 
-  const peers = useMemo(() => syncPeersOf(accounts ?? []), [accounts])
+  const peers = accounts ?? []
 
   function openNew() {
     setEditingJob(null)
@@ -53,10 +53,12 @@ export default function Sync() {
             {t("Independent sync configurations, each running on its own schedule. The download folder is shared, set on the Settings page.")}
           </p>
         </div>
-        <Button icon={<LuPlus className="size-4" aria-hidden="true" />} onClick={openNew}>
+        <Button data-tour="sync-new" icon={<LuPlus className="size-4" aria-hidden="true" />} onClick={openNew}>
           {t("New sync")}
         </Button>
       </div>
+
+      <FeatureGuide page="sync" />
 
       {error && <p className="rounded-control bg-danger-soft px-3 py-2 text-sm text-danger">{t("Could not load syncs: {{error}}", { error: error })}</p>}
 
@@ -84,7 +86,7 @@ export default function Sync() {
           ))}
         </div>
       ) : (
-        <EmptyState
+        <div data-tour="sync-empty"><EmptyState
           title={t("No syncs yet")}
           description={t("Create a sync to start mirroring playlists between your connected services.")}
           action={
@@ -92,7 +94,7 @@ export default function Sync() {
               {t("New sync")}
             </Button>
           }
-        />
+        /></div>
       )}
 
       {syncs && syncs.length > 0 && (

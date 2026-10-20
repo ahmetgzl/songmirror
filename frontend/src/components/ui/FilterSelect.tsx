@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { LuCheck, LuChevronDown } from 'react-icons/lu'
 
 import { cn } from '@/lib/cn'
+import { FIELD_INPUT_CLASSES } from './fieldStyles'
 
 export interface FilterSelectOption<T extends string = string> {
   value: T
@@ -22,12 +23,14 @@ interface FilterSelectProps<T extends string> {
   onChange: (value: T) => void
   icon: ReactNode
   className?: string
+  variant?: 'filter' | 'field'
 }
 
 interface PanelPosition {
   top: number
   left: number
   width: number
+  maxHeight: number
 }
 
 const VIEWPORT_GUTTER = 8
@@ -48,6 +51,7 @@ export function FilterSelect<T extends string>({
   onChange,
   icon,
   className,
+  variant = 'filter',
 }: FilterSelectProps<T>) {
   useTranslation()
   const [open, setOpen] = useState(false)
@@ -71,16 +75,18 @@ export function FilterSelect<T extends string>({
       VIEWPORT_GUTTER,
       Math.min(rect.left, window.innerWidth - width - VIEWPORT_GUTTER),
     )
-    let top = rect.bottom + MENU_GAP
     const panelHeight = panelRef.current?.getBoundingClientRect().height ?? 0
-    if (panelHeight > 0 && top + panelHeight > window.innerHeight - VIEWPORT_GUTTER) {
-      const above = rect.top - panelHeight - MENU_GAP
-      if (above >= VIEWPORT_GUTTER) top = above
-    }
+    const below = Math.max(0, window.innerHeight - rect.bottom - MENU_GAP - VIEWPORT_GUTTER)
+    const above = Math.max(0, rect.top - MENU_GAP - VIEWPORT_GUTTER)
+    const opensAbove = panelHeight > below && above > below
+    const maxHeight = Math.min(288, opensAbove ? above : below)
+    const top = opensAbove
+      ? rect.top - Math.min(panelHeight, maxHeight) - MENU_GAP
+      : rect.bottom + MENU_GAP
     setPanelPosition((current) => (
-      current?.top === top && current.left === left && current.width === width
+      current?.top === top && current.left === left && current.width === width && current.maxHeight === maxHeight
         ? current
-        : { top, left, width }
+        : { top, left, width, maxHeight }
     ))
   }
 
@@ -186,12 +192,22 @@ export function FilterSelect<T extends string>({
     if (typeaheadTimerRef.current !== null) window.clearTimeout(typeaheadTimerRef.current)
   }, [])
 
+  useEffect(() => {
+    if (open) document.getElementById(`${selectId}-option-${activeIndex}`)?.scrollIntoView({ block: 'nearest' })
+  }, [open, activeIndex, selectId])
+
   return (
     <div className={cn('min-w-0', className)}>
+      {variant === 'field' && (
+        <label htmlFor={selectId} className="mb-1.5 block text-[12.5px] font-semibold text-text-2">
+          {caption}
+        </label>
+      )}
       <button
+        id={selectId}
         ref={triggerRef}
         type="button"
-        data-activity-filter-trigger
+        data-activity-filter-trigger={variant === 'filter' ? '' : undefined}
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -199,7 +215,8 @@ export function FilterSelect<T extends string>({
         onClick={() => (open ? closeMenu(true) : openMenu())}
         onKeyDown={onTriggerKeyDown}
         className={cn(
-          'group flex h-11 w-full min-w-0 items-center gap-2.5 rounded-control border border-border-strong bg-field px-3 text-start text-text-2',
+          'group flex w-full min-w-0 items-center gap-2.5 text-start',
+          variant === 'field' ? FIELD_INPUT_CLASSES : 'h-11 rounded-control border border-border-strong bg-field px-3 text-text-2',
           'transition-[background-color,border-color,color,box-shadow] duration-fast hover:border-text-3 hover:bg-surface hover:text-text',
           'focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/20',
           open && 'border-text-3 bg-surface text-text shadow-sm',
@@ -208,12 +225,16 @@ export function FilterSelect<T extends string>({
         <span className="flex size-4 shrink-0 items-center justify-center text-text-3 group-hover:text-text-2" aria-hidden="true">
           {icon}
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate font-mono text-[8.5px] font-bold uppercase leading-none tracking-[0.12em] text-text-3">
-            {caption}
+        {variant === 'field' ? (
+          <span className="min-w-0 flex-1 truncate">{selected?.label}</span>
+        ) : (
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-mono text-[8.5px] font-bold uppercase leading-none tracking-[0.12em] text-text-3">
+              {caption}
+            </span>
+            <span className="mt-1 block truncate text-xs font-semibold leading-none">{selected?.label}</span>
           </span>
-          <span className="mt-1 block truncate text-xs font-semibold leading-none">{selected?.label}</span>
-        </span>
+        )}
         <LuChevronDown
           className={cn('size-3.5 shrink-0 text-text-3 transition-transform duration-fast', open && 'rotate-180')}
           aria-hidden="true"
@@ -228,13 +249,14 @@ export function FilterSelect<T extends string>({
           tabIndex={-1}
           aria-label={ariaLabel}
           aria-activedescendant={`${selectId}-option-${activeIndex}`}
-          data-activity-filter-menu
+          data-activity-filter-menu={variant === 'filter' ? '' : undefined}
           onKeyDown={onListboxKeyDown}
           style={panelPosition ? {
             position: 'fixed',
             top: panelPosition.top,
             left: panelPosition.left,
             width: panelPosition.width,
+            maxHeight: panelPosition.maxHeight,
           } : { position: 'fixed', visibility: 'hidden' }}
           className="thin-scrollbar z-[80] flex max-h-72 flex-col gap-0.5 overflow-y-auto rounded-card border border-border-strong bg-surface p-1.5 shadow-lg focus:outline-none"
         >
@@ -262,7 +284,8 @@ export function FilterSelect<T extends string>({
                   onPointerMove={() => setActiveIndex(index)}
                   onClick={() => choose(index)}
                   className={cn(
-                    'flex min-h-8 w-full items-center gap-2 rounded-control px-2 py-1.5 text-start text-xs text-text-2 transition-colors duration-fast',
+                    'flex w-full shrink-0 items-center gap-2 rounded-control px-2 py-1.5 text-start text-text-2 transition-colors duration-fast',
+                    variant === 'field' ? 'min-h-11 text-base md:min-h-[42px] md:text-sm' : 'min-h-8 text-xs',
                     isActive && 'bg-surface-2 text-text',
                     isSelected && 'font-semibold text-text',
                   )}

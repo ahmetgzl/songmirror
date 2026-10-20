@@ -16,24 +16,27 @@ from ..engine.config import parse_args, spotify_write_backend
 from ..engine.logs import log_add, log_miss, log_note, log_warn
 from ..engine.matching import spotify_track_keys, track_key, tracks_oldest_first
 from ..engine.runner import load_cache, save_cache
-from ..engine.targets import build_one, is_peer, target_provider
+from ..engine.targets import build_one, is_peer, target_class, target_provider
 from ..engine.targets.base import (
     MirrorTarget,
     TargetAuthError,
     TargetCapabilityError,
+    TargetTransientError,
     _fit_chronology_writes,
     _normalize,
     _ordered_current_matches,
     _split_add_results,
 )
 from .playlists import playlist_image
+from .transfer_history import TransferHistory, utc_now
 from .playlist_links import (
     PLAYLIST_LINK_HINT, PlaylistLinkError, external_url, parse_playlist_link, provider_label,
 )
 
 
 def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserve_order=False,
-             on_progress=None, should_continue=None, source_tracks=None, only_keys=None):
+             on_progress=None, should_continue=None, source_tracks=None, only_keys=None,
+             on_write_progress=None):
     """Copy `src_pl` (on `source`) into `dest_pl` (on `dest`). Returns
     {added, deferred, chronology_replayed, unavailable,
     not_found: [{name, artist, key}], completed}.
@@ -114,12 +117,17 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
     # Same-provider copy (e.g. a followed Spotify list into a new owned one): the
     # track's own id is already valid on the destination, so use it directly instead
     # of re-searching for it (which resolve() does for the cross-provider case).
-    same_provider = target_provider(source) == target_provider(dest)
+    same_provider = (
+        target_provider(source) == target_provider(dest)
+        and getattr(source, "catalog_ids_global", True)
+        and getattr(dest, "catalog_ids_global", True)
+    )
     additions, not_found = [], []
     resolved_existing = {}
     applied_keys = set()
     queued_keys = {}
     completed = True
+    processed = unavailable_count
     ordered_source = tracks_oldest_first(src)
     for i, norm in enumerate(ordered_source, unavailable_count + 1):
         if should_continue and should_continue() != "run":
@@ -129,7 +137,10 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
         keys = spotify_track_keys(norm)
         if only_keys is not None and key not in only_keys:
             continue
-        if only_keys is not None or not keys & seen:
+        # Within one catalog the id is authoritative. Matching titles/credits
+        # can belong to different videos, while the same video can change its
+        # metadata between reads or between a paused copy and its resume.
+        if only_keys is not None or same_provider or not keys & seen:
             if same_provider and only_keys is None:
                 tid = source.track_id(norm["_raw"])
             else:
@@ -153,7 +164,8 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
                         tid, _ = dest.resolve(norm, cache)
                 except TargetAuthError:
                     raise
-                except Exception:
+                except Exception as exc:
+                    log_warn(f"Could not resolve {norm['name']} - {norm['artist']}: {exc}", tag="transfer")
                     tid = None
             if tid:
                 already_present = str(tid) in destination_ids
@@ -167,15 +179,18 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
                     if only_keys is None or str(tid) not in queued_keys:
                         additions.append((tid, norm))
                     queued_keys.setdefault(str(tid), set()).add(key)
+                    if same_provider and only_keys is None:
+                        destination_ids.add(str(tid))
                 seen |= keys
-                if not already_present:
+                if not already_present and not execute:
                     log_add(f"{norm['name']} - {norm['artist']}", dry=not execute, tag="transfer")
             else:
                 not_found.append({"name": norm["name"], "artist": norm["artist"],
                                   "key": key})
                 log_miss(f"no match: {norm['name']} - {norm['artist']}", tag="transfer")
+        processed = i
         if on_progress:
-            on_progress(i, total, len(additions))
+            on_progress(i, total, len(additions) if not execute else 0)
 
     current_by_source = _ordered_current_matches(
         ordered_source,
@@ -227,11 +242,39 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
             tag="transfer",
         )
     if execute and additions:
+        write_total = len(additions)
+        if on_write_progress:
+            on_write_progress(0, write_total)
         if chronology_replay:
             result = dest.replay_chronology(dest_pl, chronology_replay)
+            additions, rejected = _split_add_results(additions, result, lambda item: item[0])
+            for _tid, norm in additions:
+                log_add(f"{norm['name']} - {norm['artist']}", tag="transfer")
+            if on_write_progress:
+                on_write_progress(len(additions), write_total)
+            if on_progress:
+                on_progress(processed, total, len(additions))
         else:
-            result = dest.add(dest_pl, [target_id for target_id, _norm in additions])
-        additions, rejected = _split_add_results(additions, result, lambda item: item[0])
+            queued, additions, rejected = additions, [], []
+            batch_size = getattr(dest, "transfer_batch_size", None)
+            chunked = isinstance(batch_size, int) and batch_size > 0
+            if not chunked:
+                batch_size = len(queued)
+            for offset in range(0, len(queued), batch_size):
+                if chunked and should_continue and should_continue() != "run":
+                    completed = False
+                    break
+                batch = queued[offset:offset + batch_size]
+                result = dest.add(dest_pl, [target_id for target_id, _norm in batch])
+                confirmed, refused = _split_add_results(batch, result, lambda item: item[0])
+                additions.extend(confirmed)
+                rejected.extend(refused)
+                for _tid, norm in confirmed:
+                    log_add(f"{norm['name']} - {norm['artist']}", tag="transfer")
+                if on_progress:
+                    on_progress(processed, total, len(additions))
+                if on_write_progress:
+                    on_write_progress(len(additions), write_total)
         for _target_id, norm in rejected:
             not_found.append({"name": norm["name"], "artist": norm["artist"],
                               "key": track_key(norm["name"], norm["artist"])})
@@ -267,7 +310,7 @@ def _friendly_error(e):
     """Turn a raw provider exception into a message a user can act on. Falls back
     to repr() for anything unrecognized."""
     status = getattr(e, "http_status", None)
-    if isinstance(e, TargetCapabilityError):
+    if isinstance(e, (TargetAuthError, TargetCapabilityError, TargetTransientError)):
         return str(e)
     if status == 403:
         return ("The source service blocked reading this playlist (HTTP 403) — it's most "
@@ -287,7 +330,7 @@ class TransferPreviewError(ValueError):
 
 class TransferService:
     """One-off cross-service copies, serialized with syncs via SyncService. Jobs
-    are in-memory and transient."""
+    retain durable audit snapshots alongside their live worker state."""
 
     def __init__(self, settings, bus, sync, profiles=None):
         self._settings = settings
@@ -295,6 +338,20 @@ class TransferService:
         self._sync = sync
         self._profiles = profiles
         self._jobs = {}
+        self.history = TransferHistory(settings.data_dir)
+
+    def recover_history(self):
+        self.history.recover()
+
+    def _record(self, job, *, kind=None, progress=False):
+        now = time.monotonic()
+        signature = (job["status"], job.get("phase"))
+        if progress and signature == job.get("_history_state") and now - job.get("_history_saved", 0) < 1:
+            return
+        snapshot = self.history.save(job, kind=kind)
+        for field in ("created_at", "updated_at", "finished_at"):
+            job[field] = snapshot[field]
+        job["_history_saved"], job["_history_state"] = now, signature
 
     def preview(self, url, account_id=None):
         """Resolve a pasted playlist link into a startable transfer source.
@@ -395,7 +452,7 @@ class TransferService:
             if self._profiles else provider_label(dest_provider)
         )
         job = {
-            "id": uuid.uuid4().hex[:8], "status": "queued",
+            "id": uuid.uuid4().hex, "status": "queued", "created_at": utc_now(),
             "source": {"account": source_account, "provider": source_provider, "name": source_name,
                        "playlist_id": spec["source_playlist_id"], "playlist_name": ""},
             "dest": {"account": dest_account, "provider": dest_provider, "name": dest_name,
@@ -405,15 +462,32 @@ class TransferService:
             "added": 0, "deferred": 0, "chronology_replayed": 0,
             "unavailable": 0, "conflicts": [], "error": None,
             "total": 0, "processed": 0,  # live progress: source tracks examined / total
+            "phase": "waiting", "written": 0, "write_total": 0,
             "_spec": normalized_spec,  # kept so resume re-runs the same account pair
             "_control": "run",  # "run" | "pause" | "stop" — polled by the running loop
         }
         self._jobs[job["id"]] = job
-        asyncio.create_task(self._run(job, normalized_spec))
+        self._record(job)
+        self._schedule(job, self._run)
         return job
 
+    @staticmethod
+    def _schedule(job, run):
+        task = asyncio.create_task(run(job, job["_spec"]))
+        job["_task"] = task
+
+        def finished(done):
+            if job.get("_task") is done:
+                job.pop("_task", None)
+
+        task.add_done_callback(finished)
+
     def get(self, job_id):
-        return self._jobs.get(job_id)
+        live = self._jobs.get(job_id)
+        if live is not None:
+            return live
+        saved = self.history.get(job_id)
+        return {**saved, "historical": True} if saved else None
 
     @staticmethod
     def public(job):
@@ -424,7 +498,7 @@ class TransferService:
         """Active jobs (queued/running/paused) for the dashboard. Terminal jobs
         (done/stopped/error) are dropped so the in-memory list can't grow without
         bound in any view — the Transfers page still fetches its own job by id."""
-        active = {"queued", "running", "paused"}
+        active = {"queued", "busy", "running", "paused"}
         return [self.public(j) for j in self._jobs.values() if j["status"] in active]
 
     def pause(self, job_id):
@@ -434,6 +508,7 @@ class TransferService:
         if not job or job["status"] != "running":
             return False
         job["_control"] = "pause"
+        self._record(job, kind="pause_requested")
         return True
 
     def resume(self, job_id):
@@ -443,9 +518,10 @@ class TransferService:
         if not job or job["status"] != "paused":
             return False
         job["_control"] = "run"
-        job["status"] = "queued"
+        job.update(status="queued", phase="waiting")
+        self._record(job, kind="resumed")
         run = self._run_resolved if job.get("_apply_mode") else self._run
-        asyncio.create_task(run(job, job["_spec"]))
+        self._schedule(job, run)
         return True
 
     def apply_resolved(self, job_id):
@@ -457,8 +533,9 @@ class TransferService:
             return False
         if not any(c["resolved"] and not c.get("applied") for c in job["conflicts"]):
             return False
-        job.update(status="queued", error=None, _control="run", _apply_mode=True)
-        asyncio.create_task(self._run_resolved(job, job["_spec"]))
+        job.update(status="queued", phase="waiting", error=None, _control="run", _apply_mode=True)
+        self._record(job, kind="apply_matches")
+        self._schedule(job, self._run_resolved)
         return True
 
     def stop(self, job_id):
@@ -468,8 +545,12 @@ class TransferService:
         if not job or job["status"] in ("done", "error", "stopped"):
             return False
         job["_control"] = "stop"
-        if job["status"] in ("queued", "paused"):
+        if job["status"] in ("queued", "busy", "paused"):
             job["status"] = "stopped"  # no running worker will react — mark it now
+            task = job.get("_task")
+            if task:
+                task.cancel()
+        self._record(job, kind="stop_requested")
         return True
 
     def resolve(self, job_id, key, dest_id):
@@ -481,6 +562,13 @@ class TransferService:
         if conflict is None:
             return False
         normalizer = job.get("_dest_id_normalizer")
+        if normalizer is None:
+            # Restored history has no Python callables. Validate it with the same
+            # destination class as a newly created transfer.
+            cls = target_class(job.get("dest", {}).get("provider"))
+            if cls is None:
+                raise ValueError("The destination provider is unavailable. Start a new transfer.")
+            normalizer = cls.normalize_manual_track_id
         if normalizer:
             dest_id = normalizer(dest_id)
         if not dest_id:
@@ -495,14 +583,48 @@ class TransferService:
             cache["dirty"] = True
             save_cache(cache_file, cache, manual_keys={key})
         conflict.update(resolved=True, dest_id=dest_id)
+        self._record(job, kind="match_saved")
         return True
 
     async def _run_resolved(self, job, spec):
+        await self._execute(job, spec, self._run_resolved_impl)
+
+    async def _run(self, job, spec):
+        await self._execute(job, spec, self._run_impl)
+
+    async def _execute(self, job, spec, worker):
+        if job.get("_control") == "stop":
+            job["status"] = "stopped"
+            self._record(job)
+            return
+        try:
+            async with self._sync.engine_slot():
+                if job.get("_control") == "stop":
+                    job["status"] = "stopped"
+                    return
+                job.update(status="running", phase="reading", written=0, write_total=0,
+                           started_at=job.get("started_at") or utc_now())
+                self._record(job)
+                await worker(job, spec)
+        except Exception as exc:
+            # Setup failures (building a client or reading settings) also belong
+            # in the audit trail, even before the engine worker is acquired.
+            job.update(status="error", error=_friendly_error(exc))
+            self._emit("warn", f"transfer failed: {job['error']}", "transfer")
+        finally:
+            self._record(job)
+
+    async def _run_resolved_impl(self, job, spec):
         if job.get("_control") == "stop":
             return
         job["status"] = "running"
         pending = {c["key"]: c["dest_id"] for c in job["conflicts"]
                    if c["resolved"] and not c.get("applied")}
+        base_added = job["added"]
+
+        def write_progress(written, total):
+            job.update(phase="copying", written=written, write_total=total, added=base_added + written)
+            self._record(job, progress=True)
 
         def work():
             self._settings.apply_to_env()
@@ -525,11 +647,12 @@ class TransferService:
                 source, dst, {}, dest_pl, cache, execute=True, max_adds=opts.max_adds,
                 preserve_order=job["preserve_order"], source_tracks=job["_source_tracks"],
                 only_keys=set(pending), should_continue=lambda: job.get("_control", "run"),
+                on_write_progress=write_progress,
             )
 
         try:
-            result = await self._sync.run_exclusive(work)
-            job["added"] += result["added"]
+            result = await asyncio.to_thread(work)
+            job["added"] = base_added + result["added"]
             job["chronology_replayed"] += result["chronology_replayed"]
             rejected = {c["key"] for c in result["not_found"]}
             for conflict in job["conflicts"]:
@@ -544,37 +667,27 @@ class TransferService:
             job["status"], job["error"] = "error", _friendly_error(exc)
             self._emit("warn", f"could not apply resolved tracks: {job['error']}", "transfer")
 
-    async def _run(self, job, spec):
+    async def _run_impl(self, job, spec):
         if job.get("_control") == "stop":  # stopped while still queued — never start
             job["status"] = "stopped"
             return
-        job["_control"] = "run"
-        job["status"] = "running"
-        self._settings.apply_to_env()
-        opts = parse_args([])
-        opts.account_profiles = self._profiles
-        for side, account_id in (("source", spec["source_account"]), ("destination", spec["dest_account"])):
-            if not is_peer(account_id, opts):  # e.g. Jellyfin — browse-only
-                job["status"], job["error"] = "error", f"'{account_id}' can't be a transfer {side} — it's a browse-only service."
-                self._emit("warn", f"transfer: {job['error']}", "transfer")
-                return
-        src = self._build(spec["source_account"], opts)
-        dst = self._build(spec["dest_account"], opts)
-        if src is None or dst is None:
-            job["status"], job["error"] = "error", "source or destination not connected"
-            self._emit("warn", f"transfer: {job['error']}", "transfer")
-            return
-        job["_dest_cache_file"] = dst.cache_file
-        job["_dest_id_normalizer"] = getattr(
-            dst,
-            "normalize_manual_track_id",
-            MirrorTarget.normalize_manual_track_id,
-        )
         # Adds already on the destination from an earlier (paused) run — this
         # run's transfer() skips them via dedup, so keep the counter cumulative.
         base_added = job["added"]
 
         def work():
+            self._settings.apply_to_env()
+            opts = parse_args([])
+            opts.account_profiles = self._profiles
+            for side, account_id in (("source", spec["source_account"]), ("destination", spec["dest_account"])):
+                if not is_peer(account_id, opts):
+                    raise TargetCapabilityError(f"'{account_id}' can't be a transfer {side} — it's a browse-only service.")
+            src = self._build(spec["source_account"], opts)
+            dst = self._build(spec["dest_account"], opts)
+            if src is None or dst is None:
+                raise TargetAuthError("source or destination not connected")
+            job["_dest_cache_file"] = dst.cache_file
+            job["_dest_id_normalizer"] = getattr(dst, "normalize_manual_track_id", MirrorTarget.normalize_manual_track_id)
             src_pl = self._find(src, spec["source_playlist_id"])
             if src_pl is None:
                 raise RuntimeError("source playlist not found")
@@ -589,20 +702,29 @@ class TransferService:
             cache = load_cache(dst.cache_file)
             read_source = getattr(src, "playlist_tracks_for_transfer", src.playlist_tracks)
             job["_source_tracks"] = list(read_source(src_pl))
+            job["unavailable"] = sum(bool(track.get("unavailable")) for track in job["_source_tracks"])
             self._emit("section", f"transfer: {job['source']['playlist_name']} -> {dst.name}", "transfer")
 
             def on_progress(processed, total, added):
+                if job["phase"] != "copying":
+                    job["phase"] = "matching"
                 job["processed"], job["total"], job["added"] = processed, total, base_added + added
+                self._record(job, progress=True)
+
+            def write_progress(written, total):
+                job.update(phase="copying", written=written, write_total=total, added=base_added + written)
+                self._record(job, progress=True)
 
             res = transfer(src, dst, src_pl, dest_pl, cache, execute=True, max_adds=opts.max_adds,
                            preserve_order=job["preserve_order"],
                            source_tracks=job["_source_tracks"],
-                           on_progress=on_progress, should_continue=lambda: job.get("_control", "run"))
+                           on_progress=on_progress, should_continue=lambda: job.get("_control", "run"),
+                           on_write_progress=write_progress)
             save_cache(dst.cache_file, cache)
             return res
 
         try:
-            res = await self._sync.run_exclusive(work)
+            res = await asyncio.to_thread(work)
             job["added"] = base_added + res["added"]
             job["deferred"] = res["deferred"]
             job["chronology_replayed"] = res.get("chronology_replayed", 0)

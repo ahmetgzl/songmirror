@@ -123,7 +123,7 @@ export default function Imports() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div data-tour="import-history" className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-[17px] font-bold text-text">{t('Import history')}</h2>
           <p className="mt-1 text-sm text-text-3">{t('Your playlist import history')}</p>
@@ -182,7 +182,7 @@ export default function Imports() {
                 <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                   <Pill toneClasses={statusTone(job.status)} label={statusLabel(job.status)} />
                   {canResume && (
-                    <Button size="sm" onClick={() => void handleResume(job.id)} loading={resumingId === job.id}>
+                    <Button data-tour="import-resume" size="sm" onClick={() => void handleResume(job.id)} loading={resumingId === job.id}>
                       {t('Resume')}
                     </Button>
                   )}

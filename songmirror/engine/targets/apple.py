@@ -462,6 +462,9 @@ class AppleMusicTarget(MirrorTarget):
         return out
 
     def resolve(self, track, cache):
+        if manual := self.manual_resolution(track, cache):
+            self._remember_resolution(track, manual[0], cache)
+            return manual
         candidates = compatible_isrc_candidates(track, cache)
         if candidates and track["duration_ms"] is not None:
             candidates.sort(key=lambda c: abs((c.get("duration_ms") or 0) - track["duration_ms"]))
@@ -709,7 +712,7 @@ class AppleMusicTarget(MirrorTarget):
             return None  # amp-api 400s on an empty term
         key = self.search_cache_key(name, artists)
         if key in cache["search"]:
-            return cache["search"][key]
+            return self._cached_id(key, cache)
         if self._search_throttled:
             # Keep the queue moving via Apple's separately rate-limited public
             # catalog. A miss is deliberately not cached: the authenticated

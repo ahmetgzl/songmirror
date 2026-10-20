@@ -37,9 +37,52 @@ Soundiiz, TuneMyMusic ve FreeYourMusic servislerine ücretsiz, açık kaynaklı,
 
 <sup>Bir kez kurun — düzenlediğiniz her çalma listesi, eklenme tarihine göre tüm servislerde senkron kalsın.</sup>
 
-<a href="../../.github/assets/songmirror-demo.mp4"><img src="../../.github/assets/songmirror-demo.gif" alt="SongMirror demo — logo tanıtımı, gösterge paneli, tek yönlü ve çift yönlü senkronizasyon kurulumu, canlı çalma listesi aktarımları ve yedi müzik servisinde ISRC ile kesin eşleştirme" width="88%"></a>
+</div>
 
-<sup>▶ <a href="../../.github/assets/songmirror-demo.mp4">1080p versiyonunu izleyin</a></sup>
+<a id="quick-start"></a>
+
+## 🚀 Hızlı Başlangıç
+
+Bunu çalıştırmanın en hızlı yolu Docker'dır — Compose yayınlanan imajı çeker, web arayüzünü sunar ve senkronizasyonlarınızı belirlenen plana göre yürütür.
+
+Otomatik yeniden başlatmalarla kalıcı bir kurulum için:
+
+```bash
+git clone https://github.com/ahnafnafee/songmirror.git
+cd songmirror
+docker compose up -d
+```
+
+**http://localhost:8888** adresini açın. **Hesaplar** bölümünde kullandığınız hizmetleri bağlayın. Bir kez kopyalamak için **Aktarımlar**, listeleri zamanlamayla güncel tutmak için **Senkronizasyon** seçeneğini kullanın. Her özellik sayfasındaki **Turu başlat** düğmesi kontrolleri adım adım vurgular.
+
+Veya depoyu klonlamadan genel GHCR görüntüsünü doğrudan deneyin:
+
+```bash
+docker run --rm -d --name songmirror -p 127.0.0.1:8888:8080 ghcr.io/ahnafnafee/songmirror:latest
+```
+
+Ardından **`http://localhost:8888`** adresini açın ve servislerinizi tarayıcıdan bağlayın. Compose kurulumunun başlaması için **`.env` dosyasına gerek yoktur**; her şey arayüzden yapılandırılır ve `./data` dizinine kaydedilir.
+
+Doğrudan `docker run` seçeneği tek kullanımlıktır: `docker stop songmirror` komutu konteyneri ve yapılandırmasını kaldırır. Kalıcı kimlik bilgileri, önbellekler ve indirmelerle kalıcı bir kurulum için Compose kullanın veya etiketler ve özet sabitleme için **[konteyner görseli kılavuzu](../docker-image.md)** bölümüne bakın.
+
+Docker olmadan çalıştırmayı mı tercih edersiniz?
+
+```bash
+uv sync
+uv run uvicorn songmirror.web:app --host 0.0.0.0 --port 8080   # then open http://127.0.0.1:8080
+```
+
+> [`uv`](https://docs.astral.sh/uv/) (Python 3.13+) gerektirir. Yerel indirme aynası için ayrıca `uv tool install spotdl` komutunu çalıştırın ve PATH üzerinde `ffmpeg` bulundurun.
+
+<a id="app-language"></a>
+
+### Uygulama dili
+
+SongMirror İngilizce, Arapça, Türkçe, İspanyolca, Basitleştirilmiş Çince, Fransızca, Portekizce, Almanca, Japonca, Hintçe, Bengalce, Endonezce, Korece, İtalyanca ve Vietnamca'yı destekler. İlk açılışta, bölgesel varyantlar da dahil olmak üzere tarayıcınızın dil tercihleri sırayla değerlendirilir ve desteklenen ilk dil kullanılır. Hiçbiri desteklenmiyorsa İngilizce kullanılır. Dili **Ayarlar → Genel → Dil** bölümünden değiştirebilirsiniz; seçiminiz bu tarayıcıda saklanır ve sayfa yeniden yüklendiğinde korunur. Tarayıcı tercihlerini yeniden izlemek için **Otomatik (tarayıcı)** seçeneğini seçin. Arapça arayüz sağdan sola yazılır. Çalma listesi, sanatçı ve sağlayıcı adları, kimlik bilgileri ve tanılama günlükleri özgün değerlerini korur.
+
+<div align="right">
+
+[![][back-to-top]](#readme-top)
 
 </div>
 
@@ -51,10 +94,10 @@ Soundiiz, TuneMyMusic ve FreeYourMusic servislerine ücretsiz, açık kaynaklı,
 
 #### İçindekiler
 
-- [✨ Özellikler](#features)
-- [📸 Ekran görüntüleri](#screenshots)
 - [🚀 Hızlı Başlangıç](#quick-start)
   - [Uygulama dili](#app-language)
+- [✨ Özellikler](#features)
+- [📸 Ekran görüntüleri](#screenshots)
 - [🐳 Kesintisiz çalışma: Docker](#always-running-docker)
 - [⚙️ Nasıl çalışır?](#how-it-works)
   - [Eşleştirme](#matching)
@@ -100,12 +143,14 @@ SongMirror; manuel olarak tek tek şarkı eklemeye, kopyalamaya ya da kitaplığ
 - ♥ **Beğenilen ve favori parçalar** — her servisin yerleşik beğenilen koleksiyonunu yedi müzik sağlayıcının tamamında, hedefin kendi favorileriyle veya yeni adlandırılmış bir çalma listesiyle senkronize edin.
 - 🎯 **ISRC ile doğru eşleştirme** — mevcut olduğunda tam kayıt kimliğiyle, olmadığında ise Unicode destekli bulanık başlık/sanatçı/süre eşleştirmesiyle çalışır (düet sanatçı farkları, "- 2015 Remaster" ekleri, Latin dışı alfabeler ve yalnızca video olan yüklemelerin tamamı desteklenir).
 - 🎛️ **Birden fazla adlandırılmış senkronizasyon** — her birinin kendi servisleri, çalma listeleri, zaman planı ve güvenlik sınırları olan dilediğiniz sayıda bağımsız senkronizasyon kurun.
-- ↪️ **tek seferlik aktarımlar** — canlı ilerleme çubuğuyla herhangi bir çalma listesini bir servisten diğerine kopyalayın; kopyalama sırasında duraklatın, devam ettirin veya durdurun ve eşleşmeyen parçaları elinizle çözümleyin.
+- ↪️ **Tek seferlik aktarımlar** — eksiksiz YouTube video listeleri dahil, hizmetler arasında veya aynı hizmetteki iki hesap arasında kopyalayın. Önce YouTube Music listeleri, ardından video listeleri gösterilir; hedef olarak sahibi olduğunuz bir listeyi seçin. Aktarımı duraklatın, sürdürün veya durdurun ve eşleşmeyen parçaları inceleyin. Kaydedilen listeler geri döndüğünüzde hemen gösterilirken arka planda yenilenir.
+- **Aktarım denetim geçmişi** — tamamlanan, başarısız, durdurulan ve kesintiye uğrayan denemeleri doğrulanmış sayılar ve durum geçmişiyle inceleyin. Liste, durum, hesap, hizmet veya tarihe göre filtreleyin. Geçmiş uygulama veri biriminde saklanır ve kapsayıcı değiştirildiğinde korunur. [Geçmiş ve kurtarma](../transfer-history.md).
+- **Her özellik sayfasında rehberler** — kısa talimatlar ve isteğe bağlı turlar kontrolleri vurgular. **Ayarlar → Genel → Özellik kılavuzlarını göster** yolundan tüm rehberleri gizleyin. Tema, dil, rehber görünürlüğü, liste düzeni ve sıralama bu tarayıcıda hatırlanır; hesap ayarları ve aktarım geçmişi kalıcı uygulama veri klasöründe tutulur.
 - 🕒 **Parçaları ekleyin veya parça sırasını koruyun** — kopyalanan şarkılar varsayılan olarak hedefin sonuna hızlıca eklenir. Kaynaktaki eklenme tarihi sırasını korumak için Son Eklenenleri Koru sırasını açarak şarkıların en eski yeni parçadan sonra yeniden yazılmasını sağlayın.
 - 🔗 **Bağlantıdan aktarma** — bağlı herhangi bir servisteki herkese açık bir çalma listesi URL'sini yapıştırarak doğrudan kopyalayın. Listeyi önceden kaydetmeniz veya takip etmeniz gerekmez.
 - 🌐 **Takip edilen çalma listeleri** — yalnızca kendi oluşturduğunuz değil, takip ettiğiniz ancak sahibi olmadığınız çalma listelerini de senkronize edin ve aktarın.
 - 📦 **Zamanlanmış meta veri yedeklemeleri** — bir hesabın çalma listesi kitaplığının tamamını JSON/XML formatında, saklama sınırları ve başarı/başarısızlık geçmişiyle kalıcı uygulama verileri altında düzenli olarak arşivleyin. Tek seferlik indirmeler ve içe aktarmaya hazır Soundiiz JSON da kullanılabilir.
-- 📻 **Last.fm**: Loved Tracks, Top Tracks (altı dönem) ve Recent Scrobbles koleksiyonlarınızı bağlı herhangi bir servise gönderin; hesabı yetkilendirdikten sonra diğer servislerdeki beğenilen şarkıları **Last.fm tarafına** geri taşıyın. Çalma listesi senkronizasyonu desteklenmez, dolayısıyla asla bir çalma listesi hedefi olamaz.
+- 📻 **Last.fm**: Loved Tracks, Top Tracks (altı dönem) ve Recent Scrobbles koleksiyonlarınızı bağlı herhangi bir servise gönderin; hesabı yetkilendirdikten sonra diğer servislerdeki beğenilen şarkıları **Last.fm tarafına** geri taşıyın. Çalma listesi senkronizasyonu desteklenmez, dolayısıyla asla bir çalma listesi hedefi olamaz. ListenBrainz sevilen kayıtları ile Navidrome/Subsonic çalma listeleri ve favorileri de desteklenir; [kuruluma](../listenbrainz-subsonic.md) bakın.
 - 💿 **Yerel indirme aynası** — çevrimdışı ses dosyalarını, **Jellyfin'in** `AlbumArtist/Album` klasör yapısında, kapak resimleri ve otomatik güncellenen `.m3u8` dosyasıyla çalma listesi başına bir klasör halinde saklayın. Mevcut bir müzik kitaplığına yönlendirdiğinizde eşleşen şarkılar **özgün kaliteleriyle** kopyalanır (bir FLAC yine FLAC kalır) ve indirmeler yalnızca eksikleri tamamlar.
 - 🛡️ **Güvenlik önlemleri** — varsayılan olarak simülasyon, geçiş başına ekleme/kaldırma sınırları, net kayıp koruması, boş anlık görüntü koruması ve belirteçlerin süresi dolduğunda yazmadan güvenle iptal etme.
 - 🗃️ **Sürekli büyüyen şarkı arşivi** — karşılaşılan her parça yerel bir SQLite veritabanına kaydedilir (isim, sanatçı, albüm, ISRC, ham meta veriler, ilk/son görülme).
@@ -127,6 +172,10 @@ SongMirror; manuel olarak tek tek şarkı eklemeye, kopyalamaya ya da kitaplığ
 
 <div align="center">
 
+<a href="../../.github/assets/songmirror-demo.mp4"><img src="../../.github/assets/songmirror-demo.gif" alt="SongMirror demo — logo tanıtımı, gösterge paneli, tek yönlü ve çift yönlü senkronizasyon kurulumu, canlı çalma listesi aktarımları ve yedi müzik servisinde ISRC ile kesin eşleştirme" width="88%"></a>
+
+<sup>▶ <a href="../../.github/assets/songmirror-demo.mp4">1080p versiyonunu izleyin</a></sup>
+
 **Her kitaplık için bir kontrol paneli — senkronizasyon durumu, işler, canlı etkinlik ve servis durumu**
 
 <img src="../../.github/assets/dashboard.png" alt="SongMirror Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music için senkronizasyon durumunu, yapılandırılmış işleri, canlı etkinliği ve sağlığı gösteren kontrol paneli, YouTube Music ve Jellyfin" width="82%">
@@ -143,52 +192,15 @@ SongMirror; manuel olarak tek tek şarkı eklemeye, kopyalamaya ya da kitaplığ
 
 <img src="../../.github/assets/playlists.png" alt="Kapak resmi ve parça sayılarıyla birlikte bağlı hizmetlerdeki çalma listelerine göz atma" width="82%">
 
+**Aynı hizmettekiler dahil hesaplar arasında liste kopyalayın**
+
+<img src="../../.github/assets/transfers.png" alt="Aynı hizmettekiler dahil hesaplar arasında liste kopyalayın" width="82%">
+
+**Filtreler ve denetim iziyle her aktarım denemesini inceleyin**
+
+<img src="../../.github/assets/transfer-history.png" alt="Filtreler ve denetim iziyle her aktarım denemesini inceleyin" width="82%">
+
 </div>
-
-<div align="right">
-
-[![][back-to-top]](#readme-top)
-
-</div>
-
-<a id="quick-start"></a>
-
-## 🚀 Hızlı Başlangıç
-
-Bunu çalıştırmanın en hızlı yolu Docker'dır — Compose yayınlanan imajı çeker, web arayüzünü sunar ve senkronizasyonlarınızı belirlenen plana göre yürütür.
-
-Otomatik yeniden başlatmalarla kalıcı bir kurulum için:
-
-```bash
-git clone https://github.com/ahnafnafee/songmirror.git
-cd songmirror
-docker compose up -d
-```
-
-Veya depoyu klonlamadan genel GHCR görüntüsünü doğrudan deneyin:
-
-```bash
-docker run --rm -d --name songmirror -p 127.0.0.1:8888:8080 ghcr.io/ahnafnafee/songmirror:latest
-```
-
-Ardından **`http://localhost:8888`** adresini açın ve servislerinizi tarayıcıdan bağlayın. Compose kurulumunun başlaması için **`.env` dosyasına gerek yoktur**; her şey arayüzden yapılandırılır ve `./data` dizinine kaydedilir.
-
-Doğrudan `docker run` seçeneği tek kullanımlıktır: `docker stop songmirror` komutu konteyneri ve yapılandırmasını kaldırır. Kalıcı kimlik bilgileri, önbellekler ve indirmelerle kalıcı bir kurulum için Compose kullanın veya etiketler ve özet sabitleme için **[konteyner görseli kılavuzu](../docker-image.md)** bölümüne bakın.
-
-Docker olmadan çalıştırmayı mı tercih edersiniz?
-
-```bash
-uv sync
-uv run uvicorn songmirror.web:app --host 0.0.0.0 --port 8080   # then open http://127.0.0.1:8080
-```
-
-> [`uv`](https://docs.astral.sh/uv/) (Python 3.13+) gerektirir. Yerel indirme aynası için ayrıca `uv tool install spotdl` komutunu çalıştırın ve PATH üzerinde `ffmpeg` bulundurun.
-
-<a id="app-language"></a>
-
-### Uygulama dili
-
-SongMirror İngilizce, Arapça, Türkçe, İspanyolca, Basitleştirilmiş Çince, Fransızca, Portekizce, Almanca, Japonca, Hintçe, Bengalce, Endonezce, Korece, İtalyanca ve Vietnamca'yı destekler. İlk açılışta, bölgesel varyantlar da dahil olmak üzere tarayıcınızın dil tercihleri sırayla değerlendirilir ve desteklenen ilk dil kullanılır. Hiçbiri desteklenmiyorsa İngilizce kullanılır. Dili **Ayarlar → Genel → Dil** bölümünden değiştirebilirsiniz; seçiminiz bu tarayıcıda saklanır ve sayfa yeniden yüklendiğinde korunur. Tarayıcı tercihlerini yeniden izlemek için **Otomatik (tarayıcı)** seçeneğini seçin. Arapça arayüz sağdan sola yazılır. Çalma listesi, sanatçı ve sağlayıcı adları, kimlik bilgileri ve tanılama günlükleri özgün değerlerini korur.
 
 <div align="right">
 
@@ -498,6 +510,8 @@ OAuth yenileme belirteci dayanıklı olan ve yeniden başlatmalarda korunan resm
 3. Uygulamada istemci kimliğini + gizli anahtarını yapıştırın ve ekrandaki cihaz kodunu onaylayın.
 
 > **Kota**: Data API günde 10.000 birime izin verir (arama maliyeti 100, ekleme/çıkarma maliyeti 50). Rutin bakım işlemleri oldukça ekonomiktir; ilk çalıştırmadaki büyük bir aktarım limite ulaşıp ertesi gün devam edebilir.
+
+Google hesapları arasında özel listeleri taşımak için iki hesabı da bağlayın; herkese açık bir liste için yalnızca hedef hesabı bağlayıp bağlantıyı yapıştırabilirsiniz. Tarayıcı modu normal YouTube video listelerini içerir ve tüm sayfaları okur. Uzun kopyalamalarda **Kotasız mod** kullanın; Data API bağlantısının günlük kotası devam eder. YouTube kanal isterse hedef hesapta kanal kurulumunu tamamlayıp yeniden deneyin. [Hesap aktarım rehberini](../youtube-account-transfers.md) izleyin.
 
 <div align="right">
 

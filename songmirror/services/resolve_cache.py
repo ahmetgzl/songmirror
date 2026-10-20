@@ -18,6 +18,7 @@ import os
 from ..engine.config import parse_args
 from ..engine.runner import load_cache, save_cache
 from ..engine.targets import provider_ids, target_class
+from ..engine.track_references import normalize_track_reference
 from .playlist_links import provider_label, track_url
 
 # Row kinds the UI can ask for.
@@ -144,14 +145,23 @@ class ResolveCacheStore:
             if needle and needle not in key.casefold() and needle not in str(target_id or "").casefold():
                 continue
             name, artist = _split_key(key)
-            rows.append({
+            error = None
+            if manual and target_id:
+                try:
+                    normalize_track_reference(self._provider(provider_id), target_id)
+                except ValueError as exc:
+                    error = str(exc)
+            row = {
                 "key": key,
                 "name": name,
                 "artist": artist,
                 "target_id": "" if target_id is None else str(target_id),
                 "manual": manual,
-                "url": track_url(self._provider(provider_id), target_id),
-            })
+                "url": "" if error else track_url(self._provider(provider_id), target_id),
+            }
+            if error:
+                row["validation_error"] = error
+            rows.append(row)
         rows.sort(key=lambda row: (row["name"], row["artist"]))
         offset = max(0, int(offset))
         limit = max(1, min(int(limit), 200))

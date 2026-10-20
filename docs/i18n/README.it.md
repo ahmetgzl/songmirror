@@ -37,9 +37,52 @@ Un'alternativa gratuita, open source e self-hosted a Soundiiz, TuneMyMusic e Fre
 
 <sup>Impostalo una volta: ogni playlist che curi rimane rispecchiata su ogni servizio, in ordine di data di aggiunta.</sup>
 
-<a href="../../.github/assets/songmirror-demo.mp4"><img src="../../.github/assets/songmirror-demo.gif" alt="Demo di SongMirror: rivelazione del logo, dashboard, configurazione di sincronizzazione unidirezionale e bidirezionale, trasferimenti di playlist dal vivo e corrispondenza accurata di ISRC tra sette servizi musicali" width="88%"></a>
+</div>
 
-<sup>▲ <a href="../../.github/assets/songmirror-demo.mp4">Guarda la versione 1080p</a></sup>
+<a id="quick-start"></a>
+
+## 🚀Avvio rapido
+
+Il modo più veloce per eseguirlo è Docker — Compose estrae l'immagine pubblicata, fornisce l'interfaccia utente Web ed esegue le sincronizzazioni nei tempi previsti.
+
+Per un'installazione persistente con riavvii automatici:
+
+```bash
+git clone https://github.com/ahnafnafee/songmirror.git
+cd songmirror
+docker compose up -d
+```
+
+Apri **http://localhost:8888**. In **Account**, collega i servizi che usi. Scegli **Trasferimenti** per una copia singola o **Sincronizzazione** per aggiornare le playlist periodicamente. Ogni pagina offre **Avvia tour** per evidenziare i controlli passo dopo passo.
+
+Oppure prova direttamente l'immagine GHCR pubblica senza clonare il repository:
+
+```bash
+docker run --rm -d --name songmirror -p 127.0.0.1:8888:8080 ghcr.io/ahnafnafee/songmirror:latest
+```
+
+Quindi apri `http://localhost:8888` e collega i tuoi servizi nel browser. La configurazione Compose non necessita di `.env` per essere avviata; tutto è configurato nell'interfaccia utente e salvato in `./data`.
+
+L'opzione diretta `docker run` è usa e getta: `docker stop songmirror` rimuove il contenitore e la sua configurazione. Utilizza Compose per un'installazione duratura con credenziali, cache e download persistenti oppure consulta [guida alle immagini del contenitore](../docker-image.md) per tag e blocco digest.
+
+Preferisci eseguirlo senza Docker?
+
+```bash
+uv sync
+uv run uvicorn songmirror.web:app --host 0.0.0.0 --port 8080   # then open http://127.0.0.1:8080
+```
+
+> Richiede [`uv`](https://docs.astral.sh/uv/) (Python 3.13+). Per il mirror di download locale, anche `uv tool install spotdl` e avere `ffmpeg` su PATH.
+
+<a id="app-language"></a>
+
+### Lingua dell'app
+
+SongMirror supporta inglese, arabo, turco, spagnolo, cinese semplificato, francese, portoghese, tedesco, giapponese, hindi, bengalese, indonesiano, coreano, italiano e vietnamita. Al primo avvio vengono esaminate in ordine le preferenze linguistiche del browser, comprese le varianti regionali, e viene usata la prima lingua supportata. Se nessuna è supportata, viene usato l’inglese. Cambia lingua in **Impostazioni → Generali → Lingua**: la scelta viene salvata in questo browser e mantenuta dopo il ricaricamento della pagina. Seleziona **Automatico (browser)** per seguire di nuovo le preferenze del browser. L’interfaccia araba viene visualizzata da destra a sinistra. I nomi di playlist, artisti e servizi, le credenziali e i log diagnostici mantengono i valori originali.
+
+<div align="right">
+
+[![][back-to-top]](#readme-top)
 
 </div>
 
@@ -51,10 +94,10 @@ Un'alternativa gratuita, open source e self-hosted a Soundiiz, TuneMyMusic e Fre
 
 #### SOMMARIO
 
-- [✨Caratteristiche](#features)
-- [📸 Schermate](#screenshots)
 - [🚀Avvio rapido](#quick-start)
   - [Lingua dell'app](#app-language)
+- [✨Caratteristiche](#features)
+- [📸 Schermate](#screenshots)
 - [🐳 Sempre in funzione: Docker](#always-running-docker)
 - [⚙️ Come funziona](#how-it-works)
   - [Corrispondenza](#matching)
@@ -100,12 +143,14 @@ SongMirror mantiene le tue playlist identiche ovunque senza dover aggiungere nuo
 - ♥ **Tracce apprezzate e preferite**: sincronizza la raccolta di apprezzamenti integrata di ciascun servizio tra tutti e sette i fornitori di musica, nei preferiti della destinazione o in una playlist con un nuovo nome.
 - 🎯 **corrispondenza accurata per ISRC** — identità esatta della registrazione, ove disponibile, con titoli di riserva/artista/durata approssimativamente compatibili con Unicode (differenze nei crediti degli artisti in primo piano, suffissi "- 2015 Remaster", script non latini, caricamenti di soli video: tutto gestito).
 - 🎛️ **Sincronizzazioni con nomi multipli**: configura tutte le sincronizzazioni indipendenti che desideri, ciascuna con i propri servizi, playlist, pianificazione e limiti di sicurezza.
-- ↪️ **trasferimenti una tantum**: copia qualsiasi playlist da un servizio a un altro con una barra di avanzamento dal vivo; mettere in pausa, riprendere o interrompere la copia durante la copia e risolvere manualmente le tracce senza corrispondenza.
+- ↪️ **Trasferimenti singoli** — copia tra servizi o tra due account dello stesso servizio, comprese playlist video YouTube complete. Le playlist YouTube Music compaiono per prime, seguite da quelle video; scegli come destinazione una playlist di tua proprietà. Metti in pausa, riprendi o interrompi la copia e controlla i brani senza corrispondenza. Le liste salvate appaiono subito al ritorno mentre si aggiornano in background.
+- **Registro dei trasferimenti** — esamina tentativi completati, falliti, fermati e interrotti con conteggi confermati e cronologia degli stati. Filtra per playlist, stato, account, servizio o data. Il registro è salvato nel volume dati e sopravvive alla sostituzione del contenitore. [Cronologia e recupero](../transfer-history.md).
+- **Guide in ogni pagina delle funzionalità** — istruzioni rapide e tour facoltativi evidenziano i controlli. Nascondi tutte le guide in **Impostazioni → Generali → Mostra le guide delle funzioni**. Tema, lingua, guide, disposizione e ordinamento delle playlist vengono ricordati nel browser; impostazioni degli account e cronologia restano nella cartella dati persistente.
 - 🕒 **Aggiungi tracce o conserva l'ordine delle tracce**: le copie arrivano alla fine della destinazione per impostazione predefinita, veloce e additiva. Attiva Conserva ordine aggiunto di recente per riscrivere le tracce dopo quella nuova più vecchia in modo che l'ordine di aggiunta della data corrisponda alla fonte.
 - 🔗 **Trasferisci da un collegamento**: incolla l'URL di una playlist pubblica da qualsiasi servizio connesso e copialo direttamente. Non è necessario salvarlo o seguirlo prima.
 - 🌐 **Playlist seguite**: sincronizza e trasferisci le playlist che segui ma non possiedi, non solo quelle che hai creato.
 - 📦 **Backup dei metadati pianificati**: archivia l'intera libreria di playlist di un account secondo la propria pianificazione sotto i dati persistenti dell'app, con JSON/XML, limiti di conservazione e cronologia visibile di successi/fallimenti. rimangono disponibili anche download una tantum e Soundiiz JSON pronti per l'importazione.
-- 📻 **Last.fm**: porta i tuoi Loved Tracks, Top Tracks (sei periodi) e Recent Scrobbles verso qualsiasi servizio collegato e, una volta autorizzato l'account, riporta i brani preferiti degli altri servizi **dentro** Last.fm. La sincronizzazione delle playlist non è supportata, quindi non è mai una destinazione per le playlist.
+- 📻 **Last.fm**: porta i tuoi Loved Tracks, Top Tracks (sei periodi) e Recent Scrobbles verso qualsiasi servizio collegato e, una volta autorizzato l'account, riporta i brani preferiti degli altri servizi **dentro** Last.fm. La sincronizzazione delle playlist non è supportata, quindi non è mai una destinazione per le playlist. Sono supportati anche le registrazioni preferite di ListenBrainz e le playlist e i preferiti di Navidrome/Subsonic; vedi la [configurazione](../listenbrainz-subsonic.md).
 - 💿 **Mirror download locale**: mantieni l'audio offline, una cartella per playlist nel layout `AlbumArtist/Album` di Jellyfin, con copertine e un `.m3u8` aggiornato automaticamente. Puntalo a una libreria musicale esistente e i brani corrispondenti vengono copiati **nella loro qualità originale** (un FLAC resta un FLAC), mentre i download coprono solo le lacune.
 - 🛡️ **Misure di sicurezza**: simulazione per impostazione predefinita, limiti di aggiunta/rimozione per passaggio, protezione dalla perdita di rete, protezione dagli snapshot vuoti, interruzioni senza scrittura alla scadenza dei token.
 - 🗃️ **Archivio di brani in continua crescita**: ogni traccia mai vista è registrata in un database locale SQLite (nome, artista, album, ISRC, metadati grezzi, primo/ultimo visto).
@@ -127,6 +172,10 @@ SongMirror mantiene le tue playlist identiche ovunque senza dover aggiungere nuo
 
 <div align="center">
 
+<a href="../../.github/assets/songmirror-demo.mp4"><img src="../../.github/assets/songmirror-demo.gif" alt="Demo di SongMirror: rivelazione del logo, dashboard, configurazione di sincronizzazione unidirezionale e bidirezionale, trasferimenti di playlist dal vivo e corrispondenza accurata di ISRC tra sette servizi musicali" width="88%"></a>
+
+<sup>▲ <a href="../../.github/assets/songmirror-demo.mp4">Guarda la versione 1080p</a></sup>
+
 **Una dashboard per ogni biblioteca: sincronizza stato, lavori, attività in tempo reale e integrità del servizio**
 
 <img src="../../.github/assets/dashboard.png" alt="Dashboard SongMirror che mostra lo stato di sincronizzazione, i lavori configurati, l'attività live e l'integrità per Spotify, TIDAL, Qobuz, Deezer, Amazon Music, Apple Music, YouTube Music e Jellyfin" width="82%">
@@ -143,52 +192,15 @@ SongMirror mantiene le tue playlist identiche ovunque senza dover aggiungere nuo
 
 <img src="../../.github/assets/playlists.png" alt="Navigazione nelle playlist dei servizi connessi con copertine e conteggi delle tracce" width="82%">
 
+**Copia una playlist tra account, anche dello stesso servizio**
+
+<img src="../../.github/assets/transfers.png" alt="Copia una playlist tra account, anche dello stesso servizio" width="82%">
+
+**Consulta ogni tentativo di trasferimento con filtri e registro delle attività**
+
+<img src="../../.github/assets/transfer-history.png" alt="Consulta ogni tentativo di trasferimento con filtri e registro delle attività" width="82%">
+
 </div>
-
-<div align="right">
-
-[![][back-to-top]](#readme-top)
-
-</div>
-
-<a id="quick-start"></a>
-
-## 🚀Avvio rapido
-
-Il modo più veloce per eseguirlo è Docker — Compose estrae l'immagine pubblicata, fornisce l'interfaccia utente Web ed esegue le sincronizzazioni nei tempi previsti.
-
-Per un'installazione persistente con riavvii automatici:
-
-```bash
-git clone https://github.com/ahnafnafee/songmirror.git
-cd songmirror
-docker compose up -d
-```
-
-Oppure prova direttamente l'immagine GHCR pubblica senza clonare il repository:
-
-```bash
-docker run --rm -d --name songmirror -p 127.0.0.1:8888:8080 ghcr.io/ahnafnafee/songmirror:latest
-```
-
-Quindi apri `http://localhost:8888` e collega i tuoi servizi nel browser. La configurazione Compose non necessita di `.env` per essere avviata; tutto è configurato nell'interfaccia utente e salvato in `./data`.
-
-L'opzione diretta `docker run` è usa e getta: `docker stop songmirror` rimuove il contenitore e la sua configurazione. Utilizza Compose per un'installazione duratura con credenziali, cache e download persistenti oppure consulta [guida alle immagini del contenitore](../docker-image.md) per tag e blocco digest.
-
-Preferisci eseguirlo senza Docker?
-
-```bash
-uv sync
-uv run uvicorn songmirror.web:app --host 0.0.0.0 --port 8080   # then open http://127.0.0.1:8080
-```
-
-> Richiede [`uv`](https://docs.astral.sh/uv/) (Python 3.13+). Per il mirror di download locale, anche `uv tool install spotdl` e avere `ffmpeg` su PATH.
-
-<a id="app-language"></a>
-
-### Lingua dell'app
-
-SongMirror supporta inglese, arabo, turco, spagnolo, cinese semplificato, francese, portoghese, tedesco, giapponese, hindi, bengalese, indonesiano, coreano, italiano e vietnamita. Al primo avvio vengono esaminate in ordine le preferenze linguistiche del browser, comprese le varianti regionali, e viene usata la prima lingua supportata. Se nessuna è supportata, viene usato l’inglese. Cambia lingua in **Impostazioni → Generali → Lingua**: la scelta viene salvata in questo browser e mantenuta dopo il ricaricamento della pagina. Seleziona **Automatico (browser)** per seguire di nuovo le preferenze del browser. L’interfaccia araba viene visualizzata da destra a sinistra. I nomi di playlist, artisti e servizi, le credenziali e i log diagnostici mantengono i valori originali.
 
 <div align="right">
 
@@ -498,6 +510,8 @@ Parla con il funzionario [YouTube Data API v3](https://developers.google.com/you
 3. Nell'app, incolla l'ID client + il segreto e completa il codice del dispositivo visualizzato sullo schermo.
 
 > Quota: il Data API consente 10.000 unità/giorno (una ricerca costa 100, un'aggiunta/rimozione 50). Il mantenimento dello stato stazionario è economico; un grosso arretrato per la prima volta può raggiungere il limite e riprendere il giorno successivo.
+
+Per spostare playlist tra account Google, collega entrambi per le liste private oppure incolla un link pubblico con il solo account destinatario collegato. La modalità browser include le normali playlist video YouTube e legge tutte le pagine. Usa la **Modalità senza quote** per copie lunghe; la connessione Data API mantiene una quota giornaliera. Se YouTube richiede un canale, completane la creazione con l’account destinatario e riprova. Segui la [guida ai trasferimenti tra account](../youtube-account-transfers.md).
 
 <div align="right">
 

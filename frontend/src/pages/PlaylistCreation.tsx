@@ -4,6 +4,7 @@ import { LuArrowLeft } from 'react-icons/lu'
 import { Link, NavLink, useMatch } from 'react-router-dom'
 
 import { cn } from '@/lib/cn'
+import { FeatureGuide } from '@/components/onboarding/FeatureGuide'
 
 import CreatePlaylist from './CreatePlaylist'
 import Imports from './Imports'
@@ -22,7 +23,7 @@ export default function PlaylistCreation() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link to="/playlists" className="mb-3 inline-flex min-h-8 items-center gap-1.5 text-sm text-text-3 hover:text-text">
+        <Link data-tour="creation-back" to="/playlists" className="mb-3 inline-flex min-h-8 items-center gap-1.5 text-sm text-text-3 hover:text-text">
           <LuArrowLeft className="size-4 rtl:-scale-x-100" aria-hidden="true" />
           {t('Playlists')}
         </Link>
@@ -48,6 +49,8 @@ export default function PlaylistCreation() {
           </NavLink>
         ))}
       </nav>
+
+      <FeatureGuide page={showHistory ? 'history' : 'create'} />
 
       {(editorOpened || !showHistory) && (
         <section hidden={showHistory} aria-label={t('New playlist')}>

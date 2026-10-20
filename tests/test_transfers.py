@@ -244,7 +244,7 @@ def test_transfer_skips_unavailable_tidal_entries_without_aborting():
     assert result["unavailable"] == 1
     assert result["not_found"] == []
     assert added == ["apple-track"]
-    assert progress == [(1, 2, 0), (2, 2, 1)]
+    assert progress == [(1, 2, 0), (2, 2, 0), (2, 2, 1)]
 
 
 def test_transfer_ignores_unavailable_tidal_destination_entries_during_dedup():
@@ -333,27 +333,28 @@ def test_transfer_same_provider_copies_by_id_without_resolving():
     assert resolved == []          # resolver never invoked
 
 
+@pytest.mark.parametrize("provider", ["spotify", "ytmusic"])
 def test_transfer_service_builds_both_selected_profiles_for_cross_account_copy(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, provider
 ):
     """Two accounts of one provider stay distinct all the way to construction.
 
     The copy path must still recognize the underlying provider as identical so
-    Spotify track ids can be written directly into the other account.
+    Catalog track ids can be written directly into the other account.
     """
     built, added, resolved = [], [], []
     settings = SettingsStore(dir=tmp_path)
     profiles = AccountProfileStore(settings)
-    source_profile = profiles.create("spotify", "Alice")
-    dest_profile = profiles.create("spotify", "Bob")
+    source_profile = profiles.create(provider, "Alice")
+    dest_profile = profiles.create(provider, "Bob")
 
     src = _Prov(
         str(tmp_path / "alice-cache.json"),
-        [{"id": "spotify-track", "name": "Song", "artists": ["Artist"],
+        [{"id": "catalog-track", "name": "Song", "artists": ["Artist"],
           "duration_ms": 1, "isrc": "I", "added_at": "1"}],
-        source="spotify",
+        source=provider,
     )
-    dst = _Prov(str(tmp_path / "bob-cache.json"), [], source="spotify")
+    dst = _Prov(str(tmp_path / "bob-cache.json"), [], source=provider)
     src.track_id = lambda raw: raw["id"]
     dst.resolve = lambda norm, cache: resolved.append(norm["name"])
     dst.add = lambda playlist, ids: added.extend(ids)
@@ -381,11 +382,11 @@ def test_transfer_service_builds_both_selected_profiles_for_cross_account_copy(
 
     assert built == [source_profile.id, dest_profile.id]
     assert job["source"]["account"] == source_profile.id
-    assert job["source"]["provider"] == "spotify"
+    assert job["source"]["provider"] == provider
     assert job["dest"]["account"] == dest_profile.id
-    assert job["dest"]["provider"] == "spotify"
+    assert job["dest"]["provider"] == provider
     assert job["status"] == "done"
-    assert added == ["spotify-track"]
+    assert added == ["catalog-track"]
     assert resolved == []
 
 
@@ -728,7 +729,8 @@ def test_transfer_reports_progress():
              {"search": {}, "isrc": {}, "dirty": False}, execute=True, max_adds=100,
              on_progress=lambda p, t, a: calls.append((p, t, a)))
     assert calls[0] == (0, 3, 0)                            # total published before matching
-    assert [p for p, _, _ in calls] == [0, 1, 2, 3]        # monotonic scan over all 3 tracks
+    assert sorted(set(p for p, _, _ in calls)) == [0, 1, 2, 3]
+    assert [p for p, _, _ in calls] == sorted(p for p, _, _ in calls)
     assert calls[-1] == (3, 3, 1)                           # every track scanned, 1 added
 
 
@@ -805,6 +807,91 @@ def test_run_exclusive_queues_behind_sync(monkeypatch, tmp_path):
 
     asyncio.run(scenario())
     assert order == ["sync-start", "sync-end", "transfer"]  # the transfer waited for the sync
+
+
+@pytest.mark.parametrize("stop_queued", [False, True])
+def test_transfer_stays_queued_without_provider_work_until_engine_is_available(monkeypatch, tmp_path, stop_queued):
+    async def scenario():
+        _service(monkeypatch, tmp_path)
+        import threading
+        event_loop_thread = threading.get_ident()
+        bus = EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        settings = SettingsStore(dir=tmp_path)
+        sync = SyncService(settings, bus)
+        service = TransferService(settings, bus, sync)
+        setup_calls = []
+        original_build = service._build
+
+        def build(*args):
+            assert threading.get_ident() != event_loop_thread, "Blocking setup must run off the event loop"
+            setup_calls.append(args[0])
+            return original_build(*args)
+
+        monkeypatch.setattr(service, "_build", build)
+        await sync._lock.acquire()
+        try:
+            job = service.submit({"source_provider": "apple", "source_playlist_id": "p1",
+                                  "dest_provider": "ytmusic", "dest_playlist_id": "p1"})
+            await asyncio.sleep(0)
+            assert job["status"] == "queued", "Waiting for a sync is not a running source read"
+            assert job.get("started_at") is None
+            assert setup_calls == [], "Provider setup must wait behind the engine queue too"
+            assert service.history.get(job["id"])["status"] == "queued"
+            assert [j["id"] for j in service.list_active()] == [job["id"]]
+            if stop_queued:
+                assert service.stop(job["id"])
+                assert job["status"] == "stopped"
+                assert service.list_active() == []
+        finally:
+            sync._lock.release()
+        if stop_queued:
+            await asyncio.sleep(0)
+            assert setup_calls == [], "Stopping a queued job must not create or read a playlist"
+            assert job.get("started_at") is None
+        else:
+            await _await_job(service, job["id"])
+            assert job["status"] == "done", job["error"]
+            assert setup_calls == ["apple", "ytmusic"]
+            assert job["started_at"]
+
+    asyncio.run(scenario())
+
+
+def test_transfer_waits_for_another_transfer_before_starting(monkeypatch, tmp_path):
+    import threading
+
+    async def scenario():
+        source, _ = _service(monkeypatch, tmp_path)
+        started, release = threading.Event(), threading.Event()
+        settings, bus = SettingsStore(dir=tmp_path), EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        service = TransferService(settings, bus, SyncService(settings, bus))
+        original_read = source.playlist_tracks
+
+        def read(playlist):
+            started.set()
+            assert release.wait(2)
+            return original_read(playlist)
+
+        source.playlist_tracks = read
+        spec = {"source_provider": "apple", "source_playlist_id": "p1",
+                "dest_provider": "ytmusic", "dest_playlist_id": "p1"}
+        first = service.submit(spec)
+        assert await asyncio.to_thread(started.wait, 1)
+        try:
+            second = service.submit(spec)
+            await asyncio.sleep(0)
+            assert first["status"] == "running"
+            assert second["status"] == "queued"
+            assert second.get("started_at") is None
+        finally:
+            release.set()
+        await _await_job(service, first["id"])
+        await _await_job(service, second["id"])
+        assert first["status"] == second["status"] == "done"
+
+    asyncio.run(scenario())
 
 
 class _Prov:
@@ -955,6 +1042,60 @@ def test_created_destination_is_recorded_and_reused_after_a_pause(monkeypatch, t
     assert added == [("new-1", ["dest-track"])]
 
 
+def test_service_tracks_confirmed_writes_and_resumes_without_double_counting(monkeypatch, tmp_path):
+    async def scenario():
+        src, dst = _service(monkeypatch, tmp_path)
+        src._tracks = [{**src._tracks[0], "id": f"s{i}", "name": f"Song {i}"} for i in range(3)]
+        dst.transfer_batch_size = 1
+        dst.resolve = lambda track, _cache: ("dest-" + track["name"], "search")
+        written = []
+        bus = EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        settings = SettingsStore(dir=tmp_path)
+        service = TransferService(settings, bus, SyncService(settings, bus))
+
+        def add(_playlist, ids):
+            # Before the write, the job counts only previous acknowledgements.
+            assert job["added"] == len(written)
+            assert job["phase"] == "copying"
+            written.extend(ids)
+            dst._tracks.append({"id": ids[0], "videoId": ids[0], "name": ids[0].removeprefix("dest-"),
+                                "artists": ["A"]})
+            if len(written) == 1:
+                service.pause(job["id"])
+
+        dst.add = add
+        job = service.submit({"source_provider": "apple", "source_playlist_id": "p1",
+                              "dest_provider": "ytmusic", "dest_playlist_id": "p1"})
+        for _ in range(100):
+            if job["status"] == "paused":
+                break
+            await asyncio.sleep(0.01)
+        assert job["status"] == "paused"
+        assert job["added"] == job["written"] == 1
+        assert job["write_total"] == 3
+        paused = service.history.get(job["id"])
+        assert paused["status"] == "paused" and paused["added"] == 1
+        assert paused["finished_at"] is None
+        assert service.resume(job["id"])
+        await _await_job(service, job["id"])
+        assert job["status"] == "done", job["error"]
+        assert job["added"] == 3
+        assert job["written"] == job["write_total"] == 2
+        assert written == ["dest-Song 0", "dest-Song 1", "dest-Song 2"]
+        saved = service.history.get(job["id"])
+        assert saved["added"] == 3 and saved["status"] == "done"
+        assert saved["finished_at"]
+        assert saved["source"]["playlist_name"] == "X"
+        assert saved["dest"]["playlist_id"] == "p1"
+        assert any(event["kind"] == "resumed" for event in saved["events"])
+        resumed = next(i for i, event in enumerate(saved["events"]) if event["kind"] == "resumed")
+        assert saved["events"][resumed + 1]["phase"] == "reading"
+        assert saved["events"][-1]["status"] == "done"
+
+    asyncio.run(scenario())
+
+
 def test_transfer_service_resolve_writes_cache(monkeypatch, tmp_path):
     from songmirror.engine.runner import load_cache
 
@@ -1004,6 +1145,25 @@ def test_transfer_service_normalizes_manual_id_before_writing_cache(monkeypatch,
     asyncio.run(scenario())
 
     assert "4160591112" in out["cache"]["search"].values()
+
+
+def test_restored_transfer_validates_before_saving_manual_choice(monkeypatch, tmp_path):
+    async def scenario():
+        _service(monkeypatch, tmp_path)
+        bus = EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        svc = TransferService(SettingsStore(dir=tmp_path), bus, SyncService(SettingsStore(dir=tmp_path), bus))
+        job = svc.submit({"source_provider": "apple", "source_playlist_id": "p1",
+                          "dest_provider": "ytmusic", "dest_playlist_id": "p1"})
+        await _await_job(svc, job["id"])
+        job.pop("_dest_id_normalizer")  # Runtime callbacks are absent after restart.
+        key = job["conflicts"][0]["key"]
+        with pytest.raises(ValueError, match="YouTube Music track"):
+            svc.resolve(job["id"], key, "https://music.youtube.com/playlist?list=PLwrong")
+        assert not job["conflicts"][0]["resolved"]
+        assert svc.resolve(job["id"], key, "https://music.youtube.com/watch?v=c8i1Qpcnsa8&list=PLtest")
+        assert job["conflicts"][0]["dest_id"] == "c8i1Qpcnsa8"
+    asyncio.run(scenario())
 
 
 def test_apply_resolved_uses_saved_destination_without_reopening_source(monkeypatch, tmp_path):
@@ -1356,3 +1516,59 @@ def test_resolving_a_conflict_records_the_choice_as_hand_set(monkeypatch, tmp_pa
     asyncio.run(scenario())
     # The resolve-mappings view can tell this apart from a match the matcher guessed.
     assert out["cache"]["manual"] == {out["key"]}
+
+
+def test_transfer_to_deezer_reports_skipped_invalid_track_as_not_found(monkeypatch):
+    """When DeezerTarget skips an unaddable/invalid ID, the transfer must report it
+    as not_found and not treat it as a successful addition.
+    """
+    from songmirror.engine.targets import deezer
+    from songmirror.engine.targets.deezer import DeezerTarget
+
+    target = DeezerTarget.__new__(DeezerTarget)
+    target.tag = "deezer"
+    target.source = "deezer"
+    target.name = "Deezer"
+
+    added_calls = []
+    target._web = type("Web", (), {
+        "add": lambda self, playlist_id, track_ids: added_calls.append((playlist_id, track_ids)),
+    })()
+    monkeypatch.setattr(deezer, "polite_sleep", lambda _: None)
+
+    source_tracks = [
+        {"id": "sp1", "name": "Valid Track", "artist": "Artist 1", "artists": ["Artist 1"],
+         "isrc": "VALID1", "duration_ms": 1000, "added_at": "2020"},
+        {"id": "sp2", "name": "Broken Track", "artist": "Artist 2", "artists": ["Artist 2"],
+         "isrc": "BROKEN2", "duration_ms": 1000, "added_at": "2021"},
+    ]
+
+    class _MockSource:
+        tag = "source"
+        source = "spotify"
+
+        def playlist_tracks(self, playlist):
+            return source_tracks
+
+    target.playlist_tracks = lambda playlist: []
+
+    # Real Deezer resolve reads cached ISRC candidates
+    cache = {
+        "search": {},
+        "isrc": {
+            "VALID1": [{"id": "123456", "duration": 1}],
+            "BROKEN2": [{"id": "invalid_token_123", "duration": 1}],
+        },
+        "dirty": False,
+    }
+    result = transfer(
+        _MockSource(), target, {"id": "src-p"}, {"id": "dst-p"},
+        cache, execute=True, max_adds=10,
+    )
+
+    # Only the valid track was added to Deezer
+    assert added_calls == [("dst-p", ["123456"])]
+    # Transfer must report only 1 track added, and Broken Track must be in not_found
+    assert result["added"] == 1
+    assert [conflict["name"] for conflict in result["not_found"]] == ["Broken Track"]
+

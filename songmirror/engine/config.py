@@ -135,7 +135,8 @@ def parse_args(argv=None):
     p.add_argument("--providers", default=os.getenv("PROVIDERS", DEFAULT_PROVIDERS),
                    help=f"Providers participating in sync, comma-separated (default: {DEFAULT_PROVIDERS}).")
     p.add_argument("--sync-source", default=os.getenv("SYNC_SOURCE", DEFAULT_SYNC_SOURCE),
-                   choices=("spotify", "tidal", "qobuz", "deezer", "amazon", "apple", "ytmusic"),
+                   choices=("spotify", "tidal", "qobuz", "deezer", "amazon", "apple", "ytmusic",
+                            "lastfm", "listenbrainz", "subsonic"),
                    help=f"One-way source or group order authority (default: {DEFAULT_SYNC_SOURCE}).")
     p.add_argument("--authorities", default=os.getenv("SYNC_AUTHORITIES", ""),
                    help="Authoritative-group providers, comma-separated (group mode only).")

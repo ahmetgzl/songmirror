@@ -778,6 +778,9 @@ async function installMocks(page, opts = {}) {
     }
     if (/^\/api\/resolve-cache\/[^/]+$/.test(p) && method === 'PUT') {
       const body = JSON.parse(req.postData() || '{}')
+      if (body.target_id === 'invalid-track-reference') {
+        return json({ detail: 'Paste a valid Spotify track link or catalog id.' }, 422)
+      }
       const updated = {
         ...resolveCacheEntries.find((row) => row.key === body.key),
         target_id: body.target_id,
@@ -1517,6 +1520,16 @@ async function main() {
       // as hand-set.
       await page.getByRole('listitem').filter({ hasText: 'wide open road' })
         .getByRole('button', { name: 'Edit', exact: true }).click()
+      await page.getByLabel('Track link or id', { exact: true }).fill('invalid-track-reference')
+      await page.getByRole('button', { name: 'Save', exact: true }).click()
+      await page.getByRole('alert').filter({ hasText: 'Paste a valid Spotify track' }).waitFor()
+      const failedInput = page.getByLabel('Track link or id', { exact: true })
+      const rejectedOk = await failedInput.inputValue() === 'invalid-track-reference'
+        && await failedInput.getAttribute('aria-invalid') === 'true'
+        && await page.getByRole('button', { name: 'Cancel', exact: true }).isVisible()
+        && await page.getByText('set by hand', { exact: true }).count() === 1
+      console.log((rejectedOk ? 'ok        ' : 'FAIL      ') + ' invalid mapping shows an error, keeps the editor open, and preserves the previous match')
+      if (!rejectedOk) results.push({ label: 'invalid mapping rejection', overflow: true })
       await page.getByLabel('Track link or id', { exact: true }).fill('CORRECTEDID')
       await page.getByRole('button', { name: 'Save', exact: true }).click()
       await page.waitForSelector('text=CORRECTEDID', { timeout: 5000 })
@@ -2526,7 +2539,7 @@ async function main() {
       await page.waitForSelector('h1:has-text("Sync")')
       await page.waitForTimeout(200) // let accounts + syncs + sync status settle
 
-      const jobCount = await page.getByRole('heading', { level: 3 }).count()
+      const jobCount = await page.getByRole('heading', { level: 3, name: /^(Default|Workout)$/ }).count()
       console.log(`${jobCount === 2 ? 'ok        ' : 'FAIL      '} Sync list renders both fixture jobs (found ${jobCount})`)
       if (jobCount !== 2) results.push({ label: 'sync list count', overflow: true })
       const workoutBodyText = await page.locator('body').innerText()
@@ -5003,7 +5016,13 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err)
-  process.exitCode = 1
-})
+// Reuse the same public sample data for documentation captures without running
+// the full regression suite or connecting to a user's configured providers.
+module.exports = { ACCOUNTS, SHOWCASE_PLAYLISTS, installMocks, initialSyncs, syncStatusFixture }
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err)
+    process.exitCode = 1
+  })
+}

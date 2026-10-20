@@ -3,25 +3,30 @@ import { useState } from 'react'
 
 import { api, errorMessage } from '@/api'
 import { AccountCard } from '@/components/accounts/AccountCard'
+import { FeatureGuide } from '@/components/onboarding/FeatureGuide'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { SelectField } from '@/components/ui/SelectField'
+import { FilterSelect } from '@/components/ui/FilterSelect'
+import { ServiceLogo } from '@/components/ui/ServiceLogo'
+import type { ServiceId } from '@/components/ui/ServiceLogo'
 import { LoadingStatus, Skeleton } from '@/components/ui/Skeleton'
 import { TextField } from '@/components/ui/TextField'
 import { useAccounts } from '@/hooks/useAccounts'
+import { tagText } from '@/lib/constants'
 
 const PROVIDERS = [
   ['spotify', 'Spotify'], ['tidal', 'TIDAL'], ['qobuz', 'Qobuz'], ['deezer', 'Deezer'],
   ['amazon', 'Amazon Music'], ['apple', 'Apple Music'], ['ytmusic', 'YouTube Music'],
-  ['lastfm', 'Last.fm'], ['jellyfin', 'Jellyfin'],
+  ['lastfm', 'Last.fm'], ['listenbrainz', 'ListenBrainz'],
+  ['subsonic', 'Navidrome / Subsonic'], ['jellyfin', 'Jellyfin'],
 ] as const
 
 export default function Accounts() {
   useTranslation()
   const { accounts, loading, error, refresh } = useAccounts()
   const [adding, setAdding] = useState(false)
-  const [provider, setProvider] = useState('spotify')
+  const [provider, setProvider] = useState<ServiceId>('spotify')
   const [label, setLabel] = useState('')
   const [addError, setAddError] = useState<string | null>(null)
 
@@ -48,12 +53,20 @@ export default function Accounts() {
         </p>
       </div>
 
-      <Card className="grid grid-cols-1 items-end gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
-        <SelectField
-          label={t("Provider")}
+      <FeatureGuide page="accounts" />
+
+      <Card data-tour="account-add" className="grid grid-cols-1 items-end gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
+        <FilterSelect
+          variant="field"
+          ariaLabel={t("Provider")}
+          caption={t("Provider")}
           value={provider}
-          onChange={(event) => setProvider(event.target.value)}
-          options={PROVIDERS.map(([value, name]) => ({ value, label: name }))}
+          onChange={setProvider}
+          icon={<ServiceLogo service={provider} className={`size-4 ${tagText(provider)}`} />}
+          options={PROVIDERS.map(([value, name]) => ({
+            value, label: name,
+            leading: <ServiceLogo service={value} className={`size-4 ${tagText(value)}`} />,
+          }))}
         />
         <TextField
           label={t("New profile label")}

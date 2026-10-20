@@ -204,7 +204,7 @@ def test_browser_adds_tracks_one_at_a_time_in_order(monkeypatch):
     target._api = type("Api", (), {
         "add_playlist_items": lambda self, playlist_id, track_ids, duplicates: calls.append(
             (playlist_id, track_ids, duplicates)
-        ),
+        ) or {"status": "STATUS_SUCCEEDED"},
     })()
     monkeypatch.setattr(ytmusic, "polite_sleep", lambda _: None)
 

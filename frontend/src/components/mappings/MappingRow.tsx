@@ -1,5 +1,5 @@
 import { t, useTranslation } from '@/i18n'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { LuCircleHelp, LuExternalLink } from 'react-icons/lu'
 
 import { api, errorMessage } from '@/api'
@@ -28,8 +28,11 @@ export function MappingRow({ provider, entry, onChanged }: MappingRowProps) {
   const [draft, setDraft] = useState(entry.target_id)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const errorId = useId()
+  const visibleError = error || entry.validation_error
 
   async function run(action: () => Promise<unknown>) {
+    if (busy) return
     setBusy(true)
     setError(null)
     try {
@@ -44,7 +47,7 @@ export function MappingRow({ provider, entry, onChanged }: MappingRowProps) {
   }
 
   return (
-    <li className={cn('flex flex-col gap-3 p-4 sm:px-6', !entry.target_id && 'bg-surface-2')}>
+    <li data-tour="mapping-row" className={cn('flex flex-col gap-3 p-4 sm:px-6', !entry.target_id && 'bg-surface-2')}>
       <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-center">
         {/* Phone rows have three deliberate rails: identity, mapping state,
             and touch actions. Wider rows collapse those rails back together. */}
@@ -151,9 +154,12 @@ export function MappingRow({ provider, entry, onChanged }: MappingRowProps) {
               <TextField
                 label={t("Track link or id")}
                 value={draft}
+                disabled={busy}
+                aria-invalid={!!visibleError}
+                aria-describedby={visibleError ? errorId : undefined}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
+                  if (e.key === 'Enter' && !busy && draft.trim()) {
                     e.preventDefault()
                     void run(() => api.setResolveCacheEntry(provider, entry.key, draft))
                   }
@@ -174,7 +180,7 @@ export function MappingRow({ provider, entry, onChanged }: MappingRowProps) {
         </div>
       )}
 
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {visibleError && <p id={errorId} role="alert" className="text-sm text-danger">{visibleError}</p>}
     </li>
   )
 }

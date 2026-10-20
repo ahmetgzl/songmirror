@@ -18,6 +18,7 @@ import asyncio
 import os
 import time
 from dataclasses import asdict
+from contextlib import asynccontextmanager
 
 from ..engine import logs
 from ..engine.config import DEFAULT_INTERVAL, parse_args, parse_interval
@@ -149,10 +150,16 @@ class SyncService:
             if job.enabled:
                 await self.run_job(job.id, execute=execute)
 
+    @asynccontextmanager
+    async def engine_slot(self):
+        """Reserve the shared engine before setup, I/O or a running status."""
+        async with self._lock:
+            yield
+
     async def run_exclusive(self, fn):
         """Run a blocking engine op (a transfer) serialized with syncs — it queues
         behind any in-flight pass rather than overlapping it."""
-        async with self._lock:
+        async with self.engine_slot():
             return await asyncio.to_thread(fn)
 
     def pause(self, job_id):
