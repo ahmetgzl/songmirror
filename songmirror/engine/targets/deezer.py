@@ -601,9 +601,9 @@ class DeezerTarget(MirrorTarget):
                         f"Deezer refused removal of track {target_id} ({exc}); skipping",
                         tag=self.tag,
                     )
-                    return
+                    return False
                 polite_sleep(0.25)
-                return
+                return True
             try:
                 self._request("DELETE", f"playlist/{playlist['id']}/tracks", params={"songs": target_id})
             except (TargetAuthError, TargetTransientError):
@@ -613,8 +613,10 @@ class DeezerTarget(MirrorTarget):
                     f"Deezer refused removal of track {target_id} ({exc}); skipping",
                     tag=self.tag,
                 )
-                return
+                return False
             polite_sleep(0.25)
+            return True
+        return False
 
     def remove_occurrences(self, playlist, positioned):
         # Deezer deletes by catalog track id rather than entry id. Preserve any
@@ -631,10 +633,20 @@ class DeezerTarget(MirrorTarget):
         for tid, count in flagged.items():
             if not tid:
                 continue
-            self.remove(playlist, {"id": tid})
+            removed = self.remove(playlist, {"id": tid})
+            if removed is False:
+                continue
             keep = max(0, totals.get(tid, count) - count)
             if keep:
-                self.add(playlist, [tid] * keep)
+                try:
+                    self.add(playlist, [tid] * keep)
+                except (TargetAuthError, TargetTransientError):
+                    raise
+                except Exception as exc:
+                    log_warn(
+                        f"Deezer failed restoring {keep} keeper copy/copies for track {tid}: {exc}",
+                        tag=self.tag,
+                    )
 
     # Deezer has no positional insert, and its delete addresses the catalog
     # track id, so an ordered repair would have to delete every copy of a song
