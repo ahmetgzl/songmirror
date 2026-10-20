@@ -174,7 +174,7 @@ class LastfmTarget(MirrorTarget):
         primary = track.get("artist") or (artists[0] if artists else "")
         key = self.search_cache_key(name, artists or ([primary] if primary else []))
         if key in cache["search"]:
-            return cache["search"][key] or None, "search"
+            return self._cached_id(key, cache) or None, "search"
         if not (name and primary):
             return None, "search"
         with _translated():

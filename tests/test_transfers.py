@@ -1147,6 +1147,25 @@ def test_transfer_service_normalizes_manual_id_before_writing_cache(monkeypatch,
     assert "4160591112" in out["cache"]["search"].values()
 
 
+def test_restored_transfer_validates_before_saving_manual_choice(monkeypatch, tmp_path):
+    async def scenario():
+        _service(monkeypatch, tmp_path)
+        bus = EventBus()
+        bus.bind_loop(asyncio.get_running_loop())
+        svc = TransferService(SettingsStore(dir=tmp_path), bus, SyncService(SettingsStore(dir=tmp_path), bus))
+        job = svc.submit({"source_provider": "apple", "source_playlist_id": "p1",
+                          "dest_provider": "ytmusic", "dest_playlist_id": "p1"})
+        await _await_job(svc, job["id"])
+        job.pop("_dest_id_normalizer")  # Runtime callbacks are absent after restart.
+        key = job["conflicts"][0]["key"]
+        with pytest.raises(ValueError, match="YouTube Music track"):
+            svc.resolve(job["id"], key, "https://music.youtube.com/playlist?list=PLwrong")
+        assert not job["conflicts"][0]["resolved"]
+        assert svc.resolve(job["id"], key, "https://music.youtube.com/watch?v=c8i1Qpcnsa8&list=PLtest")
+        assert job["conflicts"][0]["dest_id"] == "c8i1Qpcnsa8"
+    asyncio.run(scenario())
+
+
 def test_apply_resolved_uses_saved_destination_without_reopening_source(monkeypatch, tmp_path):
     async def scenario():
         src, dst = _service(monkeypatch, tmp_path)

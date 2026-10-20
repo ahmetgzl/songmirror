@@ -853,12 +853,14 @@ class YTMusicTarget(MirrorTarget):
         return track.get("videoId")
 
     def resolve(self, track, cache):
+        if manual := self.manual_resolution(track, cache):
+            return manual
         primary = track["artists"][0] if track["artists"] else ""
         if not f"{track['name']} {primary}".strip():
             return None, None
         key = track_key(track["name"], " ".join(track["artists"]))
         if key in cache["search"]:
-            return cache["search"][key], "search"
+            return self._cached_id(key, cache), "search"
         best_id, method = self._search(track, primary)
         cache["search"][key] = best_id
         cache["dirty"] = True

@@ -20,7 +20,7 @@ from ..engine import archive, spotify, spotify_cookie
 from ..engine.config import parse_args, spotify_write_backend
 from ..engine.logs import Event, log_note, log_warn
 from ..engine.runner import load_cache, save_cache
-from ..engine.targets import build_one, is_peer, target_provider
+from ..engine.targets import build_one, is_peer, target_class, target_provider
 from ..engine.targets.base import TargetAuthError, TargetTransientError, _normalize
 from .import_matching import ImportMatcher
 from .import_models import (
@@ -641,6 +641,26 @@ class ImportService:
             raise ImportServiceError("import job not found")
         return self._job_from_row(row)
 
+    def _decision_track_id(self, job, decision, value):
+        if decision in {TrackDecision.skipped, TrackDecision.unmatched}:
+            return None
+        if decision == TrackDecision.auto and not value:
+            return None
+        if not value:
+            raise ImportServiceError("resolved_target_id is required for selected/approved decisions")
+        account = job["destination_account"]
+        provider = self._profiles.provider_of(account) if self._profiles else account
+        cls = target_class(provider)
+        if cls is None:
+            raise ImportServiceError("The destination provider is unavailable.")
+        try:
+            result = cls.normalize_manual_track_id(value)
+        except ValueError as exc:
+            raise ImportServiceError(str(exc)) from exc
+        if not result:
+            raise ImportServiceError("Paste a destination track link or id.")
+        return result
+
     async def update_track_decision(
         self,
         job_id: str,
@@ -663,9 +683,10 @@ class ImportService:
                 ImportStatus.creating.value,
             }:
                 raise ImportServiceError("cannot change decisions while matching or creating")
+            normalized_id = self._decision_track_id(job, decision, resolved_target_id)
             updates = {
                 "decision": decision.value,
-                "resolved_target_id": resolved_target_id,
+                "resolved_target_id": normalized_id,
             }
             if decision == TrackDecision.selected:
                 updates["resolved_method"] = "manual"
@@ -683,7 +704,7 @@ class ImportService:
                     self.archive.clear_import_candidates(conn, job_id, position)
                     for candidate in candidates:
                         candidate["selected"] = (
-                            str(candidate["target_id"]) == str(resolved_target_id)
+                            str(candidate["target_id"]) == str(normalized_id)
                         )
                     self.archive.add_import_candidates(conn, candidates)
             return track
@@ -715,23 +736,20 @@ class ImportService:
             }:
                 raise ImportServiceError("cannot change decisions while matching or creating")
 
+            # Validate the entire request before touching any row: archive helpers
+            # commit individual updates, so a late invalid paste must not leave
+            # earlier decisions saved.
+            normalized_ids = [
+                self._decision_track_id(job, item.decision, item.resolved_target_id)
+                for item in request.decisions
+            ]
             updated = 0
-            for item in request.decisions:
+            for item, normalized_id in zip(request.decisions, normalized_ids):
                 decision = item.decision
                 resolved_target_id = item.resolved_target_id
-                if decision in {
-                    TrackDecision.selected,
-                    TrackDecision.approved,
-                } and not resolved_target_id:
-                    raise ImportServiceError(
-                        "resolved_target_id is required for selected/approved decisions"
-                    )
-                if decision in {TrackDecision.skipped, TrackDecision.unmatched}:
-                    resolved_target_id = None
-
                 updates = {
                     "decision": decision.value,
-                    "resolved_target_id": resolved_target_id,
+                    "resolved_target_id": normalized_id,
                 }
                 if decision == TrackDecision.selected:
                     updates["resolved_method"] = "manual"
@@ -757,7 +775,7 @@ class ImportService:
                         )
                         for candidate in candidates:
                             candidate["selected"] = (
-                                str(candidate["target_id"]) == str(resolved_target_id)
+                                str(candidate["target_id"]) == str(normalized_id)
                             )
                         self.archive.add_import_candidates(conn, candidates)
                 updated += 1
@@ -1369,6 +1387,31 @@ class ImportService:
             raise RuntimeError("destination account is not connected")
 
         mode = job.get("destination_mode") or "create"
+        tracks = self._with_conn(
+            lambda conn: self.archive.get_import_tracks(conn, job_id, offset=0, limit=1_000_000)
+        )
+        # Revalidate legacy manual decisions before creating a playlist or writing
+        # anything to the provider. A failed parse remains editable in review.
+        for track in tracks:
+            value = track.get("resolved_target_id")
+            if (not value or self._write_done(track)
+                    or track.get("decision") in {"skipped", "unmatched"}):
+                continue
+            if track.get("resolved_method") == "manual" or ":" in str(value) or "/" in str(value):
+                try:
+                    normalized = dest.normalize_manual_track_id(value)
+                    if not normalized:
+                        raise ValueError("Paste a destination track link or id.")
+                except ValueError as exc:
+                    self._with_conn(lambda conn, row=track, message=str(exc): self.archive.update_import_track(
+                        conn, job_id, row["position"], {"write_status": "failed", "write_error": message},
+                    ))
+                    raise ImportServiceError(f"Track {track['position'] + 1}: {exc}") from exc
+                if normalized != value:
+                    track["resolved_target_id"] = normalized
+                    self._with_conn(lambda conn, row=track: self.archive.update_import_track(
+                        conn, job_id, row["position"], {"resolved_target_id": row["resolved_target_id"]},
+                    ))
         playlist_id = job.get("destination_playlist_id")
         # Store the playlist id early and reuse it on resume so a crash mid-write
         # never creates a second destination playlist.
@@ -1394,9 +1437,6 @@ class ImportService:
             )
 
         existing_ids = self._existing_playlist_ids(dest, playlist)
-        tracks = self._with_conn(
-            lambda conn: self.archive.get_import_tracks(conn, job_id, offset=0, limit=1_000_000)
-        )
         # Map each unique target id to every input position that resolved to it so
         # batch-internal duplicates only hit the provider once.
         pending_id_to_positions: dict[str, list[int]] = {}

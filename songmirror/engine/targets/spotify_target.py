@@ -227,21 +227,9 @@ class SpotifyTarget(MirrorTarget):
     def track_id(self, track):
         return track.get("id")
 
-    @classmethod
-    def normalize_manual_track_id(cls, value):
-        return spotify_track_id(value)
-
-    def _cached_id(self, key, cache):
-        cached = cache["search"][key]
-        if cached is None:
-            return None
-        normalized = self.normalize_manual_track_id(cached)
-        if normalized != cached:
-            cache["search"][key] = normalized
-            cache["dirty"] = True
-        return normalized
-
     def resolve(self, track, cache):
+        if manual := self.manual_resolution(track, cache):
+            return manual
         primary = track["artists"][0] if track["artists"] else ""
         if not f"{track['name']} {primary}".strip():
             return None, None

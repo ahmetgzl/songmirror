@@ -13,6 +13,7 @@ import time
 from collections import Counter
 
 from .. import archive
+from ..track_references import normalize_track_reference
 from ..logs import (
     fmt_counts, fmt_secs, log_add, log_hold, log_miss, log_note, log_protected,
     log_remove, log_repair, log_section, log_summary, log_warn, paint,
@@ -199,7 +200,30 @@ class MirrorTarget:
     @classmethod
     def normalize_manual_track_id(cls, value):
         """Provider catalog id represented by a manually pasted id or link."""
-        return "" if value is None else str(value).strip()
+        return normalize_track_reference(cls.provider or cls.source, value)
+
+    def _cached_id(self, key, cache):
+        value = cache["search"][key]
+        if value is None:
+            return None
+        # Validate every explicit choice. Older automatic caches may also contain
+        # pasted URLs, but ordinary machine-returned catalog ids need no parsing.
+        if key in cache.get("manual", ()) or ":" in str(value) or "/" in str(value):
+            normalized = self.normalize_manual_track_id(value)
+            if not normalized:
+                raise ValueError("The saved manual track reference is empty. Edit or delete the mapping.")
+            if normalized != value:
+                cache["search"][key] = normalized
+                cache["dirty"] = True
+            return normalized
+        return value
+
+    def manual_resolution(self, track, cache):
+        artists = track.get("artists") or ([track["artist"]] if track.get("artist") else [])
+        key = self.search_cache_key(track.get("name", ""), artists)
+        if key in cache.get("manual", ()) and cache.get("search", {}).get(key):
+            return self._cached_id(key, cache), "search"
+        return None
 
     @staticmethod
     def search_cache_key(name, artists):
@@ -810,7 +834,11 @@ def mirror_pair(target, sp_tracks, sp_playlist, tgt_playlist, cache, songs, *, e
             tid = links.get(track.get("id"))
             method = "link" if tid else None
         try:
-            if tid:
+            manual_resolver = getattr(target, "manual_resolution", None)
+            manual = manual_resolver(track, cache) if manual_resolver else None
+            if manual:
+                tid, method = manual
+            elif tid:
                 validator = getattr(target, "validate_link", None)
                 if validator:
                     tid, method = validator(track, tid, cache)

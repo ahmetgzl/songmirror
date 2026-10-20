@@ -16,7 +16,7 @@ from ..engine.config import parse_args, spotify_write_backend
 from ..engine.logs import log_add, log_miss, log_note, log_warn
 from ..engine.matching import spotify_track_keys, track_key, tracks_oldest_first
 from ..engine.runner import load_cache, save_cache
-from ..engine.targets import build_one, is_peer, target_provider
+from ..engine.targets import build_one, is_peer, target_class, target_provider
 from ..engine.targets.base import (
     MirrorTarget,
     TargetAuthError,
@@ -160,7 +160,8 @@ def transfer(source, dest, src_pl, dest_pl, cache, *, execute, max_adds, preserv
                         tid, _ = dest.resolve(norm, cache)
                 except TargetAuthError:
                     raise
-                except Exception:
+                except Exception as exc:
+                    log_warn(f"Could not resolve {norm['name']} - {norm['artist']}: {exc}", tag="transfer")
                     tid = None
             if tid:
                 already_present = str(tid) in destination_ids
@@ -557,6 +558,13 @@ class TransferService:
         if conflict is None:
             return False
         normalizer = job.get("_dest_id_normalizer")
+        if normalizer is None:
+            # Restored history has no Python callables. Validate it with the same
+            # destination class as a newly created transfer.
+            cls = target_class(job.get("dest", {}).get("provider"))
+            if cls is None:
+                raise ValueError("The destination provider is unavailable. Start a new transfer.")
+            normalizer = cls.normalize_manual_track_id
         if normalizer:
             dest_id = normalizer(dest_id)
         if not dest_id:

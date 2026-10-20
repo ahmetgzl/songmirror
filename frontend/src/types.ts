@@ -719,6 +719,7 @@ export interface ResolveCacheProvider {
 
 /** One cached `name|artist -> catalog id` mapping. */
 export interface ResolveCacheEntry {
+  validation_error?: string
   key: string
   name: string
   artist: string

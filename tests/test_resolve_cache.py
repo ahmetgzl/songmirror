@@ -385,6 +385,28 @@ def test_set_refuses_a_key_that_is_no_longer_cached(tmp_path, monkeypatch):
         store.set("deezer", "gone|missing", "98765")
 
 
+@pytest.mark.parametrize("provider", list(_CACHE_ENV))
+def test_invalid_manual_input_returns_422_and_preserves_previous_choice(tmp_path, monkeypatch, provider):
+    previous = {"spotify": "6pHtgTMzsmP6ccN2ocv7XN", "ytmusic": "c8i1Qpcnsa8",
+                "amazon": "B08G9TMYCZ", "lastfm": "Black\u241fAmar Prithibi"}.get(provider, "123456")
+    store, path = _store(tmp_path, monkeypatch, {"song|artist": previous}, manual=["song|artist"], provider=provider)
+    before = open(path, "rb").read()
+    app = create_app(settings=SettingsStore(dir=tmp_path), resolve_cache=store)
+    with TestClient(app) as client:
+        response = client.put(f"/api/resolve-cache/{provider}", json={"key": "song|artist", "target_id": "not a track"})
+    assert response.status_code == 422
+    assert "Paste" in response.json()["detail"]
+    assert open(path, "rb").read() == before
+
+
+def test_legacy_invalid_manual_reference_is_visible_with_no_broken_link(tmp_path, monkeypatch):
+    store, _path = _store(tmp_path, monkeypatch, {"song|artist": "https://music.youtube.com/playlist?list=PLtest"},
+                          provider="ytmusic", manual=["song|artist"])
+    row = store.entries("ytmusic")["entries"][0]
+    assert "YouTube Music track" in row["validation_error"]
+    assert row["url"] == ""
+
+
 def test_delete_forgets_the_mapping_and_its_provenance(tmp_path, monkeypatch):
     store, path = _store(tmp_path, monkeypatch, _ROWS, manual=["sunrise|beacon"])
     assert store.delete("deezer", "sunrise|beacon") == {"ok": True}
