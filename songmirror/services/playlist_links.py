@@ -171,6 +171,7 @@ _LABELS = {
     "jellyfin": "Jellyfin",
     "listenbrainz": "ListenBrainz",
     "subsonic": "Navidrome / Subsonic",
+    "lastfm": "Last.fm",
 }
 
 
@@ -204,4 +205,9 @@ def external_url(provider_id, kind, item_id):
 def track_url(provider_id, track_id):
     """Web link for a resolved catalog id, or "" when there is nothing to link to
     (an unmatched cache entry, or a service with no track pages)."""
+    if provider_id == "lastfm" and track_id:
+        artist, sep, title = str(track_id).partition("\u241f")
+        if sep and artist and title:
+            return f"https://www.last.fm/music/{quote(artist, safe='')}/_/{quote(title, safe='')}"
+        return ""
     return external_url(provider_id, "track", track_id) if track_id else ""

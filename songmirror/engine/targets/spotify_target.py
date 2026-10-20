@@ -16,6 +16,7 @@ from ..config import (
     DEFAULT_SPOTIFY_CACHE_FILE, polite_sleep, spotify_write_backend,
 )
 from ..matching import normalize_text, romanized, score_candidate, track_key
+from ..spotify_ids import track_id as spotify_track_id
 from .base import (
     MirrorTarget,
     TargetAuthError,
@@ -26,7 +27,7 @@ from .provider_utils import source_playlist_details
 
 
 def _uri(track_id):
-    return track_id if str(track_id).startswith("spotify:") else f"spotify:track:{track_id}"
+    return f"spotify:track:{spotify_track_id(track_id)}"
 
 
 class SpotifyTarget(MirrorTarget):
@@ -227,12 +228,14 @@ class SpotifyTarget(MirrorTarget):
         return track.get("id")
 
     def resolve(self, track, cache):
+        if manual := self.manual_resolution(track, cache):
+            return manual
         primary = track["artists"][0] if track["artists"] else ""
         if not f"{track['name']} {primary}".strip():
             return None, None
         key = track_key(track["name"], " ".join(track["artists"]))
         if key in cache["search"]:
-            return cache["search"][key], "search"
+            return self._cached_id(key, cache), "search"
         best, method = self._search(track, primary)
         cache["search"][key] = best
         cache["dirty"] = True

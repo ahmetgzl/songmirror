@@ -4,7 +4,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from songmirror.engine import archive, spotify
+from songmirror.engine import archive, spotify, spotify_cookie
+from songmirror.engine.matching import track_key
+from songmirror.engine.runner import load_cache, save_cache
 from songmirror.engine.targets import base
 from songmirror.engine.targets.spotify_target import SpotifyTarget
 
@@ -109,5 +111,71 @@ def test_spotify_target_sync_accepts_plural_artists(tmp_path, monkeypatch, execu
         history = archive.get_order_history(songs, "mix", "spotify")
         assert history[0][1] == [["spotify-existing", existing_name, ", ".join(artists)]]
         assert songs.execute("SELECT COUNT(*) FROM links").fetchone()[0] == 0
+    finally:
+        songs.close()
+
+
+@pytest.mark.parametrize("backend", ["cookie", "api"])
+@pytest.mark.parametrize("reference", [
+    "https://open.spotify.com/track/6pHtgTMzsmP6ccN2ocv7XN?si=shared",
+    "spotify:track:6pHtgTMzsmP6ccN2ocv7XN",
+])
+def test_saved_manual_spotify_reference_adds_once(tmp_path, monkeypatch, backend, reference):
+    """An old mapping must emit a track URI and diff against its id next pass."""
+    monkeypatch.setenv("SPOTIFY_WRITE_BACKEND", backend)
+    monkeypatch.setattr(spotify_cookie, "polite_sleep", lambda *_: None)
+    monkeypatch.setattr("songmirror.engine.targets.spotify_target.polite_sleep", lambda *_: None)
+    source = {
+        "id": "apple-source", "name": "Darlin' (Stereo Mix)",
+        "artists": ["The Beach Boys"], "duration_ms": 130_000,
+        "added_at": "2026-10-01T00:00:00Z",
+    }
+    key = track_key(source["name"], " ".join(source["artists"]))
+    path = str(tmp_path / "spotify-cache.json")
+    cache = load_cache(path)
+    cache["search"][key] = reference
+    cache["manual"].add(key)
+    cache["dirty"] = True
+    save_cache(path, cache)
+    landed, writes = [], []
+
+    def write(playlist_id, uris):
+        assert playlist_id == "destination"
+        assert uris == ["spotify:track:6pHtgTMzsmP6ccN2ocv7XN"]
+        writes.append(uris)
+        landed.append({
+            "id": "6pHtgTMzsmP6ccN2ocv7XN", "name": "Darlin' (Stereo Mix)",
+            "artists": ["The Beach Boys"], "duration_ms": 130_000,
+        })
+
+    def pathfinder(operation, variables):
+        assert operation == "addToPlaylist"
+        write(variables["playlistUri"].removeprefix("spotify:playlist:"),
+              variables["playlistItemUris"])
+        return {}
+
+    client = Mock()
+    client.playlist_add_items.side_effect = write
+    monkeypatch.setattr(spotify_cookie, "_pf", pathfinder)
+    target = SpotifyTarget(client, path)
+    monkeypatch.setattr(target, "playlist_tracks", lambda _: list(landed))
+    monkeypatch.setattr(target, "_search", lambda *_: pytest.fail("manual choice was searched again"))
+    songs = archive.connect(str(tmp_path / "songs.db"))
+    try:
+        stats = []
+        for _ in range(2):
+            cache = load_cache(path)
+            stats.append(base.mirror_pair(
+                target, [source], {"name": "Mix"}, {"id": "destination", "name": "Mix"},
+                cache, songs, execute=True, max_removals=25, max_adds=200,
+                source_key="apple", source_name="Apple Music",
+            ))
+            save_cache(path, cache)
+        assert [row["added"] for row in stats] == [1, 0]
+        assert [row["removed"] for row in stats] == [0, 0]
+        assert [row["missing"] for row in stats] == [0, 0]
+        assert len(writes) == 1
+        assert load_cache(path)["search"][key] == "6pHtgTMzsmP6ccN2ocv7XN"
+        assert load_cache(path)["manual"] == {key}
     finally:
         songs.close()

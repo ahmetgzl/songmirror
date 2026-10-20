@@ -778,6 +778,9 @@ async function installMocks(page, opts = {}) {
     }
     if (/^\/api\/resolve-cache\/[^/]+$/.test(p) && method === 'PUT') {
       const body = JSON.parse(req.postData() || '{}')
+      if (body.target_id === 'invalid-track-reference') {
+        return json({ detail: 'Paste a valid Spotify track link or catalog id.' }, 422)
+      }
       const updated = {
         ...resolveCacheEntries.find((row) => row.key === body.key),
         target_id: body.target_id,
@@ -1517,6 +1520,16 @@ async function main() {
       // as hand-set.
       await page.getByRole('listitem').filter({ hasText: 'wide open road' })
         .getByRole('button', { name: 'Edit', exact: true }).click()
+      await page.getByLabel('Track link or id', { exact: true }).fill('invalid-track-reference')
+      await page.getByRole('button', { name: 'Save', exact: true }).click()
+      await page.getByRole('alert').filter({ hasText: 'Paste a valid Spotify track' }).waitFor()
+      const failedInput = page.getByLabel('Track link or id', { exact: true })
+      const rejectedOk = await failedInput.inputValue() === 'invalid-track-reference'
+        && await failedInput.getAttribute('aria-invalid') === 'true'
+        && await page.getByRole('button', { name: 'Cancel', exact: true }).isVisible()
+        && await page.getByText('set by hand', { exact: true }).count() === 1
+      console.log((rejectedOk ? 'ok        ' : 'FAIL      ') + ' invalid mapping shows an error, keeps the editor open, and preserves the previous match')
+      if (!rejectedOk) results.push({ label: 'invalid mapping rejection', overflow: true })
       await page.getByLabel('Track link or id', { exact: true }).fill('CORRECTEDID')
       await page.getByRole('button', { name: 'Save', exact: true }).click()
       await page.waitForSelector('text=CORRECTEDID', { timeout: 5000 })

@@ -173,12 +173,29 @@ class ImportMatcher:
         """Match a single imported track against the target catalog.
 
         Matching hierarchy:
-        1. Same-provider hard ID (when source and destination providers match)
-        2. ISRC lookup
-        3. Existing resolve-cache hit
-        4. Title/artist search with scoring
+        1. Explicit manual mapping
+        2. Same-provider hard ID (when source and destination providers match)
+        3. ISRC lookup
+        4. Existing automatic resolve-cache hit
+        5. Title/artist search with scoring
         """
         source = _as_source_track(track)
+        cache_key = self._cache_key(source)
+        cached_id = (self.cache.get("search") or {}).get(cache_key)
+        is_manual = cache_key in (self.cache.get("manual") or set())
+        if cached_id and is_manual:
+            target_id = self.target.normalize_manual_track_id(cached_id)
+            if not target_id:
+                raise ValueError("The saved manual track reference is empty. Edit or delete the mapping.")
+            if target_id != cached_id:
+                self.cache["search"][cache_key] = target_id
+                self.cache["dirty"] = True
+            validated = self._validate_target_id(target_id)
+            candidate = self._to_candidate(
+                validated if validated is not None else self._display_stub(target_id, source),
+                score=0.95, reason="manual_mapping", acceptable=True,
+            )
+            return MatchResult(status="exact", best=candidate, candidates=[candidate], confidence=0.95)
 
         if (
             self.source_provider
@@ -219,27 +236,9 @@ class ImportMatcher:
 
         cache_conflict: Optional[MatchCandidate] = None
         cache_hint: Optional[MatchCandidate] = None
-        cache_key = self._cache_key(source)
-        cached_id = (self.cache.get("search") or {}).get(cache_key)
         if cached_id:
             target_id = str(cached_id)
-            is_manual = cache_key in (self.cache.get("manual") or set())
             validated = self._validate_target_id(target_id)
-            if is_manual:
-                # Explicit user choice. Fetch is display-only; never fabricate
-                # compatibility evidence from the source track.
-                candidate = self._to_candidate(
-                    validated if validated is not None else self._display_stub(target_id, source),
-                    score=0.95,
-                    reason="manual_mapping",
-                    acceptable=True,
-                )
-                return MatchResult(
-                    status="exact",
-                    best=candidate,
-                    candidates=[candidate],
-                    confidence=0.95,
-                )
             if validated is not None:
                 if recording_metadata_compatible(source, _compat_view(validated)):
                     candidate = self._to_candidate(

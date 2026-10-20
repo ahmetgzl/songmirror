@@ -18,6 +18,7 @@ from songmirror.services.import_models import (
     ImportStatus,
     TrackDecision,
     TrackDecisionItem,
+    UpdateTrackDecisionRequest,
 )
 from songmirror.services.imports import ImportService, ImportServiceError
 from songmirror.services.playlist_links import PlaylistLinkError, parse_playlist_link
@@ -483,7 +484,7 @@ def test_bulk_update_track_decisions(tmp_path):
                     TrackDecisionItem(
                         position=0,
                         decision=TrackDecision.approved,
-                        resolved_target_id="t1",
+                        resolved_target_id="6pHtgTMzsmP6ccN2ocv7XN",
                     ),
                     TrackDecisionItem(
                         position=1,
@@ -497,7 +498,7 @@ def test_bulk_update_track_decisions(tmp_path):
 
     saved = asyncio.run(service.get_job(job.id))
     assert saved.tracks[0].decision == TrackDecision.approved
-    assert saved.tracks[0].resolved_target_id == "t1"
+    assert saved.tracks[0].resolved_target_id == "6pHtgTMzsmP6ccN2ocv7XN"
     assert saved.tracks[1].decision == TrackDecision.skipped
     assert saved.tracks[1].resolved_target_id is None
 
@@ -508,6 +509,48 @@ def test_resume_ready_job_is_noop(tmp_path):
     resumed = asyncio.run(service.resume(job.id))
     assert resumed.status == ImportStatus.ready
     assert resumed.id == job.id
+
+
+def test_manual_import_decision_parses_before_saving_and_preserves_on_error(tmp_path):
+    service = _service(tmp_path)
+    job = _seed_ready_job(service)
+    request = UpdateTrackDecisionRequest(decision=TrackDecision.selected,
+        resolved_target_id="https://open.spotify.com/track/6pHtgTMzsmP6ccN2ocv7XN")
+    saved = asyncio.run(service.update_track_decision(job.id, 0, request))
+    assert saved.resolved_target_id == "6pHtgTMzsmP6ccN2ocv7XN"
+    with pytest.raises(ImportServiceError, match="Spotify track"):
+        asyncio.run(service.update_track_decision(job.id, 0, UpdateTrackDecisionRequest(
+            decision=TrackDecision.selected, resolved_target_id="https://open.spotify.com/album/123")))
+    current = asyncio.run(service.get_job(job.id))
+    assert current.tracks[0].resolved_target_id == saved.resolved_target_id
+
+
+def test_bulk_import_decisions_validate_all_inputs_before_saving(tmp_path):
+    service = _service(tmp_path)
+    job = _seed_ready_job(service)
+    before = asyncio.run(service.get_job(job.id)).tracks
+    with pytest.raises(ImportServiceError):
+        asyncio.run(service.bulk_update_track_decisions(job.id, BulkDecisionRequest(decisions=[
+            TrackDecisionItem(position=0, decision=TrackDecision.selected, resolved_target_id="6pHtgTMzsmP6ccN2ocv7XN"),
+            TrackDecisionItem(position=1, decision=TrackDecision.selected, resolved_target_id="not a track"),
+        ])))
+    after = asyncio.run(service.get_job(job.id)).tracks
+    assert [t.model_dump() for t in after] == [t.model_dump() for t in before]
+
+
+def test_legacy_invalid_import_decision_fails_before_creating_playlist(tmp_path):
+    dest = FakeDest()
+    service = _service(tmp_path, targets={"spotify": dest})
+    job = _seed_ready_job(service, tracks=[
+        {"resolved_target_id": "https://open.spotify.com/album/123", "decision": "selected", "resolved_method": "manual"},
+        {"decision": "skipped"},
+    ])
+    asyncio.run(_run_and_wait(service, service.create_playlist(job.id)))
+    saved = asyncio.run(service.get_job(job.id))
+    assert saved.job.status == ImportStatus.failed
+    assert "Spotify track" in saved.tracks[0].write_error
+    assert dest.created == []
+    assert dest.added == []
 
 
 def test_resume_failed_orphaned_job_can_restart_matching(tmp_path):
