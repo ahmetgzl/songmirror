@@ -22,6 +22,13 @@ from songmirror.services.transfers import transfer
 from songmirror.web import create_app
 
 
+@pytest.fixture(autouse=True)
+def isolated_listenbrainz_request_budget(monkeypatch):
+    # These protocol fixtures do not contact the API. Transport timing has its
+    # own fake-clock regressions, so other provider fixtures need no real waits.
+    monkeypatch.setattr(listenbrainz, "_REQUESTS", listenbrainz._RequestGate(sleep=lambda _: None))
+
+
 def response(body, status=200):
     return SimpleNamespace(status_code=status, ok=200 <= status < 300, json=lambda: body)
 
@@ -39,7 +46,6 @@ def test_listenbrainz_reads_all_pages_and_preserves_unresolved_identifiers(monke
                                                     track_metadata=None)], "offset": 0, "total_count": 3}),
         response({"feedback": [feedback("last")], "offset": 2, "total_count": 3}),
     ]
-    monkeypatch.setattr(listenbrainz, "polite_sleep", lambda *_: None)
     rows = listenbrainz.ListenBrainz(user="a user", session=session).loved_tracks()
     assert [row["id"] for row in rows] == ["mbid:recording", "msid:msid", "mbid:last"]
     assert rows[0]["added_at"] == "2023-11-14T22:13:20+00:00"

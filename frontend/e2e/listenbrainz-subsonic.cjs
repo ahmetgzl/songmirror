@@ -175,6 +175,65 @@ async function main() {
     assert.deepEqual(saved[0].liked_routes, { local: { kind: 'native' } })
     assert.deepEqual(errors, [])
     console.log('PASS: ListenBrainz source selects loves automatically and saves a native Subsonic route on mobile')
+
+    for (const cached of [true, false]) {
+      const context = await browser.newContext()
+      if (cached) {
+        await context.addInitScript(rows => localStorage.setItem('songmirror-cache-v2:accounts', JSON.stringify({
+          version: 2, savedAt: Date.now(), data: rows,
+        })), accounts)
+      }
+      const probe = await context.newPage()
+      probe.on('pageerror', error => errors.push(error.message))
+      let releaseAccounts
+      const gate = new Promise(resolve => { releaseAccounts = resolve })
+      let submitted
+      await probe.route('**/api/**', async route => {
+        const request = route.request(), url = new URL(request.url())
+        const send = body => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
+        if (url.pathname === '/api/accounts') {
+          await gate
+          return send(accounts.map(account => ({ ...account, detail: 'Rechecked connection' })))
+        }
+        if (url.pathname === '/api/syncs' && request.method() === 'POST') {
+          submitted = request.postDataJSON()
+          return send({ id: 'delayed-accounts', ...submitted })
+        }
+        if (url.pathname === '/api/sync/status') return send({ jobs: [], running: false })
+        if (['/api/syncs', '/api/links', '/api/playlist-backups'].includes(url.pathname)
+          || url.pathname.startsWith('/api/playlists')) return send([])
+        return send({})
+      })
+      await probe.route('**/events*', route => route.fulfill({ contentType: 'text/event-stream', body: '' }))
+      try {
+        await probe.goto(base + '/sync')
+        await probe.getByRole('button', { name: 'New sync', exact: true }).first().click()
+        const draft = probe.getByRole('dialog')
+        await draft.getByLabel('Name', { exact: false }).fill('Keep this draft')
+        await draft.getByRole('radio', { name: 'Schedule', exact: true }).click()
+        await draft.getByRole('switch', { name: 'Active', exact: false }).click()
+        releaseAccounts()
+        await probe.waitForFunction(() => JSON.parse(localStorage.getItem('songmirror-cache-v2:accounts'))?.data[0].detail === 'Rechecked connection')
+        await probe.evaluate(() => new Promise(requestAnimationFrame))
+        assert.equal(await draft.getByLabel('Name', { exact: false }).inputValue(), 'Keep this draft')
+        assert.equal(await draft.getByRole('radio', { name: 'Schedule', exact: true }).isChecked(), true)
+        assert.equal(await draft.getByRole('switch', { name: 'Active', exact: false }).isChecked(), false)
+        await draft.getByRole('radio', { name: 'Direction', exact: true }).click()
+        await draft.getByRole('radio', { name: 'ListenBrainz', exact: true }).click()
+        await draft.getByRole('radio', { name: 'Playlists', exact: true }).click()
+        await draft.getByRole('button', { name: 'Create sync', exact: true }).click()
+        await draft.waitFor({ state: 'hidden' })
+        assert.equal(submitted.name, 'Keep this draft')
+        assert.equal(submitted.enabled, false)
+        assert.equal(submitted.source, 'loves')
+        assert.deepEqual(submitted.liked_routes, { local: { kind: 'native' } })
+        console.log(`PASS: ${cached ? 'cached account refresh' : 'initial account load'} preserves the sync draft, step and schedule`)
+      } finally {
+        releaseAccounts()
+        await context.close()
+      }
+    }
+    assert.deepEqual(errors, [])
   } finally {
     await page.close()
     await browser.close()

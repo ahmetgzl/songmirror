@@ -1,5 +1,5 @@
 import { t, Trans, useTranslation } from '@/i18n'
-import { Fragment, useLayoutEffect, useState } from 'react'
+import { Fragment, useLayoutEffect, useRef, useState } from 'react'
 import { LuArrowLeft, LuArrowRight, LuCheck, LuInfo } from 'react-icons/lu'
 
 import { api, errorMessage } from '@/api'
@@ -351,20 +351,41 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
   const [visited, setVisited] = useState<Set<number>>(() => new Set([0]))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const session = useRef<{ jobId: string | null; accountsLoaded: boolean } | null>(null)
 
   // Fresh state every time the wizard (re)opens, so a previous attempt (or a
   // different job) never leaks into a new session. Layout effect: it must
   // apply BEFORE paint, or editing an N-way job flashes one frame of the
   // one-way defaults (Source-of-truth picker included).
   useLayoutEffect(() => {
-    if (!open) return
+    if (!open) {
+      session.current = null
+      return
+    }
+    const jobId = job?.id ?? null
+    const connected = syncCandidates(accounts).filter(canSyncAccount)
+    const providerIds = connected.map((account) => account.id).join(',')
+    const defaultSource = connected.find((account) => account.provider === 'spotify')?.id ?? connected[0]?.id
+    if (session.current?.jobId === jobId) {
+      // An initially uncached account list may arrive after typing begins.
+      // Seed its defaults once without replacing the draft or current step.
+      if (!job && !session.current.accountsLoaded && accounts.length > 0) {
+        session.current.accountsLoaded = true
+        setForm((previous) => ({
+          ...previous,
+          providers: providerIds,
+          source: defaultSource ?? previous.source,
+        }))
+      }
+      return
+    }
+    session.current = { jobId, accountsLoaded: accounts.length > 0 }
     const initial = formFromJob(job)
     if (!job) {
       // Snapshot the connected peers now. Persisting an empty sentinel would
       // make this job silently gain every provider connected in the future.
-      const connected = syncCandidates(accounts).filter(canSyncAccount)
-      initial.providers = connected.map((account) => account.id).join(',')
-      initial.source = connected.find((account) => account.provider === 'spotify')?.id ?? connected[0]?.id ?? initial.source
+      initial.providers = providerIds
+      initial.source = defaultSource ?? initial.source
     }
     setForm(initial)
     setStep(0)

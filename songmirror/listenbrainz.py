@@ -1,14 +1,73 @@
 """Public ListenBrainz loved recordings, including every feedback page."""
 
+import math
+import threading
+import time
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 
 import requests
 
-from .engine.config import REQUEST_TIMEOUT, polite_sleep, required_env
+from .engine.config import REQUEST_TIMEOUT, required_env
 
 API = "https://api.listenbrainz.org"
 PAGE_SIZE = 100
+USER_AGENT = "SongMirror/0.1.0 (https://github.com/ahnafnafee/songmirror/issues)"
+
+
+def _retry_delay(headers):
+    delays = []
+    for key in ("Retry-After", "X-RateLimit-Reset-In"):
+        value = headers.get(key)
+        try:
+            delay = float(value)
+        except (TypeError, ValueError):
+            try:
+                delay = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
+            except (TypeError, ValueError, OverflowError):
+                continue
+        if math.isfinite(delay) and delay > 0:
+            delays.append(delay)
+    return max(delays, default=30)
+
+
+class _RequestGate:
+    """Share the API's one-request-per-second budget across account profiles."""
+
+    def __init__(self, *, clock=None, sleep=None):
+        self._clock = clock or time.monotonic
+        self._sleep = sleep or time.sleep
+        self._lock = threading.Lock()
+        self._next = self._retry_at = 0
+
+    def get(self, session, url, **kwargs):
+        from .engine.targets.base import TargetTransientError
+
+        with self._lock:
+            now = self._clock()
+            if self._retry_at > now:
+                delay = math.ceil(self._retry_at - now)
+                raise TargetTransientError(
+                    f"ListenBrainz rate limit reached; retry in {delay} seconds.", retry_after=delay,
+                )
+            if self._next > now:
+                self._sleep(self._next - now)
+            self._next = self._clock() + 1
+            response = session.get(url, **kwargs)
+            headers = getattr(response, "headers", {})
+            if response.status_code == 429 or str(headers.get("X-RateLimit-Remaining")) == "0":
+                delay = _retry_delay(headers)
+                self._retry_at = self._clock() + delay
+                if response.status_code == 429:
+                    raise TargetTransientError(
+                        f"ListenBrainz rate limit reached; retry in {math.ceil(delay)} seconds.",
+                        retry_after=delay,
+                    )
+            return response
+
+
+_REQUESTS = _RequestGate()
 
 
 class ListenBrainz:
@@ -20,10 +79,11 @@ class ListenBrainz:
         from .engine.targets.base import TargetTransientError
 
         try:
-            response = self._session.get(
+            response = _REQUESTS.get(
+                self._session,
                 f"{API}/1/feedback/user/{quote(self.user, safe='')}/get-feedback",
                 params={"score": 1, "metadata": "true", "offset": offset, "count": count},
-                headers={"User-Agent": "SongMirror"}, timeout=REQUEST_TIMEOUT,
+                headers={"User-Agent": USER_AGENT, "Accept": "application/json"}, timeout=REQUEST_TIMEOUT,
             )
         except requests.RequestException as exc:
             raise TargetTransientError("Could not reach ListenBrainz; retry later.") from exc
@@ -33,6 +93,11 @@ class ListenBrainz:
             raise RuntimeError("ListenBrainz profile was not found. Check the username.")
         if not response.ok:
             raise RuntimeError(f"ListenBrainz returned HTTP {response.status_code}.")
+        content_type = getattr(response, "headers", {}).get("Content-Type", "")
+        if "text/html" in content_type.lower():
+            raise TargetTransientError(
+                "ListenBrainz returned a web page instead of recording data. Try again later."
+            )
         try:
             body = response.json()
             if not isinstance(body, dict) or not isinstance(body.get("feedback"), list):
@@ -67,7 +132,6 @@ class ListenBrainz:
             offset += len(rows)
             if offset >= total:
                 return tracks
-            polite_sleep(0.25)
 
 
 def _track(row):

@@ -10,6 +10,8 @@ The reader requests every page of positive feedback with metadata. A MusicBrainz
 
 For environment-managed connections, set `LISTENBRAINZ_USER`. Additional accounts created in the UI keep their usernames and cache paths in separate profiles.
 
+Requests identify SongMirror with its version and project contact URL. Connection checks and pagination share a one-request-per-second budget across profiles and honor the API's rate-limit reset headers. A rate limit or a browser-verification page stops the read with a retryable error instead of treating it as an empty collection.
+
 ## Navidrome and Subsonic-compatible servers
 
 In **Accounts**, connect **Navidrome / Subsonic** with the server's base URL, username, and password. Include any reverse-proxy prefix, such as `https://music.example/navidrome`. A trailing `/rest` is also accepted. Docker must be able to reach that address; `localhost` inside the container refers to the container itself.
