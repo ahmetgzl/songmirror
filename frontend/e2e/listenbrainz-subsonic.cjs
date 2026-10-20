@@ -89,8 +89,11 @@ async function main() {
     for (const key of 'lis') await menu.press(key)
     await menu.press('Enter')
     assert.ok((await picker.innerText()).includes('ListenBrainz'))
-    assert.equal(await picker.locator('svg').count(), 2, 'Selected provider mark and dropdown chevron stay visible')
+    assert.equal(await picker.locator('img').count(), 1, 'Selected ListenBrainz uses its official artwork')
+    assert.equal(await picker.locator('svg').count(), 1, 'The dropdown chevron stays visible')
     await picker.click()
+    assert.equal(await page.getByRole('option', { name: 'Navidrome / Subsonic', exact: true }).locator('img').count(), 1,
+      'Navidrome uses its official artwork instead of a generic server symbol')
     await page.getByRole('listbox', { name: 'Provider', exact: true }).press('Escape')
     assert.equal(await picker.getAttribute('aria-expanded'), 'false')
     const screenshotDir = process.env.SONGMIRROR_E2E_SCREENSHOTS

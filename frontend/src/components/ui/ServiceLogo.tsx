@@ -1,7 +1,8 @@
 import { SiApplemusic, SiDeezer, SiJellyfin, SiSpotify, SiTidal, SiYoutubemusic } from 'react-icons/si'
-import { LuRadio, LuServer } from 'react-icons/lu'
 
 import lastfmLogo from '@/assets/providers/lastfm.png'
+import listenbrainzLogo from '@/assets/providers/listenbrainz.svg'
+import navidromeLogo from '@/assets/providers/navidrome.svg'
 import qobuzLogo from '@/assets/providers/qobuz.svg'
 
 const AMAZON_MUSIC_MARK = 'https://m.media-amazon.com/images/G/01/music/logo/1.0/smile_256x256.png'
@@ -13,8 +14,8 @@ interface ServiceLogoProps {
   className?: string
 }
 
-/** Simple Icon marks inherit the provider color; Qobuz, Amazon Music and
- * Last.fm use first-party artwork instead. Qobuz and Amazon have no Simple
+/** Simple Icon marks inherit the provider color; the other providers use
+ * first-party artwork with its original colors. Qobuz and Amazon have no Simple
  * Icon; Last.fm has one, but it is the bare monochrome 'as' monogram, which
  * reads as a generic pink glyph next to Apple Music, so the official red app
  * icon is vendored instead.
@@ -48,8 +49,8 @@ export function ServiceLogo({ service, className }: ServiceLogoProps) {
     case 'jellyfin':
       return <SiJellyfin className={className} aria-hidden="true" />
     case 'listenbrainz':
-      return <LuRadio className={className} aria-hidden="true" />
+      return <img src={listenbrainzLogo} alt="" className={`${className ?? ''} object-contain`} draggable={false} />
     case 'subsonic':
-      return <LuServer className={className} aria-hidden="true" />
+      return <img src={navidromeLogo} alt="" className={`${className ?? ''} object-contain`} draggable={false} />
   }
 }
