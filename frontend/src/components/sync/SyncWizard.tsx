@@ -179,6 +179,7 @@ function ProviderChip({
 }) {
   useTranslation()
   const connected = canParticipateInSync(account)
+  const sourceOnly = connected && !canSyncAccount(account) && !canReceiveLikedTracks(account)
   // Connected, but playlist writes are unsupported. Last.fm can still be a
   // source and receive loves, so it stays togglable —
   // the annotation is what stops the chip reading as a playlist destination.
@@ -189,8 +190,8 @@ function ProviderChip({
   return (
     <button
       type="button"
-      onClick={connected && !locked ? onToggle : undefined}
-      disabled={!connected || locked}
+      onClick={connected && !locked && !sourceOnly ? onToggle : undefined}
+      disabled={!connected || locked || sourceOnly}
       aria-pressed={connected ? checked : undefined}
       title={
         !connected
@@ -225,7 +226,7 @@ function ProviderChip({
           {{ source: t('source'), order: t('order'), authority: t('authority'), mirror: t('mirror') }[role]}
         </span>
       )}
-      {playlistless && <span className="font-normal text-text-3">{t("no playlists")}</span>}
+      {playlistless && <span className="font-normal text-text-3">{sourceOnly ? t("Read-only") : t("no playlists")}</span>}
       {!connected && <span className="font-normal text-text-3">{unavailableLabel}</span>}
     </button>
   )
@@ -454,15 +455,20 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
 
   function selectOrderAuthority(id: string) {
     setForm((prev) => {
-      const providers = new Set(parseCsv(prev.providers))
+      const providers = new Set(parseCsv(prev.providers).filter((providerId) =>
+        providerId === id || accounts.some((account) => account.id === providerId &&
+          (canSyncAccount(account) || canReceiveLikedTracks(account)))))
       providers.add(id)
       if (prev.mode !== 'group') {
         const providerCsv = csvInPeerOrder(providers)
+        const lovedOnly = accounts.find((account) => account.id === id)?.provider === 'listenbrainz'
+        const likedTracks = lovedOnly || prev.liked_tracks
         return {
           ...prev,
           source: id,
           providers: providerCsv,
-          liked_routes: prev.liked_tracks
+          ...(lovedOnly ? { sync_playlists: false, playlists: '', liked_tracks: true } : {}),
+          liked_routes: likedTracks
             ? normalizedLikedRoutes(prev.liked_routes, parseCsv(providerCsv), id, receivesLikes)
             : prev.liked_routes,
         }
@@ -531,7 +537,7 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
   function setLikedTracks(selected: boolean) {
     setForm((prev) => {
       if (!selected) {
-        return { ...prev, sync_playlists: true, liked_tracks: false, liked_routes: {} }
+        return { ...prev, sync_playlists: sourceAccount?.provider !== 'listenbrainz', liked_tracks: false, liked_routes: {} }
       }
       const source = playlistPickerProviderId || prev.source
       const providers = new Set(parseCsv(prev.providers))
@@ -804,7 +810,7 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
                       </p>
                     </div>
                     <div role="radiogroup" aria-label={t("Order authority")} className="flex flex-wrap gap-2">
-                      {syncPeers.map((account) => (
+                      {syncPeers.filter(canSyncAccount).map((account) => (
                         <SourceChip
                           key={account.id}
                           account={account}
@@ -912,6 +918,7 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
                 onChange={setPlaylistFilter}
                 preferredProviderId={playlistPickerProviderId}
                 includeLikedTracks
+                onlyLikedTracks={sourceAccount?.provider === 'listenbrainz'}
                 likedTracksSelected={form.liked_tracks}
                 syncAllRegularPlaylists={form.sync_playlists}
                 onLikedTracksChange={setLikedTracks}
@@ -919,7 +926,7 @@ export function SyncWizard({ open, onClose, job, accounts, onSaved }: Props) {
 
               {form.liked_tracks && (
                 <section className="flex flex-col gap-3.5 border-t border-border pt-3.5">
-                  {form.playlists.trim().length === 0 && (
+                  {form.playlists.trim().length === 0 && sourceAccount?.provider !== 'listenbrainz' && (
                     <Toggle
                       checked={form.sync_playlists}
                       onChange={(selected) => setField('sync_playlists', selected)}

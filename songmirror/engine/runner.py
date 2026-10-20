@@ -283,7 +283,8 @@ def _run_merge(opts, sp, should_continue=None):
         else:
             aggregate["sources_read"] += 1
         snapshots.append(AggregateSourceSnapshot(
-            provider=target_provider(source, source.source),
+            provider=(target_provider(source, source.source)
+                      if getattr(source, "catalog_ids_global", True) else source.source),
             playlist_id=str(descriptor.get("playlist_id") or ""),
             tracks=valid_rows,
             track_id_of=source.track_id,

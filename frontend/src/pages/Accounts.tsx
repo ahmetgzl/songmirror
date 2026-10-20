@@ -15,7 +15,8 @@ import { useAccounts } from '@/hooks/useAccounts'
 const PROVIDERS = [
   ['spotify', 'Spotify'], ['tidal', 'TIDAL'], ['qobuz', 'Qobuz'], ['deezer', 'Deezer'],
   ['amazon', 'Amazon Music'], ['apple', 'Apple Music'], ['ytmusic', 'YouTube Music'],
-  ['lastfm', 'Last.fm'], ['jellyfin', 'Jellyfin'],
+  ['lastfm', 'Last.fm'], ['listenbrainz', 'ListenBrainz'],
+  ['subsonic', 'Navidrome / Subsonic'], ['jellyfin', 'Jellyfin'],
 ] as const
 
 export default function Accounts() {

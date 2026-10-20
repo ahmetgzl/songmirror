@@ -73,6 +73,8 @@ PROVIDER_KEYS = {
         "LASTFM_AUTH_PENDING",
     },
     "jellyfin": {"JELLYFIN_URL", "JELLYFIN_API_KEY", "JELLYFIN_USER_ID"},
+    "listenbrainz": {"LISTENBRAINZ_USER", "LISTENBRAINZ_CACHE_FILE"},
+    "subsonic": {"SUBSONIC_URL", "SUBSONIC_USER", "SUBSONIC_PASSWORD", "SUBSONIC_CACHE_FILE"},
 }
 
 _FILE_DEFAULTS = {
@@ -104,6 +106,8 @@ _FILE_DEFAULTS = {
         "YTMUSIC_CACHE_FILE": "ytmusic_resolve_cache.json",
     },
     "lastfm": {"LASTFM_CACHE_FILE": "lastfm_resolve_cache.json"},
+    "listenbrainz": {"LISTENBRAINZ_CACHE_FILE": "listenbrainz_resolve_cache.json"},
+    "subsonic": {"SUBSONIC_CACHE_FILE": "subsonic_resolve_cache.json"},
 }
 
 _ACTIVE_SPOTIFY_PROFILE: str | None = None
@@ -506,5 +510,6 @@ class AccountProfileStore:
             "spotify": "Spotify", "tidal": "TIDAL", "qobuz": "Qobuz",
             "deezer": "Deezer", "amazon": "Amazon Music", "apple": "Apple Music",
             "ytmusic": "YouTube Music", "lastfm": "Last.fm",
+            "listenbrainz": "ListenBrainz", "subsonic": "Navidrome / Subsonic",
             "jellyfin": "Jellyfin",
         }.get(provider, provider)

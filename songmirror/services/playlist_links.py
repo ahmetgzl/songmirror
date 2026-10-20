@@ -169,6 +169,8 @@ _LABELS = {
     "qobuz": "Qobuz",
     "amazon": "Amazon Music",
     "jellyfin": "Jellyfin",
+    "listenbrainz": "ListenBrainz",
+    "subsonic": "Navidrome / Subsonic",
 }
 
 

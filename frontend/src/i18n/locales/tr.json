@@ -1277,5 +1277,13 @@
   "View transfer": "Aktarımı görüntüle",
   "Refresh {{label}}": "{{label}} yenile",
   "Showing saved playlists while updating…": "Güncellenirken kayıtlı çalma listeleri gösteriliyor…",
-  "Waiting for another sync or transfer to finish. This copy will start automatically.": "Başka bir eşitlemenin veya aktarımın bitmesi bekleniyor. Bu kopyalama otomatik olarak başlayacak."
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "Başka bir eşitlemenin veya aktarımın bitmesi bekleniyor. Bu kopyalama otomatik olarak başlayacak.",
+  "Choose ListenBrainz as the source and enable liked tracks. No token is needed.": "Kaynak olarak ListenBrainz’i seçin ve beğenilen parçaları etkinleştirin. Token gerekmez.",
+  "Enter the server URL and your Subsonic username and password. In Docker, use a server address the container can reach.": "Sunucu URL’sini, Subsonic kullanıcı adınızı ve parolanızı girin. Docker’da konteynerin erişebildiği bir sunucu adresi kullanın.",
+  "Loved Recordings": "Sevilen Kayıtlar",
+  "Password": "Parola",
+  "Read-only": "Salt okunur",
+  "Reads public loved recordings by username.": "Kullanıcı adıyla herkese açık sevilen kayıtları okur.",
+  "Starred Songs": "Yıldızlı Şarkılar",
+  "Syncs playlists and starred songs already stored on your music server.": "Müzik sunucunuzda zaten bulunan çalma listelerini ve yıldızlı şarkıları senkronize eder."
 }

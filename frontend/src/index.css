@@ -74,6 +74,10 @@
   --color-svc-ytmusic-soft: rgb(196 50 39 / 0.1);
   --color-svc-lastfm: #e31b23;
   --color-svc-lastfm-soft: rgb(227 27 35 / 0.1);
+  --color-svc-listenbrainz: #a75a00;
+  --color-svc-listenbrainz-soft: rgb(167 90 0 / 0.1);
+  --color-svc-subsonic: #24649b;
+  --color-svc-subsonic-soft: rgb(36 100 155 / 0.1);
   --color-svc-jellyfin: #7a58c5;
   --color-svc-jellyfin-soft: rgb(122 88 197 / 0.11);
 
@@ -147,6 +151,10 @@
   --color-svc-ytmusic-soft: rgb(244 69 62 / 0.12);
   --color-svc-lastfm: #f4525a;
   --color-svc-lastfm-soft: rgb(244 82 90 / 0.13);
+  --color-svc-listenbrainz: #ffb753;
+  --color-svc-listenbrainz-soft: rgb(255 183 83 / 0.13);
+  --color-svc-subsonic: #75b6ed;
+  --color-svc-subsonic-soft: rgb(117 182 237 / 0.13);
   --color-svc-jellyfin: #ae8cec;
   --color-svc-jellyfin-soft: rgb(174 140 236 / 0.13);
 

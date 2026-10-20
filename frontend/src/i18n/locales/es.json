@@ -1309,5 +1309,13 @@
   "View transfer": "Ver transferencia",
   "Refresh {{label}}": "Actualizar {{label}}",
   "Showing saved playlists while updating…": "Mostrando las listas guardadas mientras se actualizan…",
-  "Waiting for another sync or transfer to finish. This copy will start automatically.": "Esperando a que termine otra sincronización o transferencia. Esta copia comenzará automáticamente."
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "Esperando a que termine otra sincronización o transferencia. Esta copia comenzará automáticamente.",
+  "Choose ListenBrainz as the source and enable liked tracks. No token is needed.": "Elige ListenBrainz como origen y activa las pistas favoritas. No se necesita ningún token.",
+  "Enter the server URL and your Subsonic username and password. In Docker, use a server address the container can reach.": "Introduce la URL del servidor y tu nombre de usuario y contraseña de Subsonic. En Docker, usa una dirección de servidor accesible desde el contenedor.",
+  "Loved Recordings": "Grabaciones favoritas",
+  "Password": "Contraseña",
+  "Read-only": "Solo lectura",
+  "Reads public loved recordings by username.": "Lee las grabaciones favoritas públicas mediante el nombre de usuario.",
+  "Starred Songs": "Canciones con estrella",
+  "Syncs playlists and starred songs already stored on your music server.": "Sincroniza listas y canciones con estrella que ya están almacenadas en tu servidor de música."
 }

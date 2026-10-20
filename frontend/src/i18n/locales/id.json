@@ -1277,5 +1277,13 @@
   "View transfer": "Lihat transfer",
   "Refresh {{label}}": "Segarkan {{label}}",
   "Showing saved playlists while updating…": "Menampilkan playlist tersimpan sambil memperbarui…",
-  "Waiting for another sync or transfer to finish. This copy will start automatically.": "Menunggu sinkronisasi atau transfer lain selesai. Penyalinan ini akan dimulai otomatis."
+  "Waiting for another sync or transfer to finish. This copy will start automatically.": "Menunggu sinkronisasi atau transfer lain selesai. Penyalinan ini akan dimulai otomatis.",
+  "Choose ListenBrainz as the source and enable liked tracks. No token is needed.": "Pilih ListenBrainz sebagai sumber dan aktifkan lagu yang disukai. Tidak perlu token.",
+  "Enter the server URL and your Subsonic username and password. In Docker, use a server address the container can reach.": "Masukkan URL server serta nama pengguna dan kata sandi Subsonic Anda. Di Docker, gunakan alamat server yang dapat dijangkau kontainer.",
+  "Loved Recordings": "Rekaman favorit",
+  "Password": "Kata sandi",
+  "Read-only": "Hanya baca",
+  "Reads public loved recordings by username.": "Membaca rekaman favorit publik berdasarkan nama pengguna.",
+  "Starred Songs": "Lagu berbintang",
+  "Syncs playlists and starred songs already stored on your music server.": "Menyinkronkan playlist dan lagu berbintang yang sudah tersimpan di server musik Anda."
 }
