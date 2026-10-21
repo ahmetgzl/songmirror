@@ -1278,12 +1278,15 @@
   "Refresh {{label}}": "刷新{{label}}",
   "Showing saved playlists while updating…": "正在更新，暂时显示已保存的播放列表…",
   "Waiting for another sync or transfer to finish. This copy will start automatically.": "正在等待其他同步或传输完成。本次复制将自动开始。",
-  "Choose ListenBrainz as the source and enable liked tracks. No token is needed.": "选择 ListenBrainz 作为来源并启用喜欢的曲目。无需令牌。",
   "Enter the server URL and your Subsonic username and password. In Docker, use a server address the container can reach.": "输入服务器 URL 以及 Subsonic 用户名和密码。在 Docker 中，请使用容器可以访问的服务器地址。",
   "Loved Recordings": "喜爱的录音",
   "Password": "密码",
   "Read-only": "只读",
-  "Reads public loved recordings by username.": "通过用户名读取公开的喜爱录音。",
   "Starred Songs": "星标歌曲",
-  "Syncs playlists and starred songs already stored on your music server.": "同步已存储在音乐服务器上的播放列表和星标歌曲。"
+  "Syncs playlists and starred songs already stored on your music server.": "同步已存储在音乐服务器上的播放列表和星标歌曲。",
+  "Read loved recordings by username; add a user token to receive favorites.": "通过用户名读取喜爱的录音；添加用户令牌即可接收收藏。",
+  "Choose ListenBrainz as the source to read loves without a token. To receive favorites from another service, add your user token from ListenBrainz settings.": "选择 ListenBrainz 作为来源，无需令牌即可读取喜爱的录音。若要接收其他服务的收藏，请添加 ListenBrainz 设置中的用户令牌。",
+  "User token": "用户令牌",
+  "Optional: copy your user token from https://listenbrainz.org/settings/ to receive loved recordings.": "可选：从 https://listenbrainz.org/settings/ 复制用户令牌以接收喜爱的录音。",
+  "ListenBrainz": "ListenBrainz"
 }

@@ -1278,12 +1278,15 @@
   "Refresh {{label}}": "Làm mới {{label}}",
   "Showing saved playlists while updating…": "Đang hiển thị danh sách phát đã lưu trong khi cập nhật…",
   "Waiting for another sync or transfer to finish. This copy will start automatically.": "Đang chờ lượt đồng bộ hoặc chuyển khác kết thúc. Bản sao này sẽ tự động bắt đầu.",
-  "Choose ListenBrainz as the source and enable liked tracks. No token is needed.": "Chọn ListenBrainz làm nguồn và bật các bản nhạc yêu thích. Không cần mã thông báo.",
   "Enter the server URL and your Subsonic username and password. In Docker, use a server address the container can reach.": "Nhập URL máy chủ cùng tên người dùng và mật khẩu Subsonic. Với Docker, hãy dùng địa chỉ máy chủ mà container có thể truy cập.",
   "Loved Recordings": "Bản thu yêu thích",
   "Password": "Mật khẩu",
   "Read-only": "Chỉ đọc",
-  "Reads public loved recordings by username.": "Đọc các bản thu yêu thích công khai theo tên người dùng.",
   "Starred Songs": "Bài hát gắn sao",
-  "Syncs playlists and starred songs already stored on your music server.": "Đồng bộ danh sách phát và bài hát gắn sao đã có trên máy chủ nhạc của bạn."
+  "Syncs playlists and starred songs already stored on your music server.": "Đồng bộ danh sách phát và bài hát gắn sao đã có trên máy chủ nhạc của bạn.",
+  "Read loved recordings by username; add a user token to receive favorites.": "Đọc bản thu yêu thích bằng tên người dùng; thêm mã thông báo người dùng để nhận mục yêu thích.",
+  "Choose ListenBrainz as the source to read loves without a token. To receive favorites from another service, add your user token from ListenBrainz settings.": "Chọn ListenBrainz làm nguồn để đọc mục yêu thích mà không cần mã thông báo. Để nhận mục yêu thích từ dịch vụ khác, hãy thêm mã thông báo người dùng từ phần cài đặt ListenBrainz.",
+  "User token": "Mã thông báo người dùng",
+  "Optional: copy your user token from https://listenbrainz.org/settings/ to receive loved recordings.": "Không bắt buộc: sao chép mã thông báo người dùng từ https://listenbrainz.org/settings/ để nhận bản thu yêu thích.",
+  "ListenBrainz": "ListenBrainz"
 }

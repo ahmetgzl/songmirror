@@ -1,6 +1,7 @@
-"""Public ListenBrainz loved recordings, including every feedback page."""
+"""ListenBrainz loved recordings, metadata lookup, and authorized feedback."""
 
 import math
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -72,9 +73,89 @@ _REQUESTS = _RequestGate()
 
 
 class ListenBrainz:
-    def __init__(self, user=None, session=None):
+    def __init__(self, user=None, session=None, *, token=None):
         self.user = user or required_env("LISTENBRAINZ_USER")
         self._session = session or requests
+        self.token = (os.getenv("LISTENBRAINZ_TOKEN", "") if token is None else token).strip()
+        self._validated = False
+
+    def _authorized_json(self, method, path, **kwargs):
+        from .engine.targets.base import TargetAuthError, TargetCapabilityError, TargetTransientError
+
+        if not self.token:
+            raise TargetCapabilityError("Add a ListenBrainz user token to receive loved recordings.")
+        try:
+            response = _REQUESTS.request(
+                getattr(self._session, method), f"{API}{path}",
+                headers={"User-Agent": USER_AGENT, "Accept": "application/json",
+                         "Authorization": f"Token {self.token}"},
+                timeout=REQUEST_TIMEOUT, allow_redirects=False, **kwargs,
+            )
+        except requests.RequestException as exc:
+            raise TargetTransientError("Could not reach ListenBrainz; retry later.") from exc
+        if response.status_code in {401, 403}:
+            self._validated = False
+            raise TargetAuthError("ListenBrainz rejected the user token. Reconnect the account.")
+        if response.status_code >= 500 or response.status_code == 429:
+            raise TargetTransientError(f"ListenBrainz returned HTTP {response.status_code}; retry later.")
+        if not 200 <= response.status_code < 300:
+            raise RuntimeError(f"ListenBrainz returned HTTP {response.status_code}; the operation was not confirmed.")
+        try:
+            if "text/html" in getattr(response, "headers", {}).get("Content-Type", "").lower():
+                raise ValueError
+            body = response.json()
+            if not isinstance(body, dict):
+                raise ValueError
+        except (ValueError, TypeError) as exc:
+            raise TargetTransientError(
+                "ListenBrainz returned a web page or invalid data; the operation was not confirmed. Try again later."
+            ) from exc
+        return body
+
+    def validate_token(self):
+        """Bind writes to the configured profile, rather than any valid token."""
+        from .engine.targets.base import TargetAuthError, TargetTransientError
+
+        if self._validated:
+            return
+        body = self._authorized_json("get", "/1/validate-token")
+        if body.get("valid") is False:
+            raise TargetAuthError("ListenBrainz user token is invalid. Reconnect the account.")
+        user = body.get("user_name")
+        if body.get("valid") is not True or not isinstance(user, str) or not user.strip():
+            raise TargetTransientError("ListenBrainz did not confirm the token's username. Try again later.")
+        if user.casefold() != self.user.casefold():
+            raise TargetAuthError("ListenBrainz token belongs to a different username. Use that profile's own token.")
+        self._validated = True
+
+    def lookup_recording(self, artist, name, album=""):
+        from .engine.targets.base import TargetTransientError
+
+        self.validate_token()
+        params = {"artist_name": artist, "recording_name": name}
+        if album:
+            params["release_name"] = album
+        body = self._authorized_json("get", "/1/metadata/lookup/", params=params)
+        # The API returns {} for a completed lookup with no match. An error
+        # envelope or partial response must not become a cached negative match.
+        if body and not body.get("recording_mbid"):
+            raise TargetTransientError("ListenBrainz returned incomplete recording data; matching was stopped.")
+        return body
+
+    def set_feedback(self, target_id, score):
+        from .engine.targets.base import TargetTransientError
+        from .engine.track_references import normalize_track_reference
+
+        # Validate before any network operation, including token validation.
+        target_id = normalize_track_reference("listenbrainz", target_id)
+        if not target_id or score not in {0, 1}:
+            raise ValueError("ListenBrainz feedback needs a recording identifier and a love or removal score.")
+        kind, identifier = target_id.split(":", 1)
+        self.validate_token()
+        body = self._authorized_json("post", "/1/feedback/recording-feedback",
+                                     json={f"recording_{kind}": identifier, "score": score})
+        if body.get("status") != "ok":
+            raise TargetTransientError("ListenBrainz did not confirm the feedback change. Try again later.")
 
     def feedback_page(self, offset=0, count=PAGE_SIZE):
         from .engine.targets.base import TargetTransientError

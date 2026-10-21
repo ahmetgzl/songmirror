@@ -20,7 +20,8 @@ async function main() {
   const accounts = [
     { id: 'loves', provider: 'listenbrainz', name: 'ListenBrainz', provider_name: 'ListenBrainz',
       transferable: false, source_capable: true, supports_playlists: false,
-      fields: [{ key: 'LISTENBRAINZ_USER', label: 'Username', required: true, secret: false }],
+      fields: [{ key: 'LISTENBRAINZ_USER', label: 'Username', required: true, secret: false },
+        { key: 'LISTENBRAINZ_TOKEN', label: 'User token', required: false, secret: true }],
       capabilities: { library_read: true, library_write: false, favorites_write: false, public_playlist_read: false } },
     { id: 'local', provider: 'subsonic', name: 'Navidrome / Subsonic', provider_name: 'Navidrome / Subsonic',
       transferable: true, source_capable: true, supports_playlists: true,
@@ -49,6 +50,16 @@ async function main() {
       const account = accounts.find(account => url.pathname.includes(`/${account.id}/`))
       const values = request.postDataJSON()
       connections.push({ provider: account.provider, values })
+      if (values.LISTENBRAINZ_TOKEN === 'wrong-profile-token') {
+        return send({ kind: 'api_key', state: 'error', detail: 'ListenBrainz token belongs to a different username.' })
+      }
+      for (const field of account.fields) {
+        if (values[field.key]) {
+          field.configured = true
+          field.value = field.secret ? '' : values[field.key]
+        }
+      }
+      if (values.LISTENBRAINZ_TOKEN) account.capabilities.favorites_write = true
       account.state = 'connected'
       return send({ kind: 'api_key', state: 'connected', detail: account.name })
     }
@@ -143,7 +154,7 @@ async function main() {
     await dialog.getByRole('status').filter({ hasText: 'Navidrome / Subsonic is connected.' }).waitFor()
     await dialog.waitFor({ state: 'hidden' })
     assert.deepEqual(connections, [
-      { provider: 'listenbrainz', values: { LISTENBRAINZ_USER: 'listener' } },
+      { provider: 'listenbrainz', values: { LISTENBRAINZ_USER: 'listener', LISTENBRAINZ_TOKEN: '' } },
       { provider: 'subsonic', values: { SUBSONIC_URL: 'https://music.example/navidrome', SUBSONIC_USER: 'listener', SUBSONIC_PASSWORD: 'secret' } },
     ])
     console.log('PASS: username-only ListenBrainz setup and masked Subsonic password setup')
@@ -236,6 +247,58 @@ async function main() {
         await context.close()
       }
     }
+
+    await page.goto(base + '/accounts')
+    await lovesCard.getByRole('button', { name: 'Reconnect', exact: true }).click()
+    dialog = page.getByRole('dialog')
+    let token = dialog.getByLabel('User token', { exact: false })
+    assert.equal(await token.getAttribute('type'), 'password')
+    assert.equal(await token.getAttribute('required'), null)
+    await token.fill('wrong-profile-token')
+    await dialog.getByRole('button', { name: 'Connect', exact: true }).click()
+    await dialog.getByText('ListenBrainz token belongs to a different username.', { exact: true }).waitFor()
+    assert.equal(await dialog.isVisible(), true)
+    await token.fill('test-user-token')
+    await dialog.getByRole('button', { name: 'Connect', exact: true }).click()
+    await dialog.waitFor({ state: 'hidden' })
+    await lovesCard.getByRole('button', { name: 'Reconnect', exact: true }).click()
+    dialog = page.getByRole('dialog')
+    token = dialog.getByLabel('User token', { exact: false })
+    assert.equal(await token.inputValue(), '')
+    assert.equal(await token.getAttribute('placeholder'), 'saved — leave blank to keep')
+    await dialog.getByRole('button', { name: 'Connect', exact: true }).click()
+    await dialog.waitFor({ state: 'hidden' })
+    assert.deepEqual(connections.at(-1).values, { LISTENBRAINZ_USER: 'listener' }, 'Blank reconnect must not erase a saved token')
+    console.log('PASS: optional masked token, visible wrong-profile error, and saved-token reconnect')
+
+    accounts.push({ ...accounts[1], id: 'tidal', provider: 'tidal', name: 'TIDAL', provider_name: 'TIDAL',
+      fields: [], state: 'connected' })
+    await page.goto(base + '/sync')
+    await page.getByRole('button', { name: 'New sync', exact: true }).first().click()
+    dialog = page.getByRole('dialog')
+    await dialog.getByLabel('Name', { exact: false }).fill('TIDAL favorites to ListenBrainz')
+    await dialog.getByRole('radio', { name: 'TIDAL', exact: true }).click()
+    await dialog.getByRole('radio', { name: 'Services', exact: true }).click()
+    await dialog.getByRole('button', { name: /^ListenBrainz/ }).click()
+    await dialog.getByRole('radio', { name: 'Playlists', exact: true }).click()
+    await dialog.getByRole('checkbox', { name: 'TIDAL Favorite Tracks', exact: true }).locator('..').click()
+    const lovesRoute = dialog.getByRole('radio', { name: 'Use ListenBrainz Loved Recordings', exact: true })
+    assert.equal(await lovesRoute.isChecked(), true)
+    assert.equal(await lovesRoute.isEnabled(), true)
+    assert.equal(await dialog.getByText('ListenBrainz has no playlists, so its own collection is the only destination.', { exact: true }).count(), 1)
+    assert.equal(await dialog.getByRole('radio', { name: 'Create a named playlist on ListenBrainz', exact: true }).count(), 0)
+    for (const width of [1280, 375]) {
+      await page.setViewportSize({ width, height: 1000 })
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+      if (screenshotDir) await page.screenshot({ path: path.join(screenshotDir, `listenbrainz-destination-${width}.png`), fullPage: true })
+    }
+    await dialog.getByRole('button', { name: 'Create sync', exact: true }).click()
+    await dialog.waitFor({ state: 'hidden' })
+    assert.equal(saved.at(-1).source, 'tidal')
+    assert.equal(saved.at(-1).sync_playlists, false)
+    assert.equal(saved.at(-1).liked_tracks, true)
+    assert.deepEqual(saved.at(-1).liked_routes.loves, { kind: 'native' })
+    console.log('PASS: TIDAL favorites route to ListenBrainz saves with no playlist capability')
     assert.deepEqual(errors, [])
   } finally {
     await page.close()

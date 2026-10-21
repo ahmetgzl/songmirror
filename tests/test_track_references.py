@@ -15,6 +15,7 @@ REFERENCES = [
     ("apple", "https://music.apple.com/us/album/my-album/1000?i=123456", "123456"),
     ("amazon", "https://music.amazon.com/albums/B08GBBC5MV/?trackAsin=B08G9TMYCZ", "B08G9TMYCZ"),
     ("lastfm", "https://www.last.fm/music/Black/_/Amar+Prithibi", "Black\u241fAmar Prithibi"),
+    ("listenbrainz", "https://musicbrainz.org/recording/8f3471b5-7e6a-48da-86a9-c1c07a0f47ae", "mbid:8f3471b5-7e6a-48da-86a9-c1c07a0f47ae"),
 ]
 
 
@@ -27,15 +28,10 @@ def test_every_registered_target_has_reference_coverage():
     assert catalogs == {provider for provider, _, _ in REFERENCES}
 
 
-def test_local_and_read_only_providers_keep_their_reference_contracts():
-    from songmirror.engine.targets.base import TargetCapabilityError
-
+def test_local_providers_keep_their_reference_contracts():
     assert target_class("subsonic").normalize_manual_track_id("local-song-id") == "local-song-id"
     with pytest.raises(ValueError):
         target_class("subsonic").normalize_manual_track_id("https://server.example/track/123")
-    target = target_class("listenbrainz").__new__(target_class("listenbrainz"))
-    with pytest.raises(TargetCapabilityError):
-        target.resolve({"name": "Song", "artists": ["Artist"]}, {"search": {}, "isrc": {}})
 
 
 @pytest.mark.parametrize("provider,reference,expected", REFERENCES)

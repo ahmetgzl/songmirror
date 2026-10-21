@@ -1278,12 +1278,15 @@
   "Refresh {{label}}": "{{label}} yenile",
   "Showing saved playlists while updating…": "Güncellenirken kayıtlı çalma listeleri gösteriliyor…",
   "Waiting for another sync or transfer to finish. This copy will start automatically.": "Başka bir eşitlemenin veya aktarımın bitmesi bekleniyor. Bu kopyalama otomatik olarak başlayacak.",
-  "Choose ListenBrainz as the source and enable liked tracks. No token is needed.": "Kaynak olarak ListenBrainz’i seçin ve beğenilen parçaları etkinleştirin. Token gerekmez.",
   "Enter the server URL and your Subsonic username and password. In Docker, use a server address the container can reach.": "Sunucu URL’sini, Subsonic kullanıcı adınızı ve parolanızı girin. Docker’da konteynerin erişebildiği bir sunucu adresi kullanın.",
   "Loved Recordings": "Sevilen Kayıtlar",
   "Password": "Parola",
   "Read-only": "Salt okunur",
-  "Reads public loved recordings by username.": "Kullanıcı adıyla herkese açık sevilen kayıtları okur.",
   "Starred Songs": "Yıldızlı Şarkılar",
-  "Syncs playlists and starred songs already stored on your music server.": "Müzik sunucunuzda zaten bulunan çalma listelerini ve yıldızlı şarkıları senkronize eder."
+  "Syncs playlists and starred songs already stored on your music server.": "Müzik sunucunuzda zaten bulunan çalma listelerini ve yıldızlı şarkıları senkronize eder.",
+  "Read loved recordings by username; add a user token to receive favorites.": "Sevilen kayıtları kullanıcı adıyla okuyun; favorileri almak için kullanıcı belirteci ekleyin.",
+  "Choose ListenBrainz as the source to read loves without a token. To receive favorites from another service, add your user token from ListenBrainz settings.": "Sevilen kayıtları belirteç olmadan okumak için ListenBrainz’i kaynak olarak seçin. Başka bir hizmetten favorileri almak için ListenBrainz ayarlarından kullanıcı belirtecinizi ekleyin.",
+  "User token": "Kullanıcı belirteci",
+  "Optional: copy your user token from https://listenbrainz.org/settings/ to receive loved recordings.": "İsteğe bağlı: Sevilen kayıtları almak için https://listenbrainz.org/settings/ adresinden kullanıcı belirtecinizi kopyalayın.",
+  "ListenBrainz": "ListenBrainz"
 }

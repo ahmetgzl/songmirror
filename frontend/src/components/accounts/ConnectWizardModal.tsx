@@ -220,8 +220,9 @@ function connectGuides(): Record<string, ConnectGuideContent> { return {
     link: { href: 'https://www.last.fm/api/account/create', label: t("Create a Last.fm API account") },
   },
   listenbrainz: {
-    intro: t("Reads public loved recordings by username."),
-    steps: [<>{t("Choose ListenBrainz as the source and enable liked tracks. No token is needed.")}</>],
+    intro: t("Read loved recordings by username; add a user token to receive favorites."),
+    steps: [<>{t("Choose ListenBrainz as the source to read loves without a token. To receive favorites from another service, add your user token from ListenBrainz settings.")}</>],
+    link: { href: 'https://listenbrainz.org/settings/', label: t("ListenBrainz") },
   },
   subsonic: {
     intro: t("Syncs playlists and starred songs already stored on your music server."),
@@ -345,10 +346,10 @@ export function ConnectWizardModal({ account, open, onClose, onConnected, onChan
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, account.id])
 
-  // OAuth connectors persist config and reuse it, so a reconnect may leave an
-  // already-stored secret blank to keep it. token_paste/api_key submit values straight
-  // to /connect, so those always need the actual values entered.
+  // OAuth credentials and ListenBrainz's optional token can be reused on
+  // reconnect. Other direct-submit providers require the actual values.
   const canKeepBlank = account.auth_kind === 'oauth_redirect' || account.auth_kind === 'oauth_device'
+    || account.provider === 'listenbrainz'
 
   // Briefly confirm success before handing control back to the parent, which
   // closes the wizard — so "Connected!" is actually visible for a beat
@@ -464,7 +465,7 @@ export function ConnectWizardModal({ account, open, onClose, onConnected, onChan
     setSaving(true)
     setError(null)
     try {
-      const payload = isLastfm ? Object.fromEntries(setupAccount.fields
+      const payload = (isLastfm || canKeepBlank) ? Object.fromEntries(setupAccount.fields
         .filter((f) => !(f.secret && f.configured && !values[f.key]?.trim()))
         .map((f) => [f.key, values[f.key] ?? ''])) : values
       const res = await api.connectAccount(account.id, payload)
@@ -486,7 +487,8 @@ export function ConnectWizardModal({ account, open, onClose, onConnected, onChan
       open={open}
       onClose={onClose}
       title={t("Connect {{accountName}}", { accountName: account.name })}
-      description={isLastfm ? t("Choose what to connect") : AUTH_KIND_TITLES[account.auth_kind]}
+      description={isLastfm ? t("Choose what to connect") : account.provider === 'listenbrainz'
+        ? t("Read loved recordings by username; add a user token to receive favorites.") : AUTH_KIND_TITLES[account.auth_kind]}
     >
       <div className="flex flex-col gap-5">
         {showSuccess ? (
@@ -602,6 +604,7 @@ function FieldsStep({
   useTranslation()
   const guide = guideOverride ?? connectGuides()[account.provider]
   const canKeepBlank = account.auth_kind === 'oauth_redirect' || account.auth_kind === 'oauth_device'
+    || account.provider === 'listenbrainz'
   return (
     <form
       className="flex flex-col gap-4"
