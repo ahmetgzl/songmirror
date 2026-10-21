@@ -20,6 +20,7 @@ CLI (report by default; inside the container prefix with `docker exec`):
 from . import archive
 from .matching import creative_version_markers, fuzzy_in, loose_name, romanized, spotify_track_keys, track_key
 from .targets.base import _entry_cids, _unify_aliases
+from .resolve_cache import load_target_cache
 
 # Duplicate deletion is stricter than alias matching: even a release-format
 # difference or remaster stays for review. Include the shared creative markers
@@ -169,7 +170,6 @@ def _main(argv=None):
     from .config import (DEFAULT_CACHE_FILE, DEFAULT_PROVIDERS, DEFAULT_SONG_CACHE_FILE,
                          DEFAULT_SPOTIFY_CACHE_FILE, DEFAULT_STOREFRONT,
                          spotify_write_backend)
-    from .runner import load_cache
     from .targets import build_peers
 
     ap = argparse.ArgumentParser(
@@ -195,7 +195,7 @@ def _main(argv=None):
     cookie = spotify_write_backend() == "cookie" and spotify_cookie.configured()
     sp = None if cookie else spotify.client(writable=args.execute)
     peers = build_peers(_Opts(), sp, songs=songs)
-    caches = {p.source: load_cache(p.cache_file) for p in peers}
+    caches = {p.source: load_target_cache(p) for p in peers}
     dirs = {p.source: p.list_playlists() for p in peers}
 
     managed = {r[0] for r in songs.execute("SELECT DISTINCT playlist FROM playlist_state")}

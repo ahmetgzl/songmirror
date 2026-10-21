@@ -232,6 +232,9 @@ class AccountBoundTarget:
     def profile_value(self, key, default=None):
         return self._profiles.settings_for(self.account_id).get(key, default)
 
+    def cache_fallback_files(self):
+        return self._profiles.cache_fallback_files(self.account_id, self.cache_file)
+
     def archive_sources(self, provider):
         """Every account namespace that can hold this provider's catalog ids."""
         return tuple(

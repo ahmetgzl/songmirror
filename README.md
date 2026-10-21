@@ -628,8 +628,15 @@ sqlite3 song_cache.db "SELECT name, artist, album, first_seen FROM songs ORDER B
 ### Resolve mappings
 
 Each service keeps its own resolve cache, mapping a normalized `title|artist` key to the catalog id it matched on
-that service. A match is reused forever, and so is a **"no match"** result, which is what makes a track that failed
-to match once stay unmatched on every later pass.
+that service. A match is reused, and so is a **"no match"** result, which avoids repeating failed searches
+until the entry is cleared or a successful sibling match becomes available.
+
+Accounts on the same provider also reuse successful catalog matches from sibling
+profiles when their own entry is missing or unmatched. Local matches take
+precedence, conflicting sibling choices are ignored, and authentication stays
+separate. Forgetting a mapping excludes that key from sibling fallback for the
+selected account, so it can be looked up again. Server-local catalogs keep their
+matches isolated.
 
 The **Mappings** page in the web UI exposes those caches directly, per service:
 

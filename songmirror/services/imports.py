@@ -19,7 +19,8 @@ from typing import Any, Optional
 from ..engine import archive, spotify, spotify_cookie
 from ..engine.config import parse_args, spotify_write_backend
 from ..engine.logs import Event, log_note, log_warn
-from ..engine.runner import load_cache, save_cache
+from ..engine.runner import save_cache
+from ..engine.resolve_cache import load_target_cache
 from ..engine.targets import build_one, is_peer, target_class, target_provider
 from ..engine.targets.base import TargetAuthError, TargetTransientError, _normalize
 from .import_matching import ImportMatcher
@@ -1130,7 +1131,7 @@ class ImportService:
         dest = self._build_target(job["destination_account"], opts)
         if dest is None:
             raise RuntimeError("destination account is not connected")
-        cache = load_cache(dest.cache_file)
+        cache = load_target_cache(dest)
         tracks = self._with_conn(
             lambda conn: self.archive.get_import_tracks(conn, job_id, offset=0, limit=1_000_000)
         )

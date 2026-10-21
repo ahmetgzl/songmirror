@@ -119,6 +119,14 @@ never appears however correctly it is registered in steps 2 and 4.
 `tests/test_connectors.py` asserts `CONNECTORS` and `PROVIDER_KEYS` cover the same
 providers, and that each label matches its connector's `name`.
 
+Profiles automatically reuse positive catalog matches from sibling profiles of
+the same provider. Keep `MirrorTarget.catalog_ids_global = True` only when IDs
+identify the same recording across accounts. Server-local catalogs must set it
+to `False`, as Subsonic does. The shared track-reference parser must accept the
+provider's global IDs and reject account-local IDs, such as Apple library IDs.
+See [shared catalog resolutions](shared-catalog-resolutions.md) for precedence,
+cache paths, and write isolation.
+
 ### 6. Frontend branding — `frontend/src/lib/constants.ts` (+ four more)
 
 - `SERVICE_STYLES`: a `{ label, dot, soft, text }` entry keyed by the provider id.

@@ -17,6 +17,7 @@ from ..engine.logs import log_add, log_miss, log_note, log_warn
 from ..engine.matching import spotify_track_keys, track_key, tracks_oldest_first
 from ..engine.runner import load_cache, save_cache
 from ..engine.targets import build_one, is_peer, target_class, target_provider
+from ..engine.resolve_cache import load_target_cache
 from ..engine.targets.base import (
     MirrorTarget,
     TargetAuthError,
@@ -699,7 +700,7 @@ class TransferService:
                 # The UI links to it, and a resumed copy adds to this playlist
                 # instead of creating another one.
                 job["dest"]["playlist_id"] = spec["dest_playlist_id"] = str(dest_id)
-            cache = load_cache(dst.cache_file)
+            cache = load_target_cache(dst)
             read_source = getattr(src, "playlist_tracks_for_transfer", src.playlist_tracks)
             job["_source_tracks"] = list(read_source(src_pl))
             job["unavailable"] = sum(bool(track.get("unavailable")) for track in job["_source_tracks"])
