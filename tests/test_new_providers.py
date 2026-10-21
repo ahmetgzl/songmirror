@@ -2564,7 +2564,7 @@ def test_deezer_remove_occurrences_skips_keeper_add_when_removal_fails(monkeypat
 
     # Flag 1 copy of "T1" for duplicate removal
     positioned = [(0, {"id": "T1"})]
-    target.remove_occurrences({"id": "p1"}, positioned)
+    assert target.remove_occurrences({"id": "p1"}, positioned) == 0
 
     # remove was attempted
     assert removed == ["T1"]
@@ -2596,7 +2596,7 @@ def test_deezer_remove_occurrences_restores_keeper_when_removal_succeeds(monkeyp
 
     # Flag 1 copy of "T1" for duplicate removal
     positioned = [(0, {"id": "T1"})]
-    target.remove_occurrences({"id": "p1"}, positioned)
+    assert target.remove_occurrences({"id": "p1"}, positioned) == 1
 
     assert removed == ["T1"]
     # 2 total - 1 flagged = 1 keeper restored
@@ -2632,7 +2632,8 @@ def test_deezer_remove_occurrences_keeper_add_failure_does_not_abort_subsequent_
     target.add = mock_add
 
     positioned = [(0, {"id": "T1"}), (2, {"id": "T2"})]
-    target.remove_occurrences({"id": "p1"}, positioned)
+    with pytest.raises(RuntimeError, match="could not restore keeper copies.*T1"):
+        target.remove_occurrences({"id": "p1"}, positioned)
 
     # Both T1 and T2 removals were executed
     assert removed == ["T1", "T2"]

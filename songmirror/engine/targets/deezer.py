@@ -630,6 +630,8 @@ class DeezerTarget(MirrorTarget):
         for _, track in positioned:
             tid = self.track_id(track)
             flagged[tid] = flagged.get(tid, 0) + 1
+        removed_count = 0
+        unrestored = []
         for tid, count in flagged.items():
             if not tid:
                 continue
@@ -639,14 +641,31 @@ class DeezerTarget(MirrorTarget):
             keep = max(0, totals.get(tid, count) - count)
             if keep:
                 try:
-                    self.add(playlist, [tid] * keep)
+                    restored = self.add(playlist, [tid] * keep)
+                    if restored is not None and len(restored) != keep:
+                        raise RuntimeError("Deezer rejected keeper copies")
                 except (TargetAuthError, TargetTransientError):
                     raise
-                except Exception as exc:
+                except requests.RequestException as exc:
+                    raise TargetTransientError(
+                        f"Deezer transport failed while restoring keeper copies for track {tid}; "
+                        "refresh the playlist before retrying."
+                    ) from exc
+                except RuntimeError as exc:
+                    unrestored.append(tid)
                     log_warn(
                         f"Deezer failed restoring {keep} keeper copy/copies for track {tid}: {exc}",
                         tag=self.tag,
                     )
+                    continue
+            removed_count += count
+        if unrestored:
+            raise RuntimeError(
+                "Deezer could not restore keeper copies for track(s) "
+                + ", ".join(unrestored)
+                + "; refresh the playlist to review the partial cleanup."
+            )
+        return removed_count
 
     # Deezer has no positional insert, and its delete addresses the catalog
     # track id, so an ordered repair would have to delete every copy of a song

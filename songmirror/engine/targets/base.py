@@ -243,7 +243,7 @@ class MirrorTarget:
 
     def remove_occurrence(self, playlist, track_id, occurrence_id):
         """Delete one entry addressed by its provider-stable occurrence id."""
-        self.remove(playlist, {
+        return self.remove(playlist, {
             "id": track_id,
             "videoId": track_id,
             "relationship_id": occurrence_id,
@@ -483,7 +483,10 @@ class MirrorTarget:
         return target_id
 
     def remove(self, playlist, track):
-        """Remove one existing target track."""
+        """Remove one existing target track; False means a confirmed rejection.
+
+        None remains the all-succeeded contract for existing providers.
+        """
         raise NotImplementedError
 
     def remove_occurrences(self, playlist, positioned):
@@ -493,9 +496,17 @@ class MirrorTarget:
         is entry-scoped on YT (playlist-item id / setVideoId). Spotify overrides
         with a position-addressed call (its remove() drops every occurrence of a
         uri); Apple overrides with delete-then-re-append (its DELETE addresses
-        the library song, taking every copy with it)."""
+        the library song, taking every copy with it).
+
+        Return the number of selected entries successfully removed. Legacy
+        overrides returning None confirm every requested entry. A permanent
+        rejection may return fewer; auth and transient failures must raise.
+        """
+        removed = 0
         for _, raw in positioned:
-            self.remove(playlist, raw)
+            if self.remove(playlist, raw) is not False:
+                removed += 1
+        return removed
 
 
 def _resource_call(target, method_name, playlist_method_name, resource, *args):
