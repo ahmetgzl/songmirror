@@ -1310,12 +1310,15 @@
   "Refresh {{label}}": "Atualizar {{label}}",
   "Showing saved playlists while updating…": "Exibindo playlists salvas durante a atualização…",
   "Waiting for another sync or transfer to finish. This copy will start automatically.": "Aguardando outra sincronização ou transferência terminar. Esta cópia começará automaticamente.",
-  "Choose ListenBrainz as the source and enable liked tracks. No token is needed.": "Escolha o ListenBrainz como origem e ative as faixas favoritas. Não é necessário um token.",
   "Enter the server URL and your Subsonic username and password. In Docker, use a server address the container can reach.": "Introduza o URL do servidor e o seu nome de utilizador e palavra-passe do Subsonic. No Docker, utilize um endereço de servidor acessível ao contentor.",
   "Loved Recordings": "Gravações favoritas",
   "Password": "Palavra-passe",
   "Read-only": "Só de leitura",
-  "Reads public loved recordings by username.": "Lê as gravações favoritas públicas através do nome de utilizador.",
   "Starred Songs": "Músicas com estrela",
-  "Syncs playlists and starred songs already stored on your music server.": "Sincroniza playlists e músicas com estrela já guardadas no seu servidor de música."
+  "Syncs playlists and starred songs already stored on your music server.": "Sincroniza playlists e músicas com estrela já guardadas no seu servidor de música.",
+  "Read loved recordings by username; add a user token to receive favorites.": "Leia gravações favoritas pelo nome de usuário; adicione um token de usuário para receber favoritos.",
+  "Choose ListenBrainz as the source to read loves without a token. To receive favorites from another service, add your user token from ListenBrainz settings.": "Escolha ListenBrainz como origem para ler favoritos sem um token. Para receber favoritos de outro serviço, adicione seu token de usuário nas configurações do ListenBrainz.",
+  "User token": "Token de usuário",
+  "Optional: copy your user token from https://listenbrainz.org/settings/ to receive loved recordings.": "Opcional: copie seu token de usuário de https://listenbrainz.org/settings/ para receber gravações favoritas.",
+  "ListenBrainz": "ListenBrainz"
 }

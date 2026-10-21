@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, unquote, unquote_plus, urlsplit
 _LABELS = {
     "spotify": "Spotify", "apple": "Apple Music", "ytmusic": "YouTube Music",
     "tidal": "Tidal", "qobuz": "Qobuz", "deezer": "Deezer",
-    "amazon": "Amazon Music", "lastfm": "Last.fm",
+    "amazon": "Amazon Music", "lastfm": "Last.fm", "listenbrainz": "ListenBrainz",
 }
 _PATTERNS = {
     "spotify": r"[A-Za-z0-9]{22}", "ytmusic": r"[A-Za-z0-9_-]{11}",
@@ -64,6 +64,17 @@ def normalize_track_reference(provider, value):
     label = _LABELS.get(provider, provider)
     error = f"Paste a valid {label} track link or catalog id. Album and playlist links cannot identify a track."
     pattern = _PATTERNS.get(provider)
+    if provider == "listenbrainz":
+        uuid = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
+        match = re.fullmatch(rf"(?:(mbid|msid):)?({uuid})", raw)
+        if match:
+            return f"{match[1] or 'mbid'}:{match[2].lower()}"
+        parts = reference_url(raw)
+        if parts and parts.hostname.lower() in {"musicbrainz.org", "www.musicbrainz.org"}:
+            match = re.fullmatch(rf"/recording/({uuid})/?", parts.path)
+            if match:
+                return f"mbid:{match[1].lower()}"
+        raise ValueError("Paste a MusicBrainz recording link, recording MBID, or msid:UUID. Album and artist links cannot identify a recording.")
     if pattern and re.fullmatch(pattern, raw):
         return raw.upper() if provider == "amazon" else raw
     if provider == "lastfm" and raw.count("\u241f") == 1:

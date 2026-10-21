@@ -72,18 +72,20 @@ def test_listenbrainz_never_treats_failed_reads_as_an_empty_library(body, status
         listenbrainz.ListenBrainz(user="listener", session=session).loved_tracks()
 
 
-def test_listenbrainz_is_a_source_and_never_a_destination():
+def test_listenbrainz_can_receive_favorites_but_not_playlists():
     opts = parse_args(["--sync-source", "listenbrainz", "--providers", "listenbrainz,subsonic"])
     opts.liked_tracks = True
     assert targets.target_class("listenbrainz") is ListenBrainzTarget
+    assert targets._writable("listenbrainz", opts)
+    opts.liked_tracks = False
     assert not targets._writable("listenbrainz", opts)
     assert targets._writable("subsonic", opts)
-    target = ListenBrainzTarget(client=Mock())
+    target = ListenBrainzTarget(client=listenbrainz.ListenBrainz("listener", token=""))
     assert target.list_playlists() == {}
     with pytest.raises(TargetCapabilityError):
         target.validate_favorite_tracks(write=True)
     with pytest.raises(TargetCapabilityError):
-        target.add_favorite_tracks(["recording"])
+        target.create({"name": "Playlist"})
 
 
 def test_subsonic_auth_uses_fresh_salted_tokens_and_keeps_proxy_path():

@@ -1278,12 +1278,15 @@
   "Refresh {{label}}": "{{label}} 새로고침",
   "Showing saved playlists while updating…": "업데이트하는 동안 저장된 재생목록을 표시합니다…",
   "Waiting for another sync or transfer to finish. This copy will start automatically.": "다른 동기화 또는 전송이 끝나기를 기다리는 중입니다. 이 복사는 자동으로 시작됩니다.",
-  "Choose ListenBrainz as the source and enable liked tracks. No token is needed.": "ListenBrainz를 소스로 선택하고 좋아요 표시한 트랙을 활성화하세요. 토큰은 필요하지 않습니다.",
   "Enter the server URL and your Subsonic username and password. In Docker, use a server address the container can reach.": "서버 URL과 Subsonic 사용자 이름 및 비밀번호를 입력하세요. Docker에서는 컨테이너가 접근할 수 있는 서버 주소를 사용하세요.",
   "Loved Recordings": "좋아하는 녹음",
   "Password": "비밀번호",
   "Read-only": "읽기 전용",
-  "Reads public loved recordings by username.": "사용자 이름으로 공개된 좋아하는 녹음을 읽습니다.",
   "Starred Songs": "별표 표시한 곡",
-  "Syncs playlists and starred songs already stored on your music server.": "음악 서버에 이미 저장된 플레이리스트와 별표 표시한 곡을 동기화합니다."
+  "Syncs playlists and starred songs already stored on your music server.": "음악 서버에 이미 저장된 플레이리스트와 별표 표시한 곡을 동기화합니다.",
+  "Read loved recordings by username; add a user token to receive favorites.": "사용자 이름으로 좋아하는 녹음을 읽습니다. 즐겨찾기를 받으려면 사용자 토큰을 추가하세요.",
+  "Choose ListenBrainz as the source to read loves without a token. To receive favorites from another service, add your user token from ListenBrainz settings.": "토큰 없이 좋아하는 녹음을 읽으려면 ListenBrainz를 원본으로 선택하세요. 다른 서비스의 즐겨찾기를 받으려면 ListenBrainz 설정에서 사용자 토큰을 추가하세요.",
+  "User token": "사용자 토큰",
+  "Optional: copy your user token from https://listenbrainz.org/settings/ to receive loved recordings.": "선택 사항: 좋아하는 녹음을 받으려면 https://listenbrainz.org/settings/ 에서 사용자 토큰을 복사하세요.",
+  "ListenBrainz": "ListenBrainz"
 }

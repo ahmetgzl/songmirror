@@ -1278,12 +1278,15 @@
   "Refresh {{label}}": "Segarkan {{label}}",
   "Showing saved playlists while updating…": "Menampilkan playlist tersimpan sambil memperbarui…",
   "Waiting for another sync or transfer to finish. This copy will start automatically.": "Menunggu sinkronisasi atau transfer lain selesai. Penyalinan ini akan dimulai otomatis.",
-  "Choose ListenBrainz as the source and enable liked tracks. No token is needed.": "Pilih ListenBrainz sebagai sumber dan aktifkan lagu yang disukai. Tidak perlu token.",
   "Enter the server URL and your Subsonic username and password. In Docker, use a server address the container can reach.": "Masukkan URL server serta nama pengguna dan kata sandi Subsonic Anda. Di Docker, gunakan alamat server yang dapat dijangkau kontainer.",
   "Loved Recordings": "Rekaman favorit",
   "Password": "Kata sandi",
   "Read-only": "Hanya baca",
-  "Reads public loved recordings by username.": "Membaca rekaman favorit publik berdasarkan nama pengguna.",
   "Starred Songs": "Lagu berbintang",
-  "Syncs playlists and starred songs already stored on your music server.": "Menyinkronkan playlist dan lagu berbintang yang sudah tersimpan di server musik Anda."
+  "Syncs playlists and starred songs already stored on your music server.": "Menyinkronkan playlist dan lagu berbintang yang sudah tersimpan di server musik Anda.",
+  "Read loved recordings by username; add a user token to receive favorites.": "Baca rekaman favorit dengan nama pengguna; tambahkan token pengguna untuk menerima favorit.",
+  "Choose ListenBrainz as the source to read loves without a token. To receive favorites from another service, add your user token from ListenBrainz settings.": "Pilih ListenBrainz sebagai sumber untuk membaca favorit tanpa token. Untuk menerima favorit dari layanan lain, tambahkan token pengguna dari pengaturan ListenBrainz.",
+  "User token": "Token pengguna",
+  "Optional: copy your user token from https://listenbrainz.org/settings/ to receive loved recordings.": "Opsional: salin token pengguna dari https://listenbrainz.org/settings/ untuk menerima rekaman favorit.",
+  "ListenBrainz": "ListenBrainz"
 }

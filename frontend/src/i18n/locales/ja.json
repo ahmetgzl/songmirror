@@ -1278,12 +1278,15 @@
   "Refresh {{label}}": "{{label}}を更新",
   "Showing saved playlists while updating…": "更新中は保存済みのプレイリストを表示しています…",
   "Waiting for another sync or transfer to finish. This copy will start automatically.": "別の同期または転送が完了するまで待機中です。このコピーは自動的に開始されます。",
-  "Choose ListenBrainz as the source and enable liked tracks. No token is needed.": "ListenBrainz をソースに選び、お気に入りの曲を有効にしてください。トークンは不要です。",
   "Enter the server URL and your Subsonic username and password. In Docker, use a server address the container can reach.": "サーバーの URL と Subsonic のユーザー名、パスワードを入力してください。Docker では、コンテナーから接続できるサーバーアドレスを使用してください。",
   "Loved Recordings": "お気に入りの録音",
   "Password": "パスワード",
   "Read-only": "読み取り専用",
-  "Reads public loved recordings by username.": "ユーザー名を使って公開のお気に入り録音を読み込みます。",
   "Starred Songs": "スター付きの曲",
-  "Syncs playlists and starred songs already stored on your music server.": "音楽サーバーに保存済みのプレイリストとスター付きの曲を同期します。"
+  "Syncs playlists and starred songs already stored on your music server.": "音楽サーバーに保存済みのプレイリストとスター付きの曲を同期します。",
+  "Read loved recordings by username; add a user token to receive favorites.": "ユーザー名でお気に入りの録音を読み取ります。お気に入りを受け取るにはユーザートークンを追加してください。",
+  "Choose ListenBrainz as the source to read loves without a token. To receive favorites from another service, add your user token from ListenBrainz settings.": "トークンなしでお気に入りを読み取るには、ListenBrainzを同期元に選択してください。他のサービスからお気に入りを受け取るには、ListenBrainzの設定からユーザートークンを追加してください。",
+  "User token": "ユーザートークン",
+  "Optional: copy your user token from https://listenbrainz.org/settings/ to receive loved recordings.": "任意：お気に入りの録音を受け取るには、https://listenbrainz.org/settings/ からユーザートークンをコピーしてください。",
+  "ListenBrainz": "ListenBrainz"
 }
