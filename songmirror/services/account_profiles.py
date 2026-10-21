@@ -274,6 +274,41 @@ class AccountProfileStore:
             raise KeyError(f"unknown account profile: {identity}")
         return ProfileSettings(self, profile)
 
+    def resolve_cache_path(self, identity):
+        """The same profile/CLI defaults used to construct its provider target."""
+        from ..engine.config import parse_args
+        from ..engine.targets import target_class
+
+        profile = self.resolve(identity)
+        cls = target_class(profile.provider) if profile is not None else None
+        if cls is None:
+            return None
+        with self.activate(profile.id):
+            opts = parse_args([])
+            if profile.provider == "spotify":
+                opts.spotify_cache_file = os.getenv("SPOTIFY_CACHE_FILE", opts.spotify_cache_file)
+            elif profile.provider == "apple":
+                opts.cache_file = os.getenv("APPLE_CACHE_FILE", opts.cache_file)
+            return cls.resolve_cache_path(opts)
+
+    def cache_fallback_files(self, identity, cache_file=None):
+        """Sibling catalog evidence, excluding server-local and own cache files."""
+        from ..engine.targets import target_class
+
+        profile = self.resolve(identity)
+        cls = target_class(profile.provider) if profile is not None else None
+        if cls is None or not getattr(cls, "catalog_ids_global", True):
+            return ()
+        own = cache_file or self.resolve_cache_path(profile.id)
+        paths = {}
+        for sibling in self.list():
+            if sibling.provider != profile.provider or sibling.id == profile.id:
+                continue
+            path = self.resolve_cache_path(sibling.id)
+            if path and (not own or Path(path).resolve() != Path(own).resolve()):
+                paths.setdefault(Path(path).resolve(), path)
+        return tuple(paths.values())
+
     def capture_environment(self):
         """Retain deployment defaults before temporary profile activation."""
         environment = os.environ.copy()

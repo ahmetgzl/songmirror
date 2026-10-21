@@ -17,7 +17,7 @@ from . import archive, spotify, spotify_cookie
 from .aggregation import AggregateSourceSnapshot, aggregate_source_tracks
 from .config import spotify_write_backend
 from .logs import fmt_counts, fmt_secs, log, log_note, log_section, log_summary, log_warn, paint
-from .resolve_cache import MATCHING_CACHE_VERSION, load_cache, save_cache
+from .resolve_cache import MATCHING_CACHE_VERSION, load_cache, load_target_cache, save_cache
 from .targets import (
     TargetAuthError,
     TargetDirectoryIncompleteError,
@@ -365,7 +365,7 @@ def _run_merge(opts, sp, should_continue=None):
     aggregate["removals_guarded"] = removals_guarded
     effective_max_removals = 0 if removals_guarded else opts.max_removals
     source_label = f"{len(descriptors)}-source union"
-    cache = load_cache(destination.cache_file)
+    cache = load_target_cache(destination)
     songs = archive.connect(opts.song_cache_file)
     try:
         result = mirror_pair(
@@ -456,7 +456,7 @@ def run_target(target, selected, get_source_tracks, songs, opts, links=None, sou
            "held": 0, "uncertain_matches": 0, "deferred": 0, "removals_skipped": 0,
            "chronology_replayed": 0, "skipped": 0, "created": 0, "failed": 0,
            "held_removals": [], "change_diagnostics": [], "failures": []}
-    cache = load_cache(target.cache_file)
+    cache = load_target_cache(target)
     # A provider with no playlists (Last.fm) is kept as a target only for its
     # native favorites collection. Drop the playlist phase in one note rather
     # than failing once per selected playlist. The flag can be evaluated (a
@@ -1149,7 +1149,7 @@ def _run_peer_reconcile(opts, sp, selected, songs, should_continue=None, *,
             and liked_route.get("kind") == "playlist"
         )
         dirs[peer.source] = peer.list_playlists() if needs_playlist_directory else {}
-    caches = {p.source: load_cache(p.cache_file) for p in peers}
+    caches = {p.source: load_target_cache(p) for p in peers}
     total = {"added": 0, "removed": 0, "missing": 0, "held": 0,
              "uncertain_matches": 0, "deferred": 0,
              "removals_skipped": 0, "chronology_replayed": 0,

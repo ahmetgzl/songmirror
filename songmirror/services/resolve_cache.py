@@ -1,11 +1,11 @@
-"""Read and edit the per-provider resolution caches from the UI.
+"""Read effective matches and edit each account's resolution cache from the UI.
 
 Each provider caches how a source track resolved to a catalog id on its side.
-An entry with an id is a match the sync and transfer engines will reuse forever;
-an entry with no id is a NEGATIVE result, and it is just as sticky, so a track
-that failed to match once is never searched again until the entry is removed.
-This store is what makes both visible and correctable without hand-editing JSON
-on the server.
+Successful catalog matches from sibling accounts can fill missing or negative
+local entries. Other misses remain cached until removed. Edits stay local, and
+forgetting a mapping also excludes that key from sibling search fallback so it
+does not immediately reappear. This store makes both visible and correctable
+without hand-editing JSON on the server.
 
 Keys are the engine's normalized `track_key` ("<loose name>|<normalized
 artist>"), not the original display text, so rows are shown lower-cased and
@@ -46,7 +46,7 @@ def _split_key(key):
 
 
 class ResolveCacheStore:
-    """The resolution caches as an editable table, one file per provider."""
+    """Effective resolution caches as an editable table, one file per account."""
 
     def __init__(self, settings, sync=None, profiles=None):
         self._settings = settings
@@ -71,23 +71,18 @@ class ResolveCacheStore:
         if self._profiles is None:
             self._settings.apply_to_env()
             return cls.resolve_cache_path(parse_args([]))
-        profile = self._profiles.resolve(provider_id)
-        if profile is None:
-            return None
-        with self._profiles.activate(profile.id):
-            opts = parse_args([])
-            if provider == "spotify":
-                opts.spotify_cache_file = os.getenv("SPOTIFY_CACHE_FILE", opts.spotify_cache_file)
-            elif provider == "apple":
-                opts.cache_file = os.getenv("APPLE_CACHE_FILE", opts.cache_file)
-            return cls.resolve_cache_path(opts)
+        return self._profiles.resolve_cache_path(provider_id)
+
+    def _cache(self, provider_id, path):
+        fallbacks = self._profiles.cache_fallback_files(provider_id, path) if self._profiles else ()
+        return load_cache(path, fallbacks=fallbacks, provider=self._provider(provider_id))
 
     def _load(self, provider_id):
         path = self._path(provider_id)
         if path is None:
             raise ResolveCacheError(
                 f"{provider_label(self._provider(provider_id))} does not keep a resolve cache.")
-        return path, load_cache(path)
+        return path, self._cache(provider_id, path)
 
     # -- reads -----------------------------------------------------------------
     def providers(self):
@@ -104,9 +99,11 @@ class ResolveCacheStore:
         )
         for provider_id in identities:
             path = self._path(provider_id)
-            if path is None or not os.path.exists(path):
+            if path is None:
                 continue
-            cache = load_cache(path)
+            cache = self._cache(provider_id, path)
+            if not os.path.exists(path) and not cache["search"] and not cache["isrc"]:
+                continue
             search = cache["search"]
             row = {
                 "id": provider_id,
@@ -216,6 +213,8 @@ class ResolveCacheStore:
             return {"ok": False}
         del cache["search"][key]
         cache["manual"].discard(key)
+        if cache.get("_fallbacks", (None, ()))[1]:
+            cache["shared_exclusions"].add(key)
         cache["dirty"] = True
         save_cache(path, cache)
         return {"ok": True}
